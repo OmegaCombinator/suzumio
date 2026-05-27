@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Suzumio 配置</title><link rel="stylesheet" href="../styles.css"></head>
+<body>
+  <div class="mobile-nav"><select onchange="location.href=this.value"><option value="index.html">概览</option><option value="quickstart.html">快速开始</option><option value="concepts.html">核心概念</option><option value="configuration.html" selected>配置</option><option value="cli.html">CLI 参考</option><option value="architecture.html">架构</option><option value="operations.html">运维</option><option value="api.html">HTTP API</option><option value="roadmap.html">路线图</option><option value="../configuration.html">English</option></select></div>
+  <div class="shell"><aside class="sidebar"><a class="brand" href="index.html"><strong>Suzumio</strong><span>Docker-first 多智能体运行时</span></a><div class="language-switch"><a href="../configuration.html">EN</a><a class="active" href="configuration.html">中文</a></div><div class="nav-group"><p class="nav-title">开始</p><a class="nav-link" href="index.html">概览</a><a class="nav-link" href="quickstart.html">快速开始</a><a class="nav-link" href="concepts.html">核心概念</a></div><div class="nav-group"><p class="nav-title">构建</p><a class="nav-link active" href="configuration.html">配置</a><a class="nav-link" href="cli.html">CLI 参考</a><a class="nav-link" href="architecture.html">架构</a><a class="nav-link" href="operations.html">运维</a></div><div class="nav-group"><p class="nav-title">参考</p><a class="nav-link" href="api.html">HTTP API</a><a class="nav-link" href="roadmap.html">路线图</a><a class="nav-link" href="https://github.com/OmegaCombinator/suzumio">GitHub</a></div></aside>
+  <main class="content">
+    <section class="hero"><p class="eyebrow">配置</p><h1>用 YAML 组合项目</h1><p class="lead">Suzumio 配置既可以作为单文件阅读，也可以拆分维护。用 whole-field import 引入任务和 prompt，用 <code>extends</code> 组合可复用 profile。</p></section>
+    <h2>最小项目</h2><pre><code>name: demo
+task: |
+  Demonstrate one non-preemptive turn.
+
+backend:
+  runner:
+    mode: mock
+
+agents:
+  pm:
+    role: project-manager
+    prompt: |
+      Handle the user request and stay concise.
+    tools:
+      - messages.send</code></pre>
+    <h2>主要字段</h2><table><tr><th>字段</th><th>是否必需</th><th>默认值</th><th>说明</th></tr><tr><td><code>name</code></td><td>是</td><td>无</td><td>项目 id 和运行目录名。</td></tr><tr><td><code>task</code></td><td>是</td><td>无</td><td>持久任务描述，会渲染进每个 turn prompt。</td></tr><tr><td><code>agents</code></td><td>是</td><td>无</td><td>至少配置一个 agent。</td></tr><tr><td><code>scheduler</code></td><td>否</td><td><code>nonpreemptive-mailbox</code></td><td>调度器类型和 prompt message 数量。</td></tr><tr><td><code>backend</code></td><td>否</td><td>Docker + mock runner</td><td>Docker image、controller URL 和 runner 设置。</td></tr><tr><td><code>channels</code></td><td>否</td><td><code>#project</code>, <code>#blocked</code></td><td>允许的频道名。</td></tr></table>
+    <h2>Whole-field Import</h2><p>当某个字段的整个值是 <code>@import(path)</code> 时，该字段会被导入文件替换。这不是字符串插值。</p><pre><code>task: @import(tasks/main.md)
+agents:
+  pm: @import(agents/pm.yaml)</code></pre><table><tr><th>文件类型</th><th>行为</th></tr><tr><td><code>.yaml</code> 或 <code>.yml</code></td><td>作为 YAML 解析并递归 resolve。</td></tr><tr><td><code>.json</code></td><td>作为 JSON 解析并递归 resolve。</td></tr><tr><td>其他扩展名</td><td>作为原始文本导入。</td></tr></table><p>Import 路径相对当前文件解析。禁用 HTTP import，并检测循环 import。</p>
+    <h2>Extends</h2><p><code>extends</code> 用于 profile composition。Suzumio 先 deep-merge extends 中的对象，再把当前文件 merge 到最上层。</p><pre><code>extends:
+  - @import(profiles/base.yaml)
+  - @import(profiles/acorn.yaml)
+
+name: theorem-project
+task: @import(tasks/theorem.md)</code></pre><p>Merge 规则：object 深合并，array 替换，后面的值覆盖前面的值。</p>
+    <h2>Backend 和 AI Runner</h2><pre><code>backend:
+  kind: docker-chat
+  image: suzumio-runner:dev
+  controllerUrl: http://host.docker.internal:39400
+  runner:
+    mode: ai
+    model: main
+    models:
+      default: main
+      providers:
+        gateway:
+          type: openai-compatible
+          baseURL: https://your-gateway.example/v1
+          apiKeyEnv: SUZUMIO_GATEWAY_API_KEY
+      presets:
+        main:
+          provider: gateway
+          model: gpt-5.5
+          apiModel: gpt-5.5</code></pre><div class="notice danger"><p>提交到仓库的示例必须保持脱敏。真实 endpoint 和 key 应放在本地未跟踪配置或环境变量中。</p></div>
+    <h2>Agent 和 Channels</h2><pre><code>agents:
+  worker:
+    role: worker
+    count: 2
+    prompt: @import(prompts/worker.md)
+    model: main
+    tools:
+      - messages.send
+      - artifacts.publish
+      - artifacts.list
+
+channels:
+  - "#project"
+  - "#blocked"</code></pre><p><code>count</code> 会展开为多个编号 agent。频道消息只能发送到已声明 channel，避免拼写错误制造噪音。</p>
+    <h2>验证流程</h2><pre><code>suzumio config render path/to/project.yaml
+suzumio init path/to/project.yaml
+suzumio status project-name</code></pre><p><code>config render</code> 是查看最终导入、默认值和存储内容的标准方式。</p>
+    <div class="footer">下一步：<a href="cli.html">CLI 参考</a>。</div>
+  </main></div>
+</body>
+</html>

@@ -2,8 +2,8 @@
 <html lang="en">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Suzumio Architecture</title><link rel="stylesheet" href="styles.css"></head>
 <body>
-  <div class="mobile-nav"><select onchange="location.href=this.value"><option value="index.html">Overview</option><option value="quickstart.html">Quickstart</option><option value="concepts.html">Core Concepts</option><option value="configuration.html">Configuration</option><option value="architecture.html" selected>Architecture</option><option value="operations.html">Operations</option><option value="api.html">HTTP API</option><option value="roadmap.html">Roadmap</option></select></div>
-  <div class="shell"><aside class="sidebar"><a class="brand" href="index.html"><strong>Suzumio</strong><span>Non-preemptive multi-agent runtime</span></a><div class="nav-group"><p class="nav-title">Start</p><a class="nav-link" href="index.html">Overview</a><a class="nav-link" href="quickstart.html">Quickstart</a><a class="nav-link" href="concepts.html">Core Concepts</a></div><div class="nav-group"><p class="nav-title">Build</p><a class="nav-link" href="configuration.html">Configuration</a><a class="nav-link active" href="architecture.html">Architecture</a><a class="nav-link" href="operations.html">Operations</a></div><div class="nav-group"><p class="nav-title">Reference</p><a class="nav-link" href="api.html">HTTP API</a><a class="nav-link" href="roadmap.html">Roadmap</a><a class="nav-link" href="https://github.com/OmegaCombinator/suzumio">GitHub</a></div></aside>
+  <div class="mobile-nav"><select onchange="location.href=this.value"><option value="index.html">Overview</option><option value="quickstart.html">Quickstart</option><option value="concepts.html">Core Concepts</option><option value="configuration.html">Configuration</option><option value="cli.html">CLI Reference</option><option value="architecture.html" selected>Architecture</option><option value="operations.html">Operations</option><option value="api.html">HTTP API</option><option value="roadmap.html">Roadmap</option><option value="zh/architecture.html">中文</option></select></div>
+  <div class="shell"><aside class="sidebar"><a class="brand" href="index.html"><strong>Suzumio</strong><span>Docker-first multi-agent runtime</span></a><div class="language-switch"><a class="active" href="architecture.html">EN</a><a href="zh/architecture.html">中文</a></div><div class="nav-group"><p class="nav-title">Start</p><a class="nav-link" href="index.html">Overview</a><a class="nav-link" href="quickstart.html">Quickstart</a><a class="nav-link" href="concepts.html">Core Concepts</a></div><div class="nav-group"><p class="nav-title">Build</p><a class="nav-link" href="configuration.html">Configuration</a><a class="nav-link" href="cli.html">CLI Reference</a><a class="nav-link active" href="architecture.html">Architecture</a><a class="nav-link" href="operations.html">Operations</a></div><div class="nav-group"><p class="nav-title">Reference</p><a class="nav-link" href="api.html">HTTP API</a><a class="nav-link" href="roadmap.html">Roadmap</a><a class="nav-link" href="https://github.com/OmegaCombinator/suzumio">GitHub</a></div></aside>
   <main class="content">
     <section class="hero"><p class="eyebrow">Architecture</p><h1>Core owns coordination. Containers run turns.</h1><p class="lead">Suzumio separates orchestration from execution. The core process owns project truth and scheduling; the Docker runner performs one isolated turn and exits.</p></section>
 
@@ -33,11 +33,11 @@ Container runner
   Writes /turn/output.json</code></pre>
 
     <h2>Core Process</h2>
-    <p>The core process is the authority for every project-level record. If data should be visible in CLI, HTTP, or WebUI, it belongs in SQLite through the core store.</p>
-    <table><tr><th>Module</th><th>Responsibility</th></tr><tr><td><code>config.ts</code></td><td>Loads YAML, resolves imports, applies extends, validates config.</td></tr><tr><td><code>store.ts</code></td><td>Creates and queries SQLite tables for projects, agents, messages, reads, turns, events, tool calls, and artifacts.</td></tr><tr><td><code>scheduler.ts</code></td><td>Implements <code>nonpreemptive-mailbox</code>.</td></tr><tr><td><code>tools.ts</code></td><td>Defines core tools and executes ToolHost calls.</td></tr><tr><td><code>server.ts</code></td><td>HTTP API, SSE stream, and embedded WebUI.</td></tr><tr><td><code>backend.ts</code></td><td>Docker container creation and turn monitoring.</td></tr></table>
+    <p>The core process is the authority for project-level records. If data should be visible in CLI, HTTP, WebUI, or audit logs, it belongs in SQLite through the core store.</p>
+    <table><tr><th>Module</th><th>Responsibility</th></tr><tr><td><code>config.ts</code></td><td>Loads YAML, resolves imports, applies <code>extends</code>, validates config, and renders final YAML.</td></tr><tr><td><code>store.ts</code></td><td>Creates and queries SQLite tables for projects, agents, messages, reads, turns, events, tool calls, and artifacts.</td></tr><tr><td><code>scheduler.ts</code></td><td>Implements the <code>nonpreemptive-mailbox</code> scheduling rule.</td></tr><tr><td><code>tools.ts</code></td><td>Defines core tools and executes ToolHost calls with token and allowlist checks.</td></tr><tr><td><code>server.ts</code></td><td>HTTP API, SSE stream, ToolHost route, and embedded WebUI.</td></tr><tr><td><code>backend.ts</code></td><td>Docker container creation, bind mounts, runner input/output, and turn completion.</td></tr><tr><td><code>runner.ts</code></td><td>Container entrypoint for mock or model-backed turns.</td></tr></table>
 
     <h2>Runner Contract</h2>
-    <p>The runner is deliberately narrow. It receives all context through one input file and reports back through one output file.</p>
+    <p>The runner receives all context through one input file and reports back through one output file. This keeps execution replaceable without changing project-state semantics.</p>
     <pre><code>type RunnerTurnInput = {
   project: string
   agent: { id: string; role: string; prompt: string; model?: string }
@@ -52,33 +52,32 @@ Container runner
   text: string
   usage?: Record&lt;string, unknown&gt;
 }</code></pre>
-    <p>This contract keeps the runner replaceable. The current runner can be evolved or replaced without changing project state semantics.</p>
 
     <h2>Docker Isolation</h2>
-    <p>The first backend is Docker-first. Each turn container receives:</p>
-    <ul><li>A bind mount for <code>/turn</code> containing input and output files.</li><li>A bind mount for the agent workspace at <code>/workspace</code>.</li><li>Environment variables for project id, agent id, turn id, token, and model provider API key environment variables.</li><li><code>host.docker.internal</code> mapping so the runner can call the Suzumio ToolHost.</li></ul>
-    <p>The current implementation keeps completed containers until they are removed by the operator. This is useful for debugging early runs and should later become configurable.</p>
+    <p>Each turn container receives a small, explicit environment:</p>
+    <ul><li>A bind mount for <code>/turn</code> containing input and output files.</li><li>A bind mount for the agent workspace at <code>/workspace</code>.</li><li>Environment variables for project id, agent id, turn id, token, and configured model-provider key variables.</li><li><code>host.docker.internal</code> mapping so the runner can call the Suzumio ToolHost on the host.</li></ul>
+    <p>Completed containers are currently kept for early debugging. Cleanup policy should become configurable as the Docker backend hardens.</p>
 
     <h2>Tool Flow</h2>
     <pre><code>Model asks for tool
-  runner converts AI SDK tool call
+  runner converts model tool call
   runner POSTs /tool to Suzumio
   ToolHost verifies token and tool allowlist
   ToolHost records tool_calls row
   core tool runs against SQLite/artifact store
   ToolHost records success or failure
   runner returns tool output to model</code></pre>
-    <p>The model never receives arbitrary host tools from Suzumio by default. Tools are configured per agent and executed by the core ToolHost.</p>
+    <p>The model does not receive arbitrary host tools by default. Tools are configured per agent and executed by the core ToolHost.</p>
 
     <h2>Message Delivery</h2>
-    <p>Agents do not call <code>read_messages</code>. Suzumio renders unread inbound messages into the next turn prompt. This avoids polling loops and gives the scheduler a precise record of which messages were consumed by which turn.</p>
+    <p>Agents do not poll for messages. Suzumio renders unread inbound messages into the next turn prompt and records which turn consumed which message. This avoids polling loops and makes scheduling decisions auditable.</p>
 
     <h2>SQLite as Project Truth</h2>
-    <p>Each project has one SQLite file. The container runner does not maintain the project database. It may keep temporary local execution state inside the container, but durable state must flow through output files or ToolHost calls.</p>
-    <table><tr><th>Table</th><th>Purpose</th></tr><tr><td><code>projects</code></td><td>Project status, task, resolved config JSON, submitted report path.</td></tr><tr><td><code>agents</code></td><td>Agent roster, prompts, tool allowlists, token, active turn.</td></tr><tr><td><code>messages</code></td><td>Direct and channel messages.</td></tr><tr><td><code>message_reads</code></td><td>Which turn consumed which inbound message.</td></tr><tr><td><code>turns</code></td><td>Turn execution records and output text.</td></tr><tr><td><code>events</code></td><td>Append-style event timeline.</td></tr><tr><td><code>tool_calls</code></td><td>Audited tool execution records.</td></tr><tr><td><code>artifacts</code></td><td>Published file artifacts.</td></tr></table>
+    <p>Each project has one SQLite file. The container runner does not maintain the project database. Durable state must flow through output files or ToolHost calls.</p>
+    <table><tr><th>Table</th><th>Purpose</th></tr><tr><td><code>projects</code></td><td>Project status, task, resolved config JSON, submitted report path.</td></tr><tr><td><code>agents</code></td><td>Agent roster, prompts, tool allowlists, token, active turn.</td></tr><tr><td><code>messages</code></td><td>Direct and channel messages.</td></tr><tr><td><code>message_reads</code></td><td>Which turn consumed which inbound message.</td></tr><tr><td><code>turns</code></td><td>Turn execution records and output text.</td></tr><tr><td><code>events</code></td><td>Append-style event timeline.</td></tr><tr><td><code>tool_calls</code></td><td>Audited tool execution records.</td></tr><tr><td><code>artifacts</code></td><td>Published file artifacts with hashes and metadata.</td></tr></table>
 
-    <h2>Why Not Reuse Chatbox Directly?</h2>
-    <p>The previous <code>chatbox</code> code contained useful ideas: model presets, AI SDK integration, tool conversion, and context handling. But it also owned a session store and built-in host tools. Suzumio intentionally moves project state, tools, and permissions into the core runtime. The runner can borrow implementation ideas without inheriting those boundaries.</p>
+    <h2>Why the Boundary Matters</h2>
+    <p>Keeping project truth in the core runtime makes agent execution disposable. A runner can fail, be replaced, or be upgraded while the project database, message history, artifacts, and user-control surface remain stable.</p>
 
     <div class="footer">Next: <a href="operations.html">Operations</a>.</div>
   </main></div>

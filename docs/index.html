@@ -8,76 +8,78 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <div class="mobile-nav"><select onchange="location.href=this.value"><option value="index.html" selected>Overview</option><option value="quickstart.html">Quickstart</option><option value="concepts.html">Core Concepts</option><option value="configuration.html">Configuration</option><option value="architecture.html">Architecture</option><option value="operations.html">Operations</option><option value="api.html">HTTP API</option><option value="roadmap.html">Roadmap</option></select></div>
+  <div class="mobile-nav"><select onchange="location.href=this.value"><option value="index.html" selected>Overview</option><option value="quickstart.html">Quickstart</option><option value="concepts.html">Core Concepts</option><option value="configuration.html">Configuration</option><option value="cli.html">CLI Reference</option><option value="architecture.html">Architecture</option><option value="operations.html">Operations</option><option value="api.html">HTTP API</option><option value="roadmap.html">Roadmap</option><option value="zh/index.html">中文</option></select></div>
   <div class="shell">
     <aside class="sidebar">
-      <a class="brand" href="index.html"><strong>Suzumio</strong><span>Non-preemptive multi-agent runtime</span></a>
+      <a class="brand" href="index.html"><strong>Suzumio</strong><span>Docker-first multi-agent runtime</span></a>
+      <div class="language-switch"><a class="active" href="index.html">EN</a><a href="zh/index.html">中文</a></div>
       <div class="nav-group"><p class="nav-title">Start</p><a class="nav-link active" href="index.html">Overview</a><a class="nav-link" href="quickstart.html">Quickstart</a><a class="nav-link" href="concepts.html">Core Concepts</a></div>
-      <div class="nav-group"><p class="nav-title">Build</p><a class="nav-link" href="configuration.html">Configuration</a><a class="nav-link" href="architecture.html">Architecture</a><a class="nav-link" href="operations.html">Operations</a></div>
+      <div class="nav-group"><p class="nav-title">Build</p><a class="nav-link" href="configuration.html">Configuration</a><a class="nav-link" href="cli.html">CLI Reference</a><a class="nav-link" href="architecture.html">Architecture</a><a class="nav-link" href="operations.html">Operations</a></div>
       <div class="nav-group"><p class="nav-title">Reference</p><a class="nav-link" href="api.html">HTTP API</a><a class="nav-link" href="roadmap.html">Roadmap</a><a class="nav-link" href="https://github.com/OmegaCombinator/suzumio">GitHub</a></div>
     </aside>
     <main class="content">
       <section class="hero">
-        <p class="eyebrow">Docker-first coordination for patient agents</p>
+        <p class="eyebrow">Docker-first coordination for long-running agents</p>
         <h1>Suzumio</h1>
-        <p class="lead">Suzumio is a general multi-agent runtime designed around one strict rule: once an agent is working, do not interrupt it. Messages queue in a mailbox, turns run in Docker, and project state lives in SQLite.</p>
-        <div class="actions"><a class="button primary" href="quickstart.html">Run the Demo</a><a class="button" href="architecture.html">Read Architecture</a><a class="button" href="https://github.com/OmegaCombinator/suzumio">View Repository</a></div>
+        <p class="lead">Suzumio coordinates multi-agent projects with a non-preemptive mailbox scheduler, isolated Docker turns, audited tools, artifact tracking, SQLite state, a CLI, an HTTP API, and a lightweight WebUI.</p>
+        <div class="actions"><a class="button primary" href="quickstart.html">Run the demo</a><a class="button" href="configuration.html">Write a config</a><a class="button blue" href="api.html">Use the API</a></div>
       </section>
 
       <section>
-        <h2>What Suzumio Is</h2>
-        <p>Suzumio is not a proof assistant harness, not an OpenCode wrapper, and not a chat UI. It is a runtime layer for coordinating multiple long-running agents across a project. It owns the durable project truth: configuration, agents, turns, messages, events, tool calls, artifacts, approvals, and observability.</p>
-        <p>The first implementation includes a Docker-first single-agent runner. The runner executes one turn, talks to Suzumio's ToolHost when it needs project tools, writes a result file, and exits. The scheduler then decides whether any other agent has unread inbound messages and should receive a new turn.</p>
+        <h2>Purpose</h2>
+        <p>Suzumio is a coordination runtime for projects where agents may need to work for a long time without being interrupted. It is suitable for formalization, code work, research workflows, review pipelines, benchmark experiments, and other tasks where progress is best represented as durable turns, messages, artifacts, and audit logs.</p>
+        <p>Suzumio separates project coordination from agent execution. The core runtime owns project state and scheduling. The Docker runner executes one agent turn, calls back to Suzumio for tools, writes a result, and exits.</p>
       </section>
 
       <section class="grid">
-        <div class="card"><h3>Non-preemptive</h3><p>Running agents are never prompted again, nudged, or interrupted by the scheduler. New messages wait until the current turn finishes.</p></div>
-        <div class="card"><h3>Mailbox-driven</h3><p>An idle agent wakes only when it has unread inbound messages. If there is no inbound work, it stays quiet.</p></div>
-        <div class="card"><h3>Docker-first</h3><p>The backend launches isolated containers for turns. Suzumio does not try to make in-process execution the default path.</p></div>
-        <div class="card"><h3>Tool-audited</h3><p>Project tools are served by Suzumio, not by the runner. Calls are permissioned by agent config and recorded in SQLite.</p></div>
+        <div class="card"><h3>Non-preemptive scheduling</h3><p>Running agents are not prompted, nudged, or interrupted. New inbound messages wait in the mailbox until the current turn finishes.</p></div>
+        <div class="card"><h3>Durable project state</h3><p>Projects store resolved configuration, agents, messages, message reads, turns, events, tool calls, and artifacts in SQLite.</p></div>
+        <div class="card"><h3>Docker-first execution</h3><p>Each turn runs in a container with a turn input file, an output file, an agent workspace, and ToolHost access.</p></div>
+        <div class="card"><h3>Audited tools</h3><p>Project tools are checked against each agent allowlist and recorded before and after execution.</p></div>
       </section>
 
       <section>
-        <h2>Current Capabilities</h2>
+        <h2>What You Can Do Today</h2>
         <table>
-          <tr><th>Area</th><th>Status</th><th>Notes</th></tr>
-          <tr><td>Configuration</td><td><span class="tag">Implemented</span></td><td>YAML, whole-field <code>@import(path)</code>, top-level <code>extends</code>, resolved config rendering.</td></tr>
-          <tr><td>Storage</td><td><span class="tag">Implemented</span></td><td>Per-project SQLite database using Node's built-in SQLite module.</td></tr>
-          <tr><td>Scheduler</td><td><span class="tag">Implemented</span></td><td>One scheduler: <code>nonpreemptive-mailbox</code>.</td></tr>
-          <tr><td>Backend</td><td><span class="tag">Implemented</span></td><td>Docker-first chat runner with mock mode and AI mode.</td></tr>
-          <tr><td>Tools</td><td><span class="tag">Implemented</span></td><td><code>messages.send</code>, <code>artifacts.publish</code>, <code>artifacts.list</code>, <code>completion.submit</code>.</td></tr>
-          <tr><td>Observability</td><td><span class="tag">Implemented</span></td><td>CLI, HTTP API, SSE event stream, and static WebUI.</td></tr>
+          <tr><th>Task</th><th>Where to start</th><th>What you get</th></tr>
+          <tr><td>Run a local smoke test</td><td><a href="quickstart.html">Quickstart</a></td><td>A Docker-backed mock turn that verifies scheduling, storage, and runner wiring.</td></tr>
+          <tr><td>Define a project</td><td><a href="configuration.html">Configuration</a></td><td>YAML config with whole-field imports, profile composition, agents, tools, and backend settings.</td></tr>
+          <tr><td>Operate projects from terminal</td><td><a href="cli.html">CLI Reference</a></td><td>Commands for init, serve, start, send, inspect, approve, and stop.</td></tr>
+          <tr><td>Integrate with other systems</td><td><a href="api.html">HTTP API</a></td><td>Project objects, user actions, event streams, and ToolHost calls.</td></tr>
+          <tr><td>Deploy docs or inspect architecture</td><td><a href="architecture.html">Architecture</a></td><td>Clear boundaries between core runtime, Docker backend, runner, ToolHost, and SQLite.</td></tr>
         </table>
       </section>
 
       <section>
-        <h2>Repository Layout</h2>
-        <pre><code>suzumio/
-  src/
-    cli.ts            command-line interface
-    config.ts         YAML imports, extends, validation
-    store.ts          SQLite project store
-    scheduler.ts      non-preemptive mailbox scheduler
-    backend.ts        Docker runner backend
-    runner.ts         container entrypoint
-    tools.ts          Suzumio core tools and ToolHost
-    server.ts         HTTP API, SSE, WebUI
-  examples/
-    demo.yaml         Docker mock demo
-    import-demo.yaml  @import demo
-    ai-demo.yaml      sanitized AI runner example
-  docs/               this static documentation site
-  .github/workflows/pages.yml
-</code></pre>
+        <h2>Core Workflow</h2>
+        <pre><code>1. Render and validate project config.
+2. Initialize a project under SUZUMIO_ROOT.
+3. Start the HTTP server and scheduler loop.
+4. Send a user message to an agent.
+5. Scheduler starts one Docker turn for that agent.
+6. Runner executes the turn and calls ToolHost when needed.
+7. Suzumio records messages, tool calls, events, artifacts, and turn output.
+8. Idle agents remain quiet until new inbound messages arrive.</code></pre>
       </section>
 
       <section>
-        <h2>Design Promise</h2>
-        <div class="notice"><p>Suzumio intentionally prefers quiet waiting over noisy orchestration. The runtime should not manufacture work, poll agents through prompts, or force a project manager to comment while workers are still running.</p></div>
-        <p>This is the main lesson imported from earlier multi-agent experiments: if the useful work is a long proof attempt, a long code edit, or a long review pass, the scheduler should preserve that uninterrupted context instead of constantly asking for status.</p>
+        <h2>Project Layout</h2>
+        <pre><code>$SUZUMIO_ROOT/demo/
+  suzumio.sqlite      durable project database
+  source.yaml         original project config
+  resolved.yaml       fully resolved config
+  agents/             per-agent workspaces
+  artifacts/          published files
+  turns/              turn input/output directories
+  logs/               reserved for runtime logs</code></pre>
       </section>
 
-      <div class="footer">Suzumio documentation is deployed from <code>docs/</code> by GitHub Actions Pages.</div>
+      <section>
+        <h2>Public Documentation Scope</h2>
+        <p>This site documents the runtime contract, user workflows, configuration, CLI, API, and operational behavior. It intentionally avoids internal development history and private deployment details. Examples use placeholders for provider endpoints and keys.</p>
+      </section>
+
+      <div class="footer">Current site: <a href="https://suzumio.aixmath.org">suzumio.aixmath.org</a>. Source: <a href="https://github.com/OmegaCombinator/suzumio">OmegaCombinator/suzumio</a>.</div>
     </main>
   </div>
 </body>

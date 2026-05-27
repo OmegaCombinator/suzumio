@@ -2,17 +2,14 @@
 <html lang="en">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Suzumio Operations</title><link rel="stylesheet" href="styles.css"></head>
 <body>
-  <div class="mobile-nav"><select onchange="location.href=this.value"><option value="index.html">Overview</option><option value="quickstart.html">Quickstart</option><option value="concepts.html">Core Concepts</option><option value="configuration.html">Configuration</option><option value="architecture.html">Architecture</option><option value="operations.html" selected>Operations</option><option value="api.html">HTTP API</option><option value="roadmap.html">Roadmap</option></select></div>
-  <div class="shell"><aside class="sidebar"><a class="brand" href="index.html"><strong>Suzumio</strong><span>Non-preemptive multi-agent runtime</span></a><div class="nav-group"><p class="nav-title">Start</p><a class="nav-link" href="index.html">Overview</a><a class="nav-link" href="quickstart.html">Quickstart</a><a class="nav-link" href="concepts.html">Core Concepts</a></div><div class="nav-group"><p class="nav-title">Build</p><a class="nav-link" href="configuration.html">Configuration</a><a class="nav-link" href="architecture.html">Architecture</a><a class="nav-link active" href="operations.html">Operations</a></div><div class="nav-group"><p class="nav-title">Reference</p><a class="nav-link" href="api.html">HTTP API</a><a class="nav-link" href="roadmap.html">Roadmap</a><a class="nav-link" href="https://github.com/OmegaCombinator/suzumio">GitHub</a></div></aside>
+  <div class="mobile-nav"><select onchange="location.href=this.value"><option value="index.html">Overview</option><option value="quickstart.html">Quickstart</option><option value="concepts.html">Core Concepts</option><option value="configuration.html">Configuration</option><option value="cli.html">CLI Reference</option><option value="architecture.html">Architecture</option><option value="operations.html" selected>Operations</option><option value="api.html">HTTP API</option><option value="roadmap.html">Roadmap</option><option value="zh/operations.html">中文</option></select></div>
+  <div class="shell"><aside class="sidebar"><a class="brand" href="index.html"><strong>Suzumio</strong><span>Docker-first multi-agent runtime</span></a><div class="language-switch"><a class="active" href="operations.html">EN</a><a href="zh/operations.html">中文</a></div><div class="nav-group"><p class="nav-title">Start</p><a class="nav-link" href="index.html">Overview</a><a class="nav-link" href="quickstart.html">Quickstart</a><a class="nav-link" href="concepts.html">Core Concepts</a></div><div class="nav-group"><p class="nav-title">Build</p><a class="nav-link" href="configuration.html">Configuration</a><a class="nav-link" href="cli.html">CLI Reference</a><a class="nav-link" href="architecture.html">Architecture</a><a class="nav-link active" href="operations.html">Operations</a></div><div class="nav-group"><p class="nav-title">Reference</p><a class="nav-link" href="api.html">HTTP API</a><a class="nav-link" href="roadmap.html">Roadmap</a><a class="nav-link" href="https://github.com/OmegaCombinator/suzumio">GitHub</a></div></aside>
   <main class="content">
     <section class="hero"><p class="eyebrow">Operations</p><h1>Run, inspect, and clean projects</h1><p class="lead">Suzumio is designed to be transparent. Every important object has a CLI view and an HTTP view backed by the same SQLite store.</p></section>
 
-    <h2>Environment</h2>
+    <h2>Runtime Root</h2>
     <pre><code>export SUZUMIO_ROOT=/data/suzumio-runtime</code></pre>
-    <p>Set <code>SUZUMIO_ROOT</code> before running commands. Runtime state should not live inside the source repository.</p>
-
-    <h2>Core Commands</h2>
-    <table><tr><th>Command</th><th>Purpose</th></tr><tr><td><code>suzumio config render file.yaml</code></td><td>Resolve imports and profiles, then print final config.</td></tr><tr><td><code>suzumio init file.yaml</code></td><td>Create project directories and SQLite state.</td></tr><tr><td><code>suzumio serve</code></td><td>Start HTTP API, WebUI, ToolHost, SSE stream, and scheduler loop.</td></tr><tr><td><code>suzumio start project</code></td><td>Mark project running and tick scheduler.</td></tr><tr><td><code>suzumio send project agent P1 "..."</code></td><td>Send a user message and tick scheduler.</td></tr><tr><td><code>suzumio status [project]</code></td><td>Show project and agent status.</td></tr><tr><td><code>suzumio turns project</code></td><td>Show recent turns.</td></tr><tr><td><code>suzumio events project</code></td><td>Show event timeline.</td></tr><tr><td><code>suzumio artifacts project</code></td><td>Show artifact registry.</td></tr><tr><td><code>suzumio stop project</code></td><td>Disable scheduling.</td></tr><tr><td><code>suzumio approve project</code></td><td>Mark a submitted project completed.</td></tr></table>
+    <p>Runtime state should live outside the source repository. The root contains project databases, turn input/output files, agent workspaces, artifacts, and logs.</p>
 
     <h2>Recommended Run Pattern</h2>
     <pre><code>npm run build
@@ -27,15 +24,21 @@ suzumio serve --host 0.0.0.0 --port 39400</code></pre>
 suzumio start demo
 suzumio send demo pm P1 "Start the project."</code></pre>
 
+    <h2>Operational Checklist</h2>
+    <table><tr><th>Stage</th><th>Check</th><th>Command</th></tr><tr><td>Build</td><td>TypeScript emits <code>dist/</code>.</td><td><code>npm run build</code></td></tr><tr><td>Image</td><td>Runner image exists locally.</td><td><code>docker image inspect suzumio-runner:dev</code></td></tr><tr><td>Config</td><td>Imports resolve and secrets are not committed.</td><td><code>suzumio config render file.yaml</code></td></tr><tr><td>Store</td><td>Project was initialized under the expected root.</td><td><code>suzumio status project</code></td></tr><tr><td>Server</td><td>HTTP and ToolHost are reachable.</td><td><code>curl http://127.0.0.1:39400/health</code></td></tr><tr><td>Scheduler</td><td>Project is running and idle agents have unread messages.</td><td><code>suzumio messages project</code></td></tr><tr><td>Turn</td><td>Container completed and output was captured.</td><td><code>suzumio turns project</code></td></tr></table>
+
     <h2>Inspecting a Turn</h2>
     <p>A turn directory contains the exact runner input and output:</p>
     <pre><code>$SUZUMIO_ROOT/demo/turns/turn_.../
   input.json
   output.json</code></pre>
-    <p>The input includes the rendered prompt, the agent identity, the controller URL, the runner config, and the tool definitions available to the model.</p>
+    <p>The input includes the rendered prompt, agent identity, controller URL, runner config, and tool definitions available to the model. This makes failed turns reproducible and reviewable.</p>
+
+    <h2>Debugging Scheduler Silence</h2>
+    <table><tr><th>Symptom</th><th>Likely cause</th><th>Action</th></tr><tr><td>Project never starts a turn.</td><td>Project is not <code>running</code>.</td><td><code>suzumio start project</code></td></tr><tr><td>Agent stays quiet.</td><td>No unread inbound messages for that agent.</td><td><code>suzumio send project agent P1 "..."</code></td></tr><tr><td>Message exists but no new turn starts.</td><td>Agent is already <code>running</code>.</td><td>Wait for completion. Suzumio is intentionally non-preemptive.</td></tr><tr><td>Turn fails immediately.</td><td>Image, mount, or Docker daemon issue.</td><td>Inspect <code>suzumio turns</code>, turn files, and <code>docker logs</code>.</td></tr></table>
 
     <h2>Cleaning Debug Containers</h2>
-    <p>Early Suzumio keeps completed turn containers for debugging. Remove only Suzumio-owned containers:</p>
+    <p>Early Suzumio keeps completed turn containers for debugging. Remove only containers that Suzumio created:</p>
     <pre><code>docker ps -a --filter name=suzumio
 docker rm &lt;container-name&gt;</code></pre>
     <div class="notice danger"><p>Do not run broad Docker prune commands on shared machines. Suzumio should only clean containers it created.</p></div>
@@ -44,11 +47,15 @@ docker rm &lt;container-name&gt;</code></pre>
     <p>Use environment variables for API keys and local, untracked config for private gateway URLs.</p>
     <pre><code>export SUZUMIO_GATEWAY_API_KEY=...
 suzumio serve --host 0.0.0.0 --port 39400</code></pre>
-    <p>The runner backend passes configured provider key environment variables into containers when those variables exist in the host environment.</p>
+    <p>The runner backend passes configured provider key environment variables into containers when those variables exist in the host environment. Committed examples should use placeholder endpoints and environment-variable names only.</p>
 
-    <h2>Deployment Notes</h2>
-    <p>For a long-running server, use a process manager such as systemd, a container, or a supervised shell session. The first version does not include a production daemon wrapper.</p>
-    <p>For GitHub Pages documentation, the workflow uploads the static <code>docs/</code> directory. To use a custom domain later, configure the domain in GitHub Pages settings and DNS. Add a <code>CNAME</code> file only when you are ready to make the custom domain authoritative.</p>
+    <h2>Long-running Servers</h2>
+    <p>For a long-running server, use a process manager such as systemd, a container supervisor, or a supervised shell session. Bind the server only to trusted interfaces until user-facing API authentication lands.</p>
+    <pre><code>suzumio serve --host 127.0.0.1 --port 39400</code></pre>
+    <p>If Docker containers need to call the host ToolHost, bind to an address reachable from Docker and set <code>backend.controllerUrl</code> accordingly.</p>
+
+    <h2>Documentation Deployment</h2>
+    <p>The GitHub Pages workflow uploads the static <code>docs/</code> directory. The custom domain is configured by <code>docs/CNAME</code> and DNS. GitHub may serve the custom domain over HTTP until certificate provisioning finishes; enable HTTPS enforcement once GitHub marks the certificate ready.</p>
 
     <div class="footer">Next: <a href="api.html">HTTP API</a>.</div>
   </main></div>

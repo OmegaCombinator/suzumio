@@ -2,33 +2,44 @@
 <html lang="en">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Suzumio HTTP API</title><link rel="stylesheet" href="styles.css"></head>
 <body>
-  <div class="mobile-nav"><select onchange="location.href=this.value"><option value="index.html">Overview</option><option value="quickstart.html">Quickstart</option><option value="concepts.html">Core Concepts</option><option value="configuration.html">Configuration</option><option value="architecture.html">Architecture</option><option value="operations.html">Operations</option><option value="api.html" selected>HTTP API</option><option value="roadmap.html">Roadmap</option></select></div>
-  <div class="shell"><aside class="sidebar"><a class="brand" href="index.html"><strong>Suzumio</strong><span>Non-preemptive multi-agent runtime</span></a><div class="nav-group"><p class="nav-title">Start</p><a class="nav-link" href="index.html">Overview</a><a class="nav-link" href="quickstart.html">Quickstart</a><a class="nav-link" href="concepts.html">Core Concepts</a></div><div class="nav-group"><p class="nav-title">Build</p><a class="nav-link" href="configuration.html">Configuration</a><a class="nav-link" href="architecture.html">Architecture</a><a class="nav-link" href="operations.html">Operations</a></div><div class="nav-group"><p class="nav-title">Reference</p><a class="nav-link active" href="api.html">HTTP API</a><a class="nav-link" href="roadmap.html">Roadmap</a><a class="nav-link" href="https://github.com/OmegaCombinator/suzumio">GitHub</a></div></aside>
+  <div class="mobile-nav"><select onchange="location.href=this.value"><option value="index.html">Overview</option><option value="quickstart.html">Quickstart</option><option value="concepts.html">Core Concepts</option><option value="configuration.html">Configuration</option><option value="cli.html">CLI Reference</option><option value="architecture.html">Architecture</option><option value="operations.html">Operations</option><option value="api.html" selected>HTTP API</option><option value="roadmap.html">Roadmap</option><option value="zh/api.html">中文</option></select></div>
+  <div class="shell"><aside class="sidebar"><a class="brand" href="index.html"><strong>Suzumio</strong><span>Docker-first multi-agent runtime</span></a><div class="language-switch"><a class="active" href="api.html">EN</a><a href="zh/api.html">中文</a></div><div class="nav-group"><p class="nav-title">Start</p><a class="nav-link" href="index.html">Overview</a><a class="nav-link" href="quickstart.html">Quickstart</a><a class="nav-link" href="concepts.html">Core Concepts</a></div><div class="nav-group"><p class="nav-title">Build</p><a class="nav-link" href="configuration.html">Configuration</a><a class="nav-link" href="cli.html">CLI Reference</a><a class="nav-link" href="architecture.html">Architecture</a><a class="nav-link" href="operations.html">Operations</a></div><div class="nav-group"><p class="nav-title">Reference</p><a class="nav-link active" href="api.html">HTTP API</a><a class="nav-link" href="roadmap.html">Roadmap</a><a class="nav-link" href="https://github.com/OmegaCombinator/suzumio">GitHub</a></div></aside>
   <main class="content">
     <section class="hero"><p class="eyebrow">Reference</p><h1>HTTP API and ToolHost</h1><p class="lead">The HTTP server exposes project observability, user control actions, SSE event streaming, and the container-facing ToolHost.</p></section>
 
-    <h2>General</h2>
-    <p>The server starts with:</p>
+    <h2>Server</h2>
     <pre><code>suzumio serve --host 0.0.0.0 --port 39400</code></pre>
-    <p>The current API is intentionally small and intended for local or trusted-network use. Authentication for user-facing API routes is not implemented in the first version. The container-facing tool route uses per-agent tokens.</p>
+    <p>The current API is intended for local or trusted-network use. User-facing API authentication is not implemented in the first version. The container-facing tool route uses per-agent tokens.</p>
+
+    <h2>Conventions</h2>
+    <table><tr><th>Topic</th><th>Behavior</th></tr><tr><td>Base URL</td><td><code>http://127.0.0.1:39400</code> by default.</td></tr><tr><td>Body format</td><td>JSON for POST routes except no-body lifecycle actions.</td></tr><tr><td>List limits</td><td><code>?limit=n</code>, capped at 500.</td></tr><tr><td>Errors</td><td>Validation and runtime errors return plain text or JSON depending on the route path.</td></tr><tr><td>Tokens</td><td>Agent tokens are redacted from project and agent listing responses.</td></tr></table>
 
     <h2>Health</h2>
-    <table><tr><th>Method</th><th>Path</th><th>Response</th></tr><tr><td><code>GET</code></td><td><code>/health</code></td><td><code>{ "healthy": true }</code></td></tr></table>
+    <pre><code>GET /health
 
-    <h2>Project Listing</h2>
-    <table><tr><th>Method</th><th>Path</th><th>Description</th></tr><tr><td><code>GET</code></td><td><code>/api/projects</code></td><td>List projects under <code>SUZUMIO_ROOT</code>.</td></tr><tr><td><code>GET</code></td><td><code>/api/projects/:project</code></td><td>Project summary with redacted agents, recent turns, and recent messages.</td></tr></table>
+{
+  "healthy": true
+}</code></pre>
+
+    <h2>Projects</h2>
+    <table><tr><th>Method</th><th>Path</th><th>Description</th></tr><tr><td><code>GET</code></td><td><code>/api/projects</code></td><td>List projects under <code>SUZUMIO_ROOT</code>. Each entry is a project summary.</td></tr><tr><td><code>GET</code></td><td><code>/api/projects/:project</code></td><td>Project summary with redacted agents, recent turns, and recent messages.</td></tr></table>
+    <pre><code>curl http://127.0.0.1:39400/api/projects/demo</code></pre>
 
     <h2>Project Objects</h2>
-    <table><tr><th>Method</th><th>Path</th><th>Description</th></tr><tr><td><code>GET</code></td><td><code>/api/projects/:project/agents</code></td><td>Agent records with tokens redacted.</td></tr><tr><td><code>GET</code></td><td><code>/api/projects/:project/messages?limit=100</code></td><td>Recent messages.</td></tr><tr><td><code>GET</code></td><td><code>/api/projects/:project/events?limit=200</code></td><td>Recent events.</td></tr><tr><td><code>GET</code></td><td><code>/api/projects/:project/turns?limit=100</code></td><td>Recent turns.</td></tr><tr><td><code>GET</code></td><td><code>/api/projects/:project/tool-calls?limit=100</code></td><td>Recent tool calls.</td></tr><tr><td><code>GET</code></td><td><code>/api/projects/:project/artifacts?limit=100</code></td><td>Artifact registry.</td></tr><tr><td><code>GET</code></td><td><code>/api/projects/:project/config/resolved</code></td><td>Resolved YAML config.</td></tr><tr><td><code>GET</code></td><td><code>/api/projects/:project/report</code></td><td>Final report text if submitted.</td></tr></table>
+    <table><tr><th>Method</th><th>Path</th><th>Description</th></tr><tr><td><code>GET</code></td><td><code>/api/projects/:project/agents</code></td><td>Agent records with tokens redacted.</td></tr><tr><td><code>GET</code></td><td><code>/api/projects/:project/messages?limit=100</code></td><td>Recent messages.</td></tr><tr><td><code>GET</code></td><td><code>/api/projects/:project/events?limit=200</code></td><td>Recent events.</td></tr><tr><td><code>GET</code></td><td><code>/api/projects/:project/turns?limit=100</code></td><td>Recent turns.</td></tr><tr><td><code>GET</code></td><td><code>/api/projects/:project/tool-calls?limit=100</code></td><td>Recent tool calls.</td></tr><tr><td><code>GET</code></td><td><code>/api/projects/:project/artifacts?limit=100</code></td><td>Artifact registry.</td></tr><tr><td><code>GET</code></td><td><code>/api/projects/:project/config/resolved</code></td><td>Resolved YAML config as plain text.</td></tr><tr><td><code>GET</code></td><td><code>/api/projects/:project/report</code></td><td>Final report text if submitted, otherwise a short placeholder.</td></tr></table>
 
     <h2>User Control Actions</h2>
-    <table><tr><th>Method</th><th>Path</th><th>Body</th><th>Description</th></tr><tr><td><code>POST</code></td><td><code>/api/projects/:project/start</code></td><td>Empty</td><td>Set project status to <code>running</code> and tick scheduler.</td></tr><tr><td><code>POST</code></td><td><code>/api/projects/:project/stop</code></td><td>Empty</td><td>Set project status to <code>stopped</code>.</td></tr><tr><td><code>POST</code></td><td><code>/api/projects/:project/approve</code></td><td>Empty</td><td>Set project status to <code>completed</code>.</td></tr><tr><td><code>POST</code></td><td><code>/api/projects/:project/request-changes</code></td><td><code>{ "recipient": "pm", "body": "..." }</code></td><td>Return project to running and send a user message.</td></tr><tr><td><code>POST</code></td><td><code>/api/projects/:project/messages</code></td><td><code>{ "recipient": "pm", "priority": "P1", "body": "..." }</code></td><td>Create a user or custom-sender message and tick scheduler.</td></tr></table>
+    <table><tr><th>Method</th><th>Path</th><th>Body</th><th>Description</th></tr><tr><td><code>POST</code></td><td><code>/api/projects/:project/start</code></td><td>Empty</td><td>Set project status to <code>running</code> and tick scheduler.</td></tr><tr><td><code>POST</code></td><td><code>/api/projects/:project/stop</code></td><td>Empty</td><td>Set project status to <code>stopped</code>.</td></tr><tr><td><code>POST</code></td><td><code>/api/projects/:project/approve</code></td><td>Empty</td><td>Set project status to <code>completed</code>.</td></tr><tr><td><code>POST</code></td><td><code>/api/projects/:project/request-changes</code></td><td><code>{ "recipient": "pm", "body": "..." }</code></td><td>Return project to <code>running</code>, send a <code>P1</code> user message, and tick scheduler.</td></tr><tr><td><code>POST</code></td><td><code>/api/projects/:project/messages</code></td><td><code>{ "recipient": "pm", "priority": "P1", "body": "..." }</code></td><td>Create a message and tick scheduler.</td></tr></table>
+    <pre><code>curl -X POST http://127.0.0.1:39400/api/projects/demo/messages \
+  -H 'content-type: application/json' \
+  -d '{"recipient":"pm","priority":"P1","body":"Start."}'</code></pre>
+    <p>For <code>/messages</code>, body may include <code>sender</code>, <code>recipient</code>, <code>channel</code>, <code>priority</code>, and <code>body</code>. Use either <code>recipient</code> or <code>channel</code>. Priority defaults to <code>P1</code>.</p>
 
     <h2>SSE Stream</h2>
-    <p>The event stream sends SQLite events as Server-Sent Events.</p>
-    <pre><code>GET /api/projects/:project/stream</code></pre>
-    <p>Each event contains:</p>
-    <pre><code>event: message.created
+    <p>The event stream sends SQLite events as Server-Sent Events. It emits existing recent events first and polls for new events every two seconds.</p>
+    <pre><code>GET /api/projects/:project/stream
+
+event: message.created
 data: { ...event row... }</code></pre>
 
     <h2>ToolHost</h2>
@@ -56,7 +67,7 @@ data: { ...event row... }</code></pre>
   "priority": "P2",
   "body": "Markdown message"
 }</code></pre>
-    <p>Use either <code>recipient</code> or <code>channel</code>, not both.</p>
+    <p>Use either <code>recipient</code> or <code>channel</code>, not both. Channels must be declared in project config.</p>
 
     <h3><code>artifacts.publish</code></h3>
     <pre><code>{
@@ -64,6 +75,7 @@ data: { ...event row... }</code></pre>
   "name": "optional-name.txt",
   "description": "What this artifact contains"
 }</code></pre>
+    <p>The path is relative to the agent workspace. Suzumio copies the file into the project artifact registry and records a SHA-256 hash.</p>
 
     <h3><code>artifacts.list</code></h3>
     <pre><code>{}</code></pre>
@@ -75,7 +87,7 @@ data: { ...event row... }</code></pre>
     <p>This writes <code>final-report.md</code>, marks the project <code>submitted</code>, and waits for user approval.</p>
 
     <h2>WebUI</h2>
-    <p>The root path <code>/</code> serves the embedded WebUI. It calls the API routes above and refreshes periodically.</p>
+    <p>The root path <code>/</code> serves the embedded WebUI. It calls the API routes above and refreshes periodically. The first version is intentionally simple: project selector, message form, agents, messages, turns, events, and artifacts.</p>
 
     <div class="footer">Next: <a href="roadmap.html">Roadmap</a>.</div>
   </main></div>

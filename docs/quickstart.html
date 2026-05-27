@@ -2,57 +2,71 @@
 <html lang="en">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Suzumio Quickstart</title><link rel="stylesheet" href="styles.css"></head>
 <body>
-  <div class="mobile-nav"><select onchange="location.href=this.value"><option value="index.html">Overview</option><option value="quickstart.html" selected>Quickstart</option><option value="concepts.html">Core Concepts</option><option value="configuration.html">Configuration</option><option value="architecture.html">Architecture</option><option value="operations.html">Operations</option><option value="api.html">HTTP API</option><option value="roadmap.html">Roadmap</option></select></div>
-  <div class="shell"><aside class="sidebar"><a class="brand" href="index.html"><strong>Suzumio</strong><span>Non-preemptive multi-agent runtime</span></a><div class="nav-group"><p class="nav-title">Start</p><a class="nav-link" href="index.html">Overview</a><a class="nav-link active" href="quickstart.html">Quickstart</a><a class="nav-link" href="concepts.html">Core Concepts</a></div><div class="nav-group"><p class="nav-title">Build</p><a class="nav-link" href="configuration.html">Configuration</a><a class="nav-link" href="architecture.html">Architecture</a><a class="nav-link" href="operations.html">Operations</a></div><div class="nav-group"><p class="nav-title">Reference</p><a class="nav-link" href="api.html">HTTP API</a><a class="nav-link" href="roadmap.html">Roadmap</a><a class="nav-link" href="https://github.com/OmegaCombinator/suzumio">GitHub</a></div></aside>
+  <div class="mobile-nav"><select onchange="location.href=this.value"><option value="index.html">Overview</option><option value="quickstart.html" selected>Quickstart</option><option value="concepts.html">Core Concepts</option><option value="configuration.html">Configuration</option><option value="cli.html">CLI Reference</option><option value="architecture.html">Architecture</option><option value="operations.html">Operations</option><option value="api.html">HTTP API</option><option value="roadmap.html">Roadmap</option><option value="zh/quickstart.html">中文</option></select></div>
+  <div class="shell"><aside class="sidebar"><a class="brand" href="index.html"><strong>Suzumio</strong><span>Docker-first multi-agent runtime</span></a><div class="language-switch"><a class="active" href="quickstart.html">EN</a><a href="zh/quickstart.html">中文</a></div><div class="nav-group"><p class="nav-title">Start</p><a class="nav-link" href="index.html">Overview</a><a class="nav-link active" href="quickstart.html">Quickstart</a><a class="nav-link" href="concepts.html">Core Concepts</a></div><div class="nav-group"><p class="nav-title">Build</p><a class="nav-link" href="configuration.html">Configuration</a><a class="nav-link" href="cli.html">CLI Reference</a><a class="nav-link" href="architecture.html">Architecture</a><a class="nav-link" href="operations.html">Operations</a></div><div class="nav-group"><p class="nav-title">Reference</p><a class="nav-link" href="api.html">HTTP API</a><a class="nav-link" href="roadmap.html">Roadmap</a><a class="nav-link" href="https://github.com/OmegaCombinator/suzumio">GitHub</a></div></aside>
   <main class="content">
-    <section class="hero"><p class="eyebrow">Quickstart</p><h1>Run a Docker-backed mock turn</h1><p class="lead">The mock demo verifies the core runtime without needing an API key: config loading, SQLite state, HTTP server, scheduler, Docker runner, and turn completion.</p></section>
+    <section class="hero"><p class="eyebrow">Quickstart</p><h1>Run the runtime end to end</h1><p class="lead">This guide runs a mock agent turn in Docker. It does not require a model API key, and it verifies the core path: config, SQLite, scheduler, Docker backend, runner, HTTP API, and WebUI.</p></section>
 
     <h2>Prerequisites</h2>
-    <ul><li>Node.js 24 or newer.</li><li>Docker available to the current shell.</li><li>Git if you want to commit local changes.</li></ul>
+    <table><tr><th>Requirement</th><th>Why it is needed</th><th>Check</th></tr><tr><td>Node.js 24+</td><td>CLI, server, runner build, built-in SQLite module.</td><td><code>node --version</code></td></tr><tr><td>npm</td><td>Install TypeScript and runtime dependencies.</td><td><code>npm --version</code></td></tr><tr><td>Docker</td><td>Every agent turn runs in a container.</td><td><code>docker ps</code></td></tr><tr><td>Git</td><td>Clone repository and manage local changes.</td><td><code>git --version</code></td></tr></table>
 
-    <h2>Install and Build</h2>
+    <h2>1. Clone and Build</h2>
     <pre><code>git clone git@github.com:OmegaCombinator/suzumio.git
 cd suzumio
 npm install
-npm run build
-docker build -t suzumio-runner:dev .</code></pre>
+npm run build</code></pre>
 
-    <h2>Create a Runtime Root</h2>
-    <p>Keep runtime state outside the repository. This prevents SQLite databases, turn files, and agent workspaces from mixing with source files.</p>
+    <h2>2. Build the Runner Image</h2>
+    <pre><code>docker build -t suzumio-runner:dev .</code></pre>
+    <p>The example configs use <code>suzumio-runner:dev</code>. If you use a different tag, set <code>backend.image</code> in the project config.</p>
+
+    <h2>3. Choose a Runtime Root</h2>
     <pre><code>export SUZUMIO_ROOT=/tmp/suzumio-root
 mkdir -p "$SUZUMIO_ROOT"</code></pre>
+    <p><code>SUZUMIO_ROOT</code> stores project databases, turn files, workspaces, and artifacts. Keep it outside the Git repository.</p>
 
-    <h2>Initialize a Project</h2>
+    <h2>4. Inspect the Config</h2>
+    <pre><code>suzumio config render examples/demo.yaml</code></pre>
+    <p>Rendering config before running is recommended. It shows imported content, default values, and the final shape stored in SQLite.</p>
+
+    <h2>5. Initialize the Project</h2>
     <pre><code>suzumio init examples/demo.yaml
 suzumio status demo</code></pre>
-    <p>The project directory will contain <code>suzumio.sqlite</code>, the source config, the resolved config, agent workspaces, artifacts, turns, and logs.</p>
+    <p>After initialization, the project is not scheduled yet. Start it explicitly when the server is running.</p>
 
-    <h2>Start the HTTP Server</h2>
+    <h2>6. Start the Server</h2>
     <pre><code>suzumio serve --host 0.0.0.0 --port 39400</code></pre>
-    <p>Open <code>http://127.0.0.1:39400</code> for the WebUI. The server also runs the scheduler loop by default.</p>
+    <p>This starts the HTTP API, ToolHost, WebUI, SSE stream, and scheduler loop. Open <code>http://127.0.0.1:39400</code> in a browser.</p>
 
-    <h2>Start the Project and Send Work</h2>
-    <p>In another terminal with the same <code>SUZUMIO_ROOT</code>:</p>
-    <pre><code>suzumio start demo
+    <h2>7. Send the First Message</h2>
+    <p>Open another terminal with the same <code>SUZUMIO_ROOT</code>.</p>
+    <pre><code>export SUZUMIO_ROOT=/tmp/suzumio-root
+suzumio start demo
 suzumio send demo pm P1 "Start the mock demo and report status."</code></pre>
+    <p>The scheduler will see an unread message for <code>pm</code>, create one turn, and start one Docker container.</p>
 
-    <h2>Inspect the Result</h2>
-    <pre><code>suzumio turns demo
-suzumio messages demo
-suzumio events demo</code></pre>
-    <p>A successful mock run should show one completed turn for <code>pm</code>. The completed turn text is written by the isolated container runner.</p>
+    <h2>8. Inspect Results</h2>
+    <pre><code>suzumio turns demo --limit 5
+suzumio messages demo --limit 10
+suzumio events demo --limit 20</code></pre>
+    <p>A successful mock run shows a completed turn with text similar to:</p>
+    <pre><code>Mock turn completed for pm.
 
-    <h2>AI Runner Smoke Test</h2>
-    <p>The committed AI example is sanitized. It uses an environment variable and a placeholder gateway URL. Do not commit real base URLs or keys.</p>
-    <pre><code>export SUZUMIO_GATEWAY_API_KEY=...
-suzumio init examples/ai-demo.yaml
-suzumio serve --host 0.0.0.0 --port 39400
-suzumio start ai-demo
-suzumio send ai-demo pm P1 "Send one status update to the user."</code></pre>
-    <div class="notice danger"><p>Use local untracked config for real provider endpoints. The repository examples must stay sanitized.</p></div>
+This container runner is wired correctly. In AI mode, the same runner calls the configured model and Suzumio ToolHost.</code></pre>
 
-    <h2>Common Problems</h2>
-    <table><tr><th>Symptom</th><th>Likely Cause</th><th>Fix</th></tr><tr><td>Docker build tries to pull a base image and times out.</td><td>The local Docker cache does not have the base image.</td><td>Use an available local Node image or configure your registry mirror.</td></tr><tr><td>Turn fails with connection refused on tool calls.</td><td>The container cannot reach Suzumio HTTP server.</td><td>Start <code>suzumio serve --host 0.0.0.0</code> and keep <code>controllerUrl: http://host.docker.internal:39400</code>.</td></tr><tr><td>Agent stays quiet.</td><td>It has no unread inbound messages.</td><td>Send a direct message to the agent or to a channel it can read.</td></tr></table>
+    <h2>9. Verify Non-preemptive Behavior</h2>
+    <p>If an agent is already <code>running</code>, sending another message does not interrupt the current turn. The new message remains unread until the current turn completes. This is the expected default behavior.</p>
+
+    <h2>10. Optional AI Runner Test</h2>
+    <p><code>examples/ai-demo.yaml</code> is sanitized. Copy it to a local untracked file before adding private endpoints.</p>
+    <pre><code>cp examples/ai-demo.yaml /tmp/suzumio-ai-demo.yaml
+# edit /tmp/suzumio-ai-demo.yaml locally
+export SUZUMIO_GATEWAY_API_KEY=...
+suzumio init /tmp/suzumio-ai-demo.yaml</code></pre>
+    <div class="notice danger"><p>Do not commit real API keys, private gateway URLs, or private provider names. Keep them in local config and environment variables.</p></div>
+
+    <h2>Troubleshooting</h2>
+    <table><tr><th>Symptom</th><th>Cause</th><th>Action</th></tr><tr><td>Turn fails before writing output.</td><td>Runner image not built, wrong image name, or container startup failure.</td><td>Run <code>docker build -t suzumio-runner:dev .</code> and inspect <code>docker logs &lt;container&gt;</code>.</td></tr><tr><td>Tool call connection refused.</td><td>Container cannot reach Suzumio server.</td><td>Run server with <code>--host 0.0.0.0</code> and use <code>http://host.docker.internal:39400</code>.</td></tr><tr><td>Agent does not start.</td><td>Project is not <code>running</code> or agent has no unread inbound message.</td><td>Run <code>suzumio start project</code> and send a direct message to the agent.</td></tr><tr><td>GitHub Pages custom domain is HTTP only.</td><td>Certificate is still provisioning.</td><td>Wait for GitHub Pages certificate issuance, then enable HTTPS enforcement.</td></tr></table>
 
     <div class="footer">Next: <a href="concepts.html">Core Concepts</a>.</div>
   </main></div>

@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Suzumio 路线图</title><link rel="stylesheet" href="../styles.css"></head>
+<body>
+  <div class="mobile-nav"><select onchange="location.href=this.value"><option value="index.html">概览</option><option value="quickstart.html">快速开始</option><option value="concepts.html">核心概念</option><option value="configuration.html">配置</option><option value="cli.html">CLI 参考</option><option value="architecture.html">架构</option><option value="operations.html">运维</option><option value="api.html">HTTP API</option><option value="roadmap.html" selected>路线图</option><option value="../roadmap.html">English</option></select></div>
+  <div class="shell"><aside class="sidebar"><a class="brand" href="index.html"><strong>Suzumio</strong><span>Docker-first 多智能体运行时</span></a><div class="language-switch"><a href="../roadmap.html">EN</a><a class="active" href="roadmap.html">中文</a></div><div class="nav-group"><p class="nav-title">开始</p><a class="nav-link" href="index.html">概览</a><a class="nav-link" href="quickstart.html">快速开始</a><a class="nav-link" href="concepts.html">核心概念</a></div><div class="nav-group"><p class="nav-title">构建</p><a class="nav-link" href="configuration.html">配置</a><a class="nav-link" href="cli.html">CLI 参考</a><a class="nav-link" href="architecture.html">架构</a><a class="nav-link" href="operations.html">运维</a></div><div class="nav-group"><p class="nav-title">参考</p><a class="nav-link" href="api.html">HTTP API</a><a class="nav-link active" href="roadmap.html">路线图</a><a class="nav-link" href="https://github.com/OmegaCombinator/suzumio">GitHub</a></div></aside>
+  <main class="content">
+    <section class="hero"><p class="eyebrow">路线图</p><h1>让安静运行时更可靠</h1><p class="lead">第一版验证了核心形状：Docker-first turns、SQLite project truth、mailbox scheduling、ToolHost audit 和 WebUI observability。下一步应强化这些边界。</p></section>
+
+    <h2>近期工作</h2><div class="grid"><div class="card"><h3>Runner event streaming</h3><p>在 turn 运行时，把模型 delta 和工具调用状态从容器流式传回 Suzumio。</p></div><div class="card"><h3>Container cleanup policy</h3><p>失败容器保留用于调试；成功容器可配置自动删除；暴露 cleanup 命令。</p></div><div class="card"><h3>更安全的 Docker runtime</h3><p>在 backend config 中加入 CPU、memory、network、user、read-only mount 和 capability 控制。</p></div><div class="card"><h3>更好的 WebUI</h3><p>加入过滤、artifact preview、resolved config view、turn input/output view 和 live SSE updates。</p></div></div>
+
+    <h2>Agent 和 Model Layer</h2><ul><li>改进 AI mode 的 tool-loop 和 streamed outputs。</li><li>加入持久 per-agent context summary，但不让 runner 拥有项目状态。</li><li>记录 model fallback、usage、finish reason 和 failure 的结构化 runner events。</li><li>支持 profile-level model defaults 和 per-agent overrides。</li></ul>
+    <h2>Tools</h2><ul><li>从内置 core tools 发展到 registered toolpacks。</li><li>为 git push、PR creation、高风险 shell action 加入 approval-required tools。</li><li>增加 verification、code review、research、benchmark execution 等领域 profile。</li><li>加入 artifact read/download routes 和 hash verification commands。</li></ul>
+    <h2>Scheduler</h2><p>默认 scheduler 应保持非抢占式。未来可以在接口后添加其他 scheduler，但不能削弱默认安静语义。</p><ul><li>暴露 scheduler decision log。</li><li>加入 manual wake 和 manual cancel 操作。</li><li>恢复 running turn 但容器消失的 crash 状态。</li><li>加入 project-level concurrency limits。</li></ul>
+    <h2>Security</h2><ul><li>为用户 API 增加鉴权。</li><li>在 config snapshot 和 logs 中 redact secrets。</li><li>引入 least-privilege container defaults。</li><li>保持提交示例脱敏：不包含真实 API key、真实 gateway 或私有 provider 名称。</li></ul>
+    <h2>Documentation</h2><ul><li>从 TypeScript/Zod schema 生成完整 config schema reference。</li><li>在 backend contract 稳定后加入图示。</li><li>增加 formalization、software development、research、benchmark project cookbook。</li><li>随着 API 和 CLI 行为变化同步更新中英文页面。</li></ul>
+    <h2>当前非目标</h2><ul><li>Docker-first 语义稳定前不做 Kubernetes runtime。</li><li>Mailbox turns 和 toolpacks 可靠前不引入复杂 workflow DSL。</li><li>默认不提供 in-process runner path；隔离仍是 baseline。</li><li>不做自动 PM chatter、progress nagging 或 heartbeat prompts。</li></ul>
+    <div class="footer">回到 <a href="index.html">概览</a>。</div>
+  </main></div>
+</body>
+</html>

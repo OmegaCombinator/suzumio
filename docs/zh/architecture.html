@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Suzumio 架构</title><link rel="stylesheet" href="../styles.css"></head>
+<body>
+  <div class="mobile-nav"><select onchange="location.href=this.value"><option value="index.html">概览</option><option value="quickstart.html">快速开始</option><option value="concepts.html">核心概念</option><option value="configuration.html">配置</option><option value="cli.html">CLI 参考</option><option value="architecture.html" selected>架构</option><option value="operations.html">运维</option><option value="api.html">HTTP API</option><option value="roadmap.html">路线图</option><option value="../architecture.html">English</option></select></div>
+  <div class="shell"><aside class="sidebar"><a class="brand" href="index.html"><strong>Suzumio</strong><span>Docker-first 多智能体运行时</span></a><div class="language-switch"><a href="../architecture.html">EN</a><a class="active" href="architecture.html">中文</a></div><div class="nav-group"><p class="nav-title">开始</p><a class="nav-link" href="index.html">概览</a><a class="nav-link" href="quickstart.html">快速开始</a><a class="nav-link" href="concepts.html">核心概念</a></div><div class="nav-group"><p class="nav-title">构建</p><a class="nav-link" href="configuration.html">配置</a><a class="nav-link" href="cli.html">CLI 参考</a><a class="nav-link active" href="architecture.html">架构</a><a class="nav-link" href="operations.html">运维</a></div><div class="nav-group"><p class="nav-title">参考</p><a class="nav-link" href="api.html">HTTP API</a><a class="nav-link" href="roadmap.html">路线图</a><a class="nav-link" href="https://github.com/OmegaCombinator/suzumio">GitHub</a></div></aside>
+  <main class="content">
+    <section class="hero"><p class="eyebrow">架构</p><h1>Core 负责协调，Container 执行 turn。</h1><p class="lead">Suzumio 将 orchestration 与 execution 分离。核心进程拥有项目事实和调度；Docker runner 执行一个隔离 turn 后退出。</p></section>
+
+    <h2>层次图</h2><pre><code>CLI / HTTP / WebUI
+        |
+        v
+Suzumio Core
+  Config loader
+  SQLite store
+  Message router
+  Artifact registry
+  ToolHost
+  Non-preemptive scheduler
+        |
+        v
+Docker backend
+  Creates turn input JSON
+  Starts one container per turn
+  Monitors container exit
+        |
+        v
+Container runner
+  Reads /turn/input.json
+  Runs mock or AI mode
+  Calls Suzumio /tool for project tools
+  Writes /turn/output.json</code></pre>
+
+    <h2>核心进程</h2><p>核心进程是项目级记录的权威来源。CLI、HTTP、WebUI 或审计日志需要看到的数据，都应通过 core store 写入 SQLite。</p><table><tr><th>模块</th><th>职责</th></tr><tr><td><code>config.ts</code></td><td>加载 YAML、解析 import、应用 <code>extends</code>、验证配置并渲染最终 YAML。</td></tr><tr><td><code>store.ts</code></td><td>创建和查询 projects、agents、messages、reads、turns、events、tool_calls、artifacts 等 SQLite 表。</td></tr><tr><td><code>scheduler.ts</code></td><td>实现 <code>nonpreemptive-mailbox</code> 调度规则。</td></tr><tr><td><code>tools.ts</code></td><td>定义 core tools，并对 ToolHost call 做 token 和 allowlist 检查。</td></tr><tr><td><code>server.ts</code></td><td>HTTP API、SSE stream、ToolHost route 和内嵌 WebUI。</td></tr><tr><td><code>backend.ts</code></td><td>Docker 容器创建、bind mount、runner input/output、turn completion。</td></tr><tr><td><code>runner.ts</code></td><td>mock 或模型驱动 turn 的容器入口。</td></tr></table>
+
+    <h2>Runner Contract</h2><p>Runner 通过一个 input 文件接收全部上下文，通过一个 output 文件返回结果。这让执行层可替换，同时不改变项目状态语义。</p><pre><code>type RunnerTurnInput = {
+  project: string
+  agent: { id: string; role: string; prompt: string; model?: string }
+  turn: { id: string; prompt: string }
+  workspace: string
+  controllerUrl: string
+  token: string
+  runner: RunnerConfig
+  tools: ToolDefinition[]
+}</code></pre><pre><code>type RunnerTurnOutput = {
+  text: string
+  usage?: Record&lt;string, unknown&gt;
+}</code></pre>
+
+    <h2>Docker 隔离</h2><p>每个 turn container 只获得明确的小环境：</p><ul><li><code>/turn</code> bind mount，包含 input/output 文件。</li><li><code>/workspace</code> bind mount，作为 agent workspace。</li><li>project、agent、turn、token 以及配置的 provider key 环境变量。</li><li><code>host.docker.internal</code> 映射，用于访问 host 上的 Suzumio ToolHost。</li></ul><p>当前版本保留 completed containers 便于 early debugging。后续应把 cleanup policy 配置化。</p>
+
+    <h2>Tool Flow</h2><pre><code>Model asks for tool
+  runner converts model tool call
+  runner POSTs /tool to Suzumio
+  ToolHost verifies token and tool allowlist
+  ToolHost records tool_calls row
+  core tool runs against SQLite/artifact store
+  ToolHost records success or failure
+  runner returns tool output to model</code></pre><p>模型默认不会获得任意 host tools。工具按 agent 配置，并由 core ToolHost 执行。</p>
+
+    <h2>SQLite 是项目事实</h2><p>每个项目有一个 SQLite 文件。Container runner 不维护项目数据库；持久状态必须通过 output 文件或 ToolHost call 回到 core。</p><table><tr><th>表</th><th>用途</th></tr><tr><td><code>projects</code></td><td>项目状态、任务、resolved config JSON、submitted report path。</td></tr><tr><td><code>agents</code></td><td>Agent roster、prompt、tool allowlist、token、active turn。</td></tr><tr><td><code>messages</code></td><td>直接消息和频道消息。</td></tr><tr><td><code>message_reads</code></td><td>哪个 turn 消费了哪个 inbound message。</td></tr><tr><td><code>turns</code></td><td>Turn 执行记录和 output text。</td></tr><tr><td><code>events</code></td><td>Append-style event timeline。</td></tr><tr><td><code>tool_calls</code></td><td>已审计的工具调用记录。</td></tr><tr><td><code>artifacts</code></td><td>带 hash 和 metadata 的已发布文件。</td></tr></table>
+
+    <h2>边界的价值</h2><p>项目事实留在 core 中，agent execution 就可以是一次性的。Runner 可以失败、替换或升级，而项目数据库、消息历史、artifact 和用户控制面保持稳定。</p>
+    <div class="footer">下一步：<a href="operations.html">运维</a>。</div>
+  </main></div>
+</body>
+</html>
