@@ -1,0 +1,45 @@
+name: demo
+task: |
+  Demonstrate that Suzumio can deliver a user message to an isolated Docker runner and record the completed turn.
+
+scheduler:
+  kind: nonpreemptive-mailbox
+  intervalMs: 2000
+  maxPromptMessages: 20
+
+backend:
+  kind: docker-chat
+  image: suzumio-runner:dev
+  controllerUrl: http://host.docker.internal:39400
+  runner:
+    mode: mock
+
+agents:
+  pm:
+    role: project-manager
+    prompt: |
+      You coordinate the project. When you receive a user request, handle it in one non-preemptive turn.
+    tools:
+      - messages.send
+      - completion.submit
+
+  worker:
+    role: worker
+    prompt: |
+      Work uninterrupted. Report only when you have a result, useful artifact, blocker, or question.
+    tools:
+      - messages.send
+      - artifacts.publish
+      - artifacts.list
+
+channels:
+  - "#project"
+  - "#blocked"
+
+observability:
+  http:
+    enabled: true
+    host: 127.0.0.1
+    port: 39400
+  webui:
+    enabled: true

@@ -1,0 +1,55 @@
+name: ai-demo
+task: |
+  Demonstrate one AI-backed Suzumio turn. The agent should send a short status message to the user.
+
+scheduler:
+  kind: nonpreemptive-mailbox
+
+backend:
+  kind: docker-chat
+  image: suzumio-runner:dev
+  controllerUrl: http://host.docker.internal:39400
+  runner:
+    mode: ai
+    model: main
+    models:
+      default: main
+      providers:
+        gateway:
+          type: openai-compatible
+          baseURL: https://your-gateway.example/v1
+          apiKeyEnv: SUZUMIO_GATEWAY_API_KEY
+          timeoutMs: 300000
+      presets:
+        main:
+          provider: gateway
+          model: gpt-5.5
+          apiModel: gpt-5.5
+          maxOutputTokens: 2000
+          contextLimit: 260000
+          toolChoice: auto
+          providerOptions:
+            reasoningEffort: low
+            textVerbosity: low
+            reasoningSummary: auto
+            include:
+              - reasoning.encrypted_content
+
+agents:
+  pm:
+    role: project-manager
+    prompt: |
+      You are a concise project manager. Send one short status update to the user using messages.send.
+    tools:
+      - messages.send
+
+channels:
+  - "#project"
+
+observability:
+  http:
+    enabled: true
+    host: 127.0.0.1
+    port: 39400
+  webui:
+    enabled: true

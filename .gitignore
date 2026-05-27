@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.suzumio/
+*.log
+.env
+.env.*
+!.env.example

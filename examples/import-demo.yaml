@@ -1,0 +1,9 @@
+name: import-demo
+task: @import(fragments/task.md)
+
+backend:
+  runner:
+    mode: mock
+
+agents:
+  pm: @import(fragments/pm.yaml)

@@ -1,0 +1,30 @@
+{
+  "name": "suzumio",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "bin": {
+    "suzumio": "dist/cli.js",
+    "suzumio-runner": "dist/runner.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "latest",
+    "@ai-sdk/google": "latest",
+    "@ai-sdk/openai": "latest",
+    "@ai-sdk/openai-compatible": "latest",
+    "ai": "latest",
+    "dockerode": "latest",
+    "undici": "latest",
+    "yaml": "latest",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@types/dockerode": "latest",
+    "@types/node": "latest",
+    "typescript": "latest"
+  }
+}
