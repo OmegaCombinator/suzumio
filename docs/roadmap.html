@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Suzumio Roadmap</title><link rel="stylesheet" href="styles.css"></head>
+<body>
+  <div class="mobile-nav"><select onchange="location.href=this.value"><option value="index.html">Overview</option><option value="quickstart.html">Quickstart</option><option value="concepts.html">Core Concepts</option><option value="configuration.html">Configuration</option><option value="architecture.html">Architecture</option><option value="operations.html">Operations</option><option value="api.html">HTTP API</option><option value="roadmap.html" selected>Roadmap</option></select></div>
+  <div class="shell"><aside class="sidebar"><a class="brand" href="index.html"><strong>Suzumio</strong><span>Non-preemptive multi-agent runtime</span></a><div class="nav-group"><p class="nav-title">Start</p><a class="nav-link" href="index.html">Overview</a><a class="nav-link" href="quickstart.html">Quickstart</a><a class="nav-link" href="concepts.html">Core Concepts</a></div><div class="nav-group"><p class="nav-title">Build</p><a class="nav-link" href="configuration.html">Configuration</a><a class="nav-link" href="architecture.html">Architecture</a><a class="nav-link" href="operations.html">Operations</a></div><div class="nav-group"><p class="nav-title">Reference</p><a class="nav-link" href="api.html">HTTP API</a><a class="nav-link active" href="roadmap.html">Roadmap</a><a class="nav-link" href="https://github.com/OmegaCombinator/suzumio">GitHub</a></div></aside>
+  <main class="content">
+    <section class="hero"><p class="eyebrow">Roadmap</p><h1>Make the quiet runtime stronger</h1><p class="lead">The first version proves the shape: Docker-first turns, SQLite project truth, mailbox scheduling, ToolHost audit, and WebUI observability. The next work should harden those boundaries.</p></section>
+
+    <h2>Near Term</h2>
+    <div class="grid"><div class="card"><h3>Runner event streaming</h3><p>Stream model deltas and tool call state from the container to Suzumio while a turn is running.</p></div><div class="card"><h3>Container cleanup policy</h3><p>Keep failed containers for debugging, auto-remove successful containers when configured, and expose cleanup commands.</p></div><div class="card"><h3>Safer Docker runtime</h3><p>Add CPU, memory, network, user, read-only mount, and capability controls to backend config.</p></div><div class="card"><h3>Better WebUI</h3><p>Add filtering, artifact previews, resolved config view, turn input/output view, and live SSE updates.</p></div></div>
+
+    <h2>Agent and Model Layer</h2>
+    <ul><li>Improve AI mode agentic loop support.</li><li>Add durable per-agent context summaries without letting the runner own project state.</li><li>Add structured runner events for model fallback, usage, finish reasons, and failures.</li><li>Support profile-level model defaults and per-agent overrides.</li></ul>
+
+    <h2>Tools</h2>
+    <ul><li>Move from built-in core tools to registered toolpacks.</li><li>Add approval-required tools for git push, PR creation, and high-risk shell actions.</li><li>Add domain-specific profiles such as Acorn verification, code review, and benchmark execution.</li><li>Add artifact read/download routes and hash verification commands.</li></ul>
+
+    <h2>Scheduler</h2>
+    <p>The default scheduler should remain non-preemptive. Future schedulers can be added behind an interface, but they should not weaken the default quiet semantics.</p>
+    <ul><li>Expose a scheduler decision log.</li><li>Add manual wake and manual cancel operations.</li><li>Add crash recovery for running turns whose containers disappeared.</li><li>Add project-level concurrency limits.</li></ul>
+
+    <h2>Security</h2>
+    <ul><li>Add user-facing API authentication.</li><li>Redact secrets in config snapshots and logs.</li><li>Introduce least-privilege container defaults.</li><li>Keep committed examples sanitized: no real API keys, real gateways, or private provider names.</li></ul>
+
+    <h2>Documentation</h2>
+    <ul><li>Add a complete config schema reference generated from TypeScript/Zod.</li><li>Add diagrams once the backend contract stabilizes.</li><li>Add cookbook examples for proof work, software development, research, and benchmark projects.</li><li>Add migration notes from earlier gausystem experiments.</li></ul>
+
+    <h2>Non-goals For Now</h2>
+    <ul><li>No Kubernetes runtime until Docker-first semantics are stable.</li><li>No complicated workflow DSL before mailbox turns and toolpacks are reliable.</li><li>No default in-process runner path; isolation remains the baseline.</li><li>No automatic PM chatter, progress nagging, or heartbeat prompts.</li></ul>
+
+    <div class="footer">Back to <a href="index.html">Overview</a>.</div>
+  </main></div>
+</body>
+</html>

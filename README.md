@@ -2,6 +2,8 @@
 
 Suzumio is a Docker-first, non-preemptive multi-agent coordination runtime.
 
+Documentation: https://omegacombinator.github.io/suzumio/
+
 Core principles:
 
 - Agents run in isolated Docker turns managed by the backend.
@@ -18,6 +20,8 @@ This repository is an early build. The first implementation includes:
 - Core tools: `messages.send`, `artifacts.publish`, `artifacts.list`, `completion.submit`.
 - A non-preemptive mailbox scheduler.
 - CLI, HTTP API, SSE stream, and a minimal flat WebUI.
+
+The documentation site is committed under `docs/` and deployed to GitHub Pages by `.github/workflows/pages.yml`.
 
 ## Quick Sketch
 

@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Suzumio Quickstart</title><link rel="stylesheet" href="styles.css"></head>
+<body>
+  <div class="mobile-nav"><select onchange="location.href=this.value"><option value="index.html">Overview</option><option value="quickstart.html" selected>Quickstart</option><option value="concepts.html">Core Concepts</option><option value="configuration.html">Configuration</option><option value="architecture.html">Architecture</option><option value="operations.html">Operations</option><option value="api.html">HTTP API</option><option value="roadmap.html">Roadmap</option></select></div>
+  <div class="shell"><aside class="sidebar"><a class="brand" href="index.html"><strong>Suzumio</strong><span>Non-preemptive multi-agent runtime</span></a><div class="nav-group"><p class="nav-title">Start</p><a class="nav-link" href="index.html">Overview</a><a class="nav-link active" href="quickstart.html">Quickstart</a><a class="nav-link" href="concepts.html">Core Concepts</a></div><div class="nav-group"><p class="nav-title">Build</p><a class="nav-link" href="configuration.html">Configuration</a><a class="nav-link" href="architecture.html">Architecture</a><a class="nav-link" href="operations.html">Operations</a></div><div class="nav-group"><p class="nav-title">Reference</p><a class="nav-link" href="api.html">HTTP API</a><a class="nav-link" href="roadmap.html">Roadmap</a><a class="nav-link" href="https://github.com/OmegaCombinator/suzumio">GitHub</a></div></aside>
+  <main class="content">
+    <section class="hero"><p class="eyebrow">Quickstart</p><h1>Run a Docker-backed mock turn</h1><p class="lead">The mock demo verifies the core runtime without needing an API key: config loading, SQLite state, HTTP server, scheduler, Docker runner, and turn completion.</p></section>
+
+    <h2>Prerequisites</h2>
+    <ul><li>Node.js 24 or newer.</li><li>Docker available to the current shell.</li><li>Git if you want to commit local changes.</li></ul>
+
+    <h2>Install and Build</h2>
+    <pre><code>git clone git@github.com:OmegaCombinator/suzumio.git
+cd suzumio
+npm install
+npm run build
+docker build -t suzumio-runner:dev .</code></pre>
+
+    <h2>Create a Runtime Root</h2>
+    <p>Keep runtime state outside the repository. This prevents SQLite databases, turn files, and agent workspaces from mixing with source files.</p>
+    <pre><code>export SUZUMIO_ROOT=/tmp/suzumio-root
+mkdir -p "$SUZUMIO_ROOT"</code></pre>
+
+    <h2>Initialize a Project</h2>
+    <pre><code>suzumio init examples/demo.yaml
+suzumio status demo</code></pre>
+    <p>The project directory will contain <code>suzumio.sqlite</code>, the source config, the resolved config, agent workspaces, artifacts, turns, and logs.</p>
+
+    <h2>Start the HTTP Server</h2>
+    <pre><code>suzumio serve --host 0.0.0.0 --port 39400</code></pre>
+    <p>Open <code>http://127.0.0.1:39400</code> for the WebUI. The server also runs the scheduler loop by default.</p>
+
+    <h2>Start the Project and Send Work</h2>
+    <p>In another terminal with the same <code>SUZUMIO_ROOT</code>:</p>
+    <pre><code>suzumio start demo
+suzumio send demo pm P1 "Start the mock demo and report status."</code></pre>
+
+    <h2>Inspect the Result</h2>
+    <pre><code>suzumio turns demo
+suzumio messages demo
+suzumio events demo</code></pre>
+    <p>A successful mock run should show one completed turn for <code>pm</code>. The completed turn text is written by the isolated container runner.</p>
+
+    <h2>AI Runner Smoke Test</h2>
+    <p>The committed AI example is sanitized. It uses an environment variable and a placeholder gateway URL. Do not commit real base URLs or keys.</p>
+    <pre><code>export SUZUMIO_GATEWAY_API_KEY=...
+suzumio init examples/ai-demo.yaml
+suzumio serve --host 0.0.0.0 --port 39400
+suzumio start ai-demo
+suzumio send ai-demo pm P1 "Send one status update to the user."</code></pre>
+    <div class="notice danger"><p>Use local untracked config for real provider endpoints. The repository examples must stay sanitized.</p></div>
+
+    <h2>Common Problems</h2>
+    <table><tr><th>Symptom</th><th>Likely Cause</th><th>Fix</th></tr><tr><td>Docker build tries to pull a base image and times out.</td><td>The local Docker cache does not have the base image.</td><td>Use an available local Node image or configure your registry mirror.</td></tr><tr><td>Turn fails with connection refused on tool calls.</td><td>The container cannot reach Suzumio HTTP server.</td><td>Start <code>suzumio serve --host 0.0.0.0</code> and keep <code>controllerUrl: http://host.docker.internal:39400</code>.</td></tr><tr><td>Agent stays quiet.</td><td>It has no unread inbound messages.</td><td>Send a direct message to the agent or to a channel it can read.</td></tr></table>
+
+    <div class="footer">Next: <a href="concepts.html">Core Concepts</a>.</div>
+  </main></div>
+</body>
+</html>

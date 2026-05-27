@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Suzumio Core Concepts</title><link rel="stylesheet" href="styles.css"></head>
+<body>
+  <div class="mobile-nav"><select onchange="location.href=this.value"><option value="index.html">Overview</option><option value="quickstart.html">Quickstart</option><option value="concepts.html" selected>Core Concepts</option><option value="configuration.html">Configuration</option><option value="architecture.html">Architecture</option><option value="operations.html">Operations</option><option value="api.html">HTTP API</option><option value="roadmap.html">Roadmap</option></select></div>
+  <div class="shell"><aside class="sidebar"><a class="brand" href="index.html"><strong>Suzumio</strong><span>Non-preemptive multi-agent runtime</span></a><div class="nav-group"><p class="nav-title">Start</p><a class="nav-link" href="index.html">Overview</a><a class="nav-link" href="quickstart.html">Quickstart</a><a class="nav-link active" href="concepts.html">Core Concepts</a></div><div class="nav-group"><p class="nav-title">Build</p><a class="nav-link" href="configuration.html">Configuration</a><a class="nav-link" href="architecture.html">Architecture</a><a class="nav-link" href="operations.html">Operations</a></div><div class="nav-group"><p class="nav-title">Reference</p><a class="nav-link" href="api.html">HTTP API</a><a class="nav-link" href="roadmap.html">Roadmap</a><a class="nav-link" href="https://github.com/OmegaCombinator/suzumio">GitHub</a></div></aside>
+  <main class="content">
+    <section class="hero"><p class="eyebrow">Concepts</p><h1>Turns, mailboxes, and quiet agents</h1><p class="lead">Suzumio's behavior is intentionally simple. It starts agents only when they have inbound work, and it never interrupts an agent that is already running.</p></section>
+
+    <h2>Project</h2>
+    <p>A project is the top-level unit of coordination. It has one resolved config, one SQLite database, one task statement, one agent roster, one artifact registry, and one event stream.</p>
+    <p>The project status controls scheduling:</p>
+    <table><tr><th>Status</th><th>Meaning</th></tr><tr><td><code>initialized</code></td><td>Created but not scheduled.</td></tr><tr><td><code>running</code></td><td>Scheduler may start ready agents.</td></tr><tr><td><code>submitted</code></td><td>Final report was submitted and waits for user approval.</td></tr><tr><td><code>completed</code></td><td>User approved the result.</td></tr><tr><td><code>stopped</code></td><td>Scheduling is disabled.</td></tr><tr><td><code>failed</code></td><td>Reserved for project-level failures.</td></tr></table>
+
+    <h2>Agent</h2>
+    <p>An agent is a named participant with a role, prompt, model, tool allowlist, workspace, and private token. Suzumio stores agent state in SQLite and passes only the needed turn input into the container runner.</p>
+    <p>Agent states are deliberately small:</p>
+    <table><tr><th>State</th><th>Meaning</th></tr><tr><td><code>quiet</code></td><td>The agent is idle and has no unread inbound messages.</td></tr><tr><td><code>ready</code></td><td>Reserved for derived/UI state when inbound messages exist.</td></tr><tr><td><code>running</code></td><td>A Docker turn is active. The scheduler must not prompt this agent.</td></tr><tr><td><code>failed</code></td><td>The last turn failed or the backend reported an error.</td></tr><tr><td><code>stopped</code></td><td>The agent is disabled.</td></tr></table>
+
+    <h2>Message</h2>
+    <p>Messages are durable project records. They can be direct messages to one agent or channel messages to a configured project channel. A user is represented as a virtual sender named <code>user</code>.</p>
+    <pre><code>{
+  "sender": "user",
+  "recipient": "pm",
+  "priority": "P1",
+  "body": "Start the project."
+}</code></pre>
+    <p>A message is consumed by an agent only when the scheduler starts a turn for that agent and marks the selected inbound messages as read for that turn.</p>
+
+    <h2>Turn</h2>
+    <p>A turn is one isolated agent execution. It has a prompt, an input file, an output file, a status, optional text, optional error, usage metadata, and a container name.</p>
+    <p>Turns are not chat messages. They are execution records. A turn may result in text, tool calls, published artifacts, sent messages, or a final submission.</p>
+
+    <h2>Non-preemptive Mailbox Scheduler</h2>
+    <p>The first scheduler is <code>nonpreemptive-mailbox</code>. Its rules are the heart of Suzumio:</p>
+    <ol><li>If an agent is running, do nothing to it.</li><li>If a project is not running, do nothing.</li><li>If an idle agent has no unread inbound messages, keep it quiet.</li><li>If an idle agent has unread inbound messages, render exactly one turn prompt and start one Docker turn.</li><li>New messages that arrive during a turn wait in the mailbox.</li><li>There are no heartbeats, no automatic status prompts, and no scheduler-generated nudges.</li></ol>
+
+    <h2>ToolHost</h2>
+    <p>The container runner does not own project tools. It calls Suzumio's HTTP ToolHost. The ToolHost checks the agent token, verifies the tool allowlist, records the tool call, executes the core tool, and records success or failure.</p>
+
+    <h2>Artifact</h2>
+    <p>An artifact is a file published from an agent workspace into the project artifact registry. Suzumio records its id, creator, turn id, name, path, SHA-256 hash, description, and timestamp.</p>
+
+    <h2>Why Quiet Waiting Matters</h2>
+    <p>In a long-running agent system, interruptions are expensive. A project manager that has already delegated work should not be prompted repeatedly to say it is waiting. A worker trying a long proof or code change should not be interrupted to report that it is still trying. Suzumio treats uninterrupted work as the default, not as an exception.</p>
+
+    <div class="footer">Next: <a href="configuration.html">Configuration</a>.</div>
+  </main></div>
+</body>
+</html>

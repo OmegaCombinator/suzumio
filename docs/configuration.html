@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Suzumio Configuration</title><link rel="stylesheet" href="styles.css"></head>
+<body>
+  <div class="mobile-nav"><select onchange="location.href=this.value"><option value="index.html">Overview</option><option value="quickstart.html">Quickstart</option><option value="concepts.html">Core Concepts</option><option value="configuration.html" selected>Configuration</option><option value="architecture.html">Architecture</option><option value="operations.html">Operations</option><option value="api.html">HTTP API</option><option value="roadmap.html">Roadmap</option></select></div>
+  <div class="shell"><aside class="sidebar"><a class="brand" href="index.html"><strong>Suzumio</strong><span>Non-preemptive multi-agent runtime</span></a><div class="nav-group"><p class="nav-title">Start</p><a class="nav-link" href="index.html">Overview</a><a class="nav-link" href="quickstart.html">Quickstart</a><a class="nav-link" href="concepts.html">Core Concepts</a></div><div class="nav-group"><p class="nav-title">Build</p><a class="nav-link active" href="configuration.html">Configuration</a><a class="nav-link" href="architecture.html">Architecture</a><a class="nav-link" href="operations.html">Operations</a></div><div class="nav-group"><p class="nav-title">Reference</p><a class="nav-link" href="api.html">HTTP API</a><a class="nav-link" href="roadmap.html">Roadmap</a><a class="nav-link" href="https://github.com/OmegaCombinator/suzumio">GitHub</a></div></aside>
+  <main class="content">
+    <section class="hero"><p class="eyebrow">Configuration</p><h1>One file or many files</h1><p class="lead">Suzumio config is YAML with strict whole-field imports and explicit profile composition. You can keep a project in one file or split task text, prompts, agents, and backend settings across files.</p></section>
+
+    <h2>Minimal Config</h2>
+    <pre><code>name: demo
+task: |
+  Demonstrate one non-preemptive turn.
+
+backend:
+  runner:
+    mode: mock
+
+agents:
+  pm:
+    role: project-manager
+    prompt: |
+      Coordinate the project and stay concise.
+    tools:
+      - messages.send</code></pre>
+
+    <h2>Import Rules</h2>
+    <p>A scalar value whose whole value is <code>@import(path)</code> is replaced by the imported file.</p>
+    <pre><code>task: @import(tasks/main.md)
+agents:
+  pm: @import(agents/pm.yaml)</code></pre>
+    <p>If <code>agents/pm.yaml</code> contains:</p>
+    <pre><code>role: project-manager
+prompt: |
+  Assign work, then wait quietly.
+tools:
+  - messages.send</code></pre>
+    <p>then the resolved config contains:</p>
+    <pre><code>agents:
+  pm:
+    role: project-manager
+    prompt: |
+      Assign work, then wait quietly.
+    tools:
+      - messages.send</code></pre>
+    <table><tr><th>Rule</th><th>Details</th></tr><tr><td>Whole-field only</td><td><code>@import(path)</code> replaces the entire field value. String interpolation is intentionally not supported.</td></tr><tr><td>Relative paths</td><td>Paths are resolved relative to the file containing the import.</td></tr><tr><td>Structured formats</td><td><code>.yaml</code>, <code>.yml</code>, and <code>.json</code> are parsed into objects.</td></tr><tr><td>Text formats</td><td>Other files are imported as text.</td></tr><tr><td>Reproducibility</td><td>HTTP and HTTPS imports are disabled.</td></tr><tr><td>Safety</td><td>Recursive imports are supported with circular import detection and depth limits.</td></tr></table>
+
+    <h2>Extends</h2>
+    <p>Top-level <code>extends</code> composes profiles. Imports are resolved first, then objects are deep-merged. Later entries and the project file override earlier fields.</p>
+    <pre><code>extends:
+  - @import(profiles/base.yaml)
+  - @import(profiles/acorn.yaml)
+
+name: sqrt2-plus-sqrt3
+task: @import(tasks/sqrt2-plus-sqrt3.md)
+
+agents:
+  worker:
+    count: 3</code></pre>
+    <p>Arrays are replaced, not concatenated. This makes resolved configs easier to debug because a later profile cannot silently append unexpected tools or agents.</p>
+
+    <h2>Project Fields</h2>
+    <table><tr><th>Field</th><th>Required</th><th>Purpose</th></tr><tr><td><code>name</code></td><td>Yes</td><td>Project id and runtime directory name.</td></tr><tr><td><code>task</code></td><td>Yes</td><td>Durable project task included in each turn prompt.</td></tr><tr><td><code>scheduler</code></td><td>No</td><td>Scheduler kind and options. Defaults to <code>nonpreemptive-mailbox</code>.</td></tr><tr><td><code>backend</code></td><td>No</td><td>Docker runner image, controller URL, and runner mode/model settings.</td></tr><tr><td><code>agents</code></td><td>Yes</td><td>Agent roster. At least one agent is required.</td></tr><tr><td><code>channels</code></td><td>No</td><td>Allowed project channels. Unknown channels are rejected.</td></tr><tr><td><code>observability</code></td><td>No</td><td>HTTP and WebUI defaults.</td></tr></table>
+
+    <h2>Backend and Runner</h2>
+    <pre><code>backend:
+  kind: docker-chat
+  image: suzumio-runner:dev
+  controllerUrl: http://host.docker.internal:39400
+  runner:
+    mode: mock</code></pre>
+    <p>Use <code>mock</code> for infrastructure tests. Use <code>ai</code> for model-backed turns.</p>
+
+    <h2>AI Model Config</h2>
+    <pre><code>backend:
+  runner:
+    mode: ai
+    model: main
+    models:
+      default: main
+      providers:
+        gateway:
+          type: openai-compatible
+          baseURL: https://your-gateway.example/v1
+          apiKeyEnv: SUZUMIO_GATEWAY_API_KEY
+      presets:
+        main:
+          provider: gateway
+          model: gpt-5.5
+          apiModel: gpt-5.5
+          toolChoice: auto</code></pre>
+    <div class="notice danger"><p>Do not commit real API keys or private gateway URLs. Use local untracked config and environment variables.</p></div>
+
+    <h2>Agent Config</h2>
+    <pre><code>agents:
+  worker:
+    role: worker
+    count: 2
+    prompt: @import(prompts/worker.md)
+    model: main
+    tools:
+      - messages.send
+      - artifacts.publish
+      - artifacts.list</code></pre>
+    <p>If <code>count</code> is greater than one, Suzumio expands the agent into <code>worker-1</code>, <code>worker-2</code>, and so on.</p>
+
+    <h2>Render Before Running</h2>
+    <pre><code>suzumio config render examples/import-demo.yaml</code></pre>
+    <p>The rendered config is the best debugging artifact. It shows exactly what Suzumio will validate and store.</p>
+
+    <div class="footer">Next: <a href="architecture.html">Architecture</a>.</div>
+  </main></div>
+</body>
+</html>

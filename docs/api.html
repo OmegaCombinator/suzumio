@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Suzumio HTTP API</title><link rel="stylesheet" href="styles.css"></head>
+<body>
+  <div class="mobile-nav"><select onchange="location.href=this.value"><option value="index.html">Overview</option><option value="quickstart.html">Quickstart</option><option value="concepts.html">Core Concepts</option><option value="configuration.html">Configuration</option><option value="architecture.html">Architecture</option><option value="operations.html">Operations</option><option value="api.html" selected>HTTP API</option><option value="roadmap.html">Roadmap</option></select></div>
+  <div class="shell"><aside class="sidebar"><a class="brand" href="index.html"><strong>Suzumio</strong><span>Non-preemptive multi-agent runtime</span></a><div class="nav-group"><p class="nav-title">Start</p><a class="nav-link" href="index.html">Overview</a><a class="nav-link" href="quickstart.html">Quickstart</a><a class="nav-link" href="concepts.html">Core Concepts</a></div><div class="nav-group"><p class="nav-title">Build</p><a class="nav-link" href="configuration.html">Configuration</a><a class="nav-link" href="architecture.html">Architecture</a><a class="nav-link" href="operations.html">Operations</a></div><div class="nav-group"><p class="nav-title">Reference</p><a class="nav-link active" href="api.html">HTTP API</a><a class="nav-link" href="roadmap.html">Roadmap</a><a class="nav-link" href="https://github.com/OmegaCombinator/suzumio">GitHub</a></div></aside>
+  <main class="content">
+    <section class="hero"><p class="eyebrow">Reference</p><h1>HTTP API and ToolHost</h1><p class="lead">The HTTP server exposes project observability, user control actions, SSE event streaming, and the container-facing ToolHost.</p></section>
+
+    <h2>General</h2>
+    <p>The server starts with:</p>
+    <pre><code>suzumio serve --host 0.0.0.0 --port 39400</code></pre>
+    <p>The current API is intentionally small and intended for local or trusted-network use. Authentication for user-facing API routes is not implemented in the first version. The container-facing tool route uses per-agent tokens.</p>
+
+    <h2>Health</h2>
+    <table><tr><th>Method</th><th>Path</th><th>Response</th></tr><tr><td><code>GET</code></td><td><code>/health</code></td><td><code>{ "healthy": true }</code></td></tr></table>
+
+    <h2>Project Listing</h2>
+    <table><tr><th>Method</th><th>Path</th><th>Description</th></tr><tr><td><code>GET</code></td><td><code>/api/projects</code></td><td>List projects under <code>SUZUMIO_ROOT</code>.</td></tr><tr><td><code>GET</code></td><td><code>/api/projects/:project</code></td><td>Project summary with redacted agents, recent turns, and recent messages.</td></tr></table>
+
+    <h2>Project Objects</h2>
+    <table><tr><th>Method</th><th>Path</th><th>Description</th></tr><tr><td><code>GET</code></td><td><code>/api/projects/:project/agents</code></td><td>Agent records with tokens redacted.</td></tr><tr><td><code>GET</code></td><td><code>/api/projects/:project/messages?limit=100</code></td><td>Recent messages.</td></tr><tr><td><code>GET</code></td><td><code>/api/projects/:project/events?limit=200</code></td><td>Recent events.</td></tr><tr><td><code>GET</code></td><td><code>/api/projects/:project/turns?limit=100</code></td><td>Recent turns.</td></tr><tr><td><code>GET</code></td><td><code>/api/projects/:project/tool-calls?limit=100</code></td><td>Recent tool calls.</td></tr><tr><td><code>GET</code></td><td><code>/api/projects/:project/artifacts?limit=100</code></td><td>Artifact registry.</td></tr><tr><td><code>GET</code></td><td><code>/api/projects/:project/config/resolved</code></td><td>Resolved YAML config.</td></tr><tr><td><code>GET</code></td><td><code>/api/projects/:project/report</code></td><td>Final report text if submitted.</td></tr></table>
+
+    <h2>User Control Actions</h2>
+    <table><tr><th>Method</th><th>Path</th><th>Body</th><th>Description</th></tr><tr><td><code>POST</code></td><td><code>/api/projects/:project/start</code></td><td>Empty</td><td>Set project status to <code>running</code> and tick scheduler.</td></tr><tr><td><code>POST</code></td><td><code>/api/projects/:project/stop</code></td><td>Empty</td><td>Set project status to <code>stopped</code>.</td></tr><tr><td><code>POST</code></td><td><code>/api/projects/:project/approve</code></td><td>Empty</td><td>Set project status to <code>completed</code>.</td></tr><tr><td><code>POST</code></td><td><code>/api/projects/:project/request-changes</code></td><td><code>{ "recipient": "pm", "body": "..." }</code></td><td>Return project to running and send a user message.</td></tr><tr><td><code>POST</code></td><td><code>/api/projects/:project/messages</code></td><td><code>{ "recipient": "pm", "priority": "P1", "body": "..." }</code></td><td>Create a user or custom-sender message and tick scheduler.</td></tr></table>
+
+    <h2>SSE Stream</h2>
+    <p>The event stream sends SQLite events as Server-Sent Events.</p>
+    <pre><code>GET /api/projects/:project/stream</code></pre>
+    <p>Each event contains:</p>
+    <pre><code>event: message.created
+data: { ...event row... }</code></pre>
+
+    <h2>ToolHost</h2>
+    <p>The Docker runner uses <code>POST /tool</code> to execute project tools. This route is not a public user API.</p>
+    <pre><code>POST /tool
+{
+  "project": "demo",
+  "agentId": "pm",
+  "turnId": "turn_...",
+  "token": "agent-private-token",
+  "tool": "messages.send",
+  "input": {
+    "recipient": "user",
+    "priority": "P1",
+    "body": "Done."
+  }
+}</code></pre>
+    <p>The ToolHost verifies that the token matches the agent and that the requested tool is in the agent allowlist. It records a <code>tool_calls</code> row before execution and updates it after success or failure.</p>
+
+    <h2>Core Tool Inputs</h2>
+    <h3><code>messages.send</code></h3>
+    <pre><code>{
+  "recipient": "worker",
+  "channel": "#project",
+  "priority": "P2",
+  "body": "Markdown message"
+}</code></pre>
+    <p>Use either <code>recipient</code> or <code>channel</code>, not both.</p>
+
+    <h3><code>artifacts.publish</code></h3>
+    <pre><code>{
+  "path": "relative/path/in/workspace.txt",
+  "name": "optional-name.txt",
+  "description": "What this artifact contains"
+}</code></pre>
+
+    <h3><code>artifacts.list</code></h3>
+    <pre><code>{}</code></pre>
+
+    <h3><code>completion.submit</code></h3>
+    <pre><code>{
+  "report": "# Final Report\n\n..."
+}</code></pre>
+    <p>This writes <code>final-report.md</code>, marks the project <code>submitted</code>, and waits for user approval.</p>
+
+    <h2>WebUI</h2>
+    <p>The root path <code>/</code> serves the embedded WebUI. It calls the API routes above and refreshes periodically.</p>
+
+    <div class="footer">Next: <a href="roadmap.html">Roadmap</a>.</div>
+  </main></div>
+</body>
+</html>
