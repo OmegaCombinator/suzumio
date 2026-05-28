@@ -2,8 +2,28 @@ name: import-demo
 task: @import(fragments/task.md)
 
 backend:
+  kind: docker-chat
+  image: suzumio-runner:dev
+  controllerUrl: http://host.docker.internal:39400
   runner:
-    mode: mock
+    mode: ai
+    model: main
+    models:
+      default: main
+      providers:
+        gateway:
+          type: openai-compatible
+          baseURL: https://your-gateway.example/v1
+          apiKeyEnv: SUZUMIO_GATEWAY_API_KEY
+          timeoutMs: 300000
+      presets:
+        main:
+          provider: gateway
+          displayName: Main agent model
+          model: gpt-5.5
+          apiModel: gpt-5.5
+          maxOutputTokens: 2000
+          toolChoice: auto
 
 agents:
   pm: @import(fragments/pm.yaml)

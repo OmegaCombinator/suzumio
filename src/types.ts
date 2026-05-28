@@ -33,12 +33,13 @@ export interface BackendConfig {
     network?: string;
     memory?: string;
     cpus?: number;
+    mounts?: DockerMountConfig[];
   };
   runner: RunnerConfig;
 }
 
 export interface RunnerConfig {
-  mode: "mock" | "ai";
+  mode: "ai";
   model?: string;
   maxIterations: number;
   maxToolCalls: number;
@@ -65,6 +66,7 @@ export interface ProviderConfig {
 
 export interface ModelPresetConfig {
   provider: string;
+  displayName?: string;
   model: string;
   apiModel?: string;
   temperature?: number;
@@ -84,8 +86,16 @@ export interface AgentConfig {
   prompt?: string;
   model?: string;
   tools?: string[];
+  mounts?: DockerMountConfig[];
   env?: Record<string, string>;
   workspace?: string;
+}
+
+export interface DockerMountConfig {
+  source: string;
+  target: string;
+  readonly: boolean;
+  description?: string;
 }
 
 export interface ObservabilityConfig {

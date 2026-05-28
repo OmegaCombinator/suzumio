@@ -53,9 +53,16 @@ data: { ...event row... }</code></pre>
   "path": "relative/path/in/workspace.txt",
   "name": "optional-name.txt",
   "description": "What this artifact contains"
-}</code></pre><p>Path 相对 agent workspace。Suzumio 会复制文件到 artifact registry 并记录 SHA-256 hash。</p><h3><code>artifacts.list</code></h3><pre><code>{}</code></pre><h3><code>completion.submit</code></h3><pre><code>{
+}</code></pre><p>Path 相对 agent workspace。Suzumio 会复制文件到 artifact registry 并记录 SHA-256 hash。</p><h3><code>artifacts.list</code></h3><pre><code>{}</code></pre><h3><code>artifacts.read</code></h3><pre><code>{
+  "id": "art_...",
+  "maxBytes": 20000
+}</code></pre><p>使用 <code>id</code> 或 <code>name</code> 其一。工具返回已发布 artifact 的文本内容，并按请求限制截断。</p><h3><code>completion.submit</code></h3><pre><code>{
   "report": "# Final Report\n\n..."
-}</code></pre><p>该工具写入 <code>final-report.md</code>，把项目设为 <code>submitted</code>，等待用户审批。</p>
+}</code></pre><p>该工具写入 <code>final-report.md</code>，把项目设为 <code>submitted</code>，等待用户审批。</p><h3><code>web.fetch</code></h3><pre><code>{
+  "url": "https://example.com/",
+  "maxBytes": 20000,
+  "timeoutMs": 30000
+}</code></pre><p>获取 HTTP(S) URL 并返回响应文本。只给确实需要联网的 agent 授权。</p>
 
     <h2>WebUI</h2><p>根路径 <code>/</code> 提供内嵌 WebUI。第一版保持简单：项目选择器、消息表单、agents、messages、turns、events 和 artifacts。</p>
     <div class="footer">下一步：<a href="roadmap.html">路线图</a>。</div>

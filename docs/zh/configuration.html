@@ -26,7 +26,21 @@ task: |
 
 backend:
   runner:
-    mode: mock
+    mode: ai
+    model: main
+    models:
+      default: main
+      providers:
+        gateway:
+          type: openai-compatible
+          baseURL: https://your-gateway.example/v1
+          apiKeyEnv: SUZUMIO_GATEWAY_API_KEY
+      presets:
+        main:
+          provider: gateway
+          displayName: Main agent model
+          model: gpt-5.5
+          apiModel: gpt-5.5
 
 agents:
   pm:
@@ -71,6 +85,7 @@ backend:
       presets:
         main:
           provider: gateway
+          displayName: Main agent model
           model: gpt-5.5
           apiModel: gpt-5.5
           toolChoice: auto
@@ -170,7 +185,7 @@ agents:
 backend:
   image: suzumio-runner:dev
   runner:
-    mode: mock
+    mode: ai
 channels:
   - "#project"
   - "#blocked"
@@ -207,9 +222,14 @@ channels: ["#project", "#reviews"]</code></pre>
   controllerUrl: http://host.docker.internal:39400
   docker:
     network: bridge
+    mounts:
+      - source: ./reference
+        target: /mnt/reference
+        readonly: true
+        description: Project reference material for agents.
   runner:
-    mode: mock</code></pre>
-    <table><tr><th>字段</th><th>说明</th></tr><tr><td><code>kind</code></td><td>Backend implementation。当前 backend 基于 Docker。</td></tr><tr><td><code>image</code></td><td>每个 turn container 使用的 Docker image。</td></tr><tr><td><code>controllerUrl</code></td><td>容器访问 Suzumio ToolHost 的 URL。本地 Docker 通常使用 <code>host.docker.internal</code>。</td></tr><tr><td><code>docker.network</code></td><td>可选 Docker network mode。</td></tr><tr><td><code>runner.mode</code></td><td><code>mock</code> 用于基础设施测试，<code>ai</code> 用于模型 turn。</td></tr></table>
+    mode: ai</code></pre>
+    <table><tr><th>字段</th><th>说明</th></tr><tr><td><code>kind</code></td><td>Backend implementation。当前 backend 基于 Docker。</td></tr><tr><td><code>image</code></td><td>每个 turn container 使用的 Docker image。</td></tr><tr><td><code>controllerUrl</code></td><td>容器访问 Suzumio ToolHost 的 URL。本地 Docker 通常使用 <code>host.docker.internal</code>。</td></tr><tr><td><code>docker.network</code></td><td>可选 Docker network mode。</td></tr><tr><td><code>docker.mounts</code></td><td>显式挂载到每个 turn container 的 host 文件或目录。Source 会在 render 时相对顶层项目配置解析。</td></tr><tr><td><code>runner.mode</code></td><td>只支持 <code>ai</code>。</td></tr></table>
 
     <h2>AI Runner Config</h2>
     <pre><code>backend:
@@ -227,6 +247,7 @@ channels: ["#project", "#reviews"]</code></pre>
       presets:
         main:
           provider: gateway
+          displayName: Main agent model
           model: gpt-5.5
           apiModel: gpt-5.5
           toolChoice: auto
@@ -243,8 +264,14 @@ channels: ["#project", "#reviews"]</code></pre>
     tools:
       - messages.send
       - artifacts.publish
-      - artifacts.list</code></pre>
-    <table><tr><th>字段</th><th>说明</th></tr><tr><td><code>role</code></td><td>随 agent 保存的人类可读角色。</td></tr><tr><td><code>count</code></td><td>将一个配置项展开为 <code>worker-1</code>、<code>worker-2</code> 等编号 agents。</td></tr><tr><td><code>prompt</code></td><td>每个 turn prompt 中包含的 agent instructions，通常从 Markdown 导入。</td></tr><tr><td><code>model</code></td><td>AI mode 中可选的 model preset override。</td></tr><tr><td><code>tools</code></td><td>该 agent 允许调用的工具名。</td></tr><tr><td><code>env</code></td><td>传给 runner containers 的附加环境变量。</td></tr></table>
+      - artifacts.list
+      - artifacts.read
+      - web.fetch
+    mounts:
+      - source: ./worker-notes
+        target: /mnt/worker-notes
+        readonly: true</code></pre>
+    <table><tr><th>字段</th><th>说明</th></tr><tr><td><code>role</code></td><td>随 agent 保存的人类可读角色。</td></tr><tr><td><code>count</code></td><td>将一个配置项展开为 <code>worker-1</code>、<code>worker-2</code> 等编号 agents。</td></tr><tr><td><code>prompt</code></td><td>每个 turn prompt 中包含的 agent instructions，通常从 Markdown 导入。</td></tr><tr><td><code>model</code></td><td>AI mode 中可选的 model preset override。Preset id 就是你给模型起的名字。</td></tr><tr><td><code>tools</code></td><td>该 agent 允许调用的工具名。支持精确名称、<code>namespace.*</code> 和 <code>*</code>。</td></tr><tr><td><code>mounts</code></td><td>只挂载给这个 agent 的 host 文件或目录。</td></tr><tr><td><code>env</code></td><td>传给 runner containers 的附加环境变量。</td></tr></table>
 
     <h2>Channels</h2>
     <pre><code>channels:

@@ -3,3 +3,4 @@ prompt: |
   This prompt was loaded through @import. Keep the turn short and deterministic.
 tools:
   - messages.send
+  - web.fetch

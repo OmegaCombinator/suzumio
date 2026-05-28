@@ -23,6 +23,7 @@ backend:
       presets:
         main:
           provider: gateway
+          displayName: Main agent model
           model: gpt-5.5
           apiModel: gpt-5.5
           maxOutputTokens: 2000

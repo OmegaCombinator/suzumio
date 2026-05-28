@@ -80,11 +80,26 @@ data: { ...event row... }</code></pre>
     <h3><code>artifacts.list</code></h3>
     <pre><code>{}</code></pre>
 
+    <h3><code>artifacts.read</code></h3>
+    <pre><code>{
+  "id": "art_...",
+  "maxBytes": 20000
+}</code></pre>
+    <p>Use either <code>id</code> or <code>name</code>. The tool returns text content from the published artifact, truncated at the requested limit.</p>
+
     <h3><code>completion.submit</code></h3>
     <pre><code>{
   "report": "# Final Report\n\n..."
 }</code></pre>
     <p>This writes <code>final-report.md</code>, marks the project <code>submitted</code>, and waits for user approval.</p>
+
+    <h3><code>web.fetch</code></h3>
+    <pre><code>{
+  "url": "https://example.com/",
+  "maxBytes": 20000,
+  "timeoutMs": 30000
+}</code></pre>
+    <p>Fetches an HTTP(S) URL and returns response text. Grant it only to agents that should have web access.</p>
 
     <h2>WebUI</h2>
     <p>The root path <code>/</code> serves the embedded WebUI. It calls the API routes above and refreshes periodically. The first version is intentionally simple: project selector, message form, agents, messages, turns, events, and artifacts.</p>

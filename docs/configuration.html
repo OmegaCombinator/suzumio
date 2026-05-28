@@ -26,7 +26,21 @@ task: |
 
 backend:
   runner:
-    mode: mock
+    mode: ai
+    model: main
+    models:
+      default: main
+      providers:
+        gateway:
+          type: openai-compatible
+          baseURL: https://your-gateway.example/v1
+          apiKeyEnv: SUZUMIO_GATEWAY_API_KEY
+      presets:
+        main:
+          provider: gateway
+          displayName: Main agent model
+          model: gpt-5.5
+          apiModel: gpt-5.5
 
 agents:
   pm:
@@ -71,6 +85,7 @@ backend:
       presets:
         main:
           provider: gateway
+          displayName: Main agent model
           model: gpt-5.5
           apiModel: gpt-5.5
           toolChoice: auto
@@ -170,7 +185,7 @@ agents:
 backend:
   image: suzumio-runner:dev
   runner:
-    mode: mock
+    mode: ai
 channels:
   - "#project"
   - "#blocked"
@@ -207,9 +222,14 @@ channels: ["#project", "#reviews"]</code></pre>
   controllerUrl: http://host.docker.internal:39400
   docker:
     network: bridge
+    mounts:
+      - source: ./reference
+        target: /mnt/reference
+        readonly: true
+        description: Project reference material for agents.
   runner:
-    mode: mock</code></pre>
-    <table><tr><th>Field</th><th>Description</th></tr><tr><td><code>kind</code></td><td>Backend implementation. The current backend is Docker-based.</td></tr><tr><td><code>image</code></td><td>Docker image used for each turn container.</td></tr><tr><td><code>controllerUrl</code></td><td>URL the container uses to call Suzumio ToolHost. For local Docker, use <code>host.docker.internal</code>.</td></tr><tr><td><code>docker.network</code></td><td>Optional Docker network mode.</td></tr><tr><td><code>runner.mode</code></td><td><code>mock</code> for infrastructure tests, <code>ai</code> for model-backed turns.</td></tr></table>
+    mode: ai</code></pre>
+    <table><tr><th>Field</th><th>Description</th></tr><tr><td><code>kind</code></td><td>Backend implementation. The current backend is Docker-based.</td></tr><tr><td><code>image</code></td><td>Docker image used for each turn container.</td></tr><tr><td><code>controllerUrl</code></td><td>URL the container uses to call Suzumio ToolHost. For local Docker, use <code>host.docker.internal</code>.</td></tr><tr><td><code>docker.network</code></td><td>Optional Docker network mode.</td></tr><tr><td><code>docker.mounts</code></td><td>Explicit host files or directories mounted into every turn container. Sources are resolved relative to the top-level project config during render.</td></tr><tr><td><code>runner.mode</code></td><td>Only <code>ai</code> is supported.</td></tr></table>
 
     <h2>AI Runner Config</h2>
     <pre><code>backend:
@@ -227,6 +247,7 @@ channels: ["#project", "#reviews"]</code></pre>
       presets:
         main:
           provider: gateway
+          displayName: Main agent model
           model: gpt-5.5
           apiModel: gpt-5.5
           toolChoice: auto
@@ -243,8 +264,14 @@ channels: ["#project", "#reviews"]</code></pre>
     tools:
       - messages.send
       - artifacts.publish
-      - artifacts.list</code></pre>
-    <table><tr><th>Field</th><th>Description</th></tr><tr><td><code>role</code></td><td>Human-readable role stored with the agent.</td></tr><tr><td><code>count</code></td><td>Expands one config entry into numbered agents such as <code>worker-1</code> and <code>worker-2</code>.</td></tr><tr><td><code>prompt</code></td><td>Agent instructions included in every turn prompt. Usually imported from Markdown.</td></tr><tr><td><code>model</code></td><td>Optional model preset override for AI mode.</td></tr><tr><td><code>tools</code></td><td>Allowed tool names for this agent.</td></tr><tr><td><code>env</code></td><td>Additional environment variables for runner containers.</td></tr></table>
+      - artifacts.list
+      - artifacts.read
+      - web.fetch
+    mounts:
+      - source: ./worker-notes
+        target: /mnt/worker-notes
+        readonly: true</code></pre>
+    <table><tr><th>Field</th><th>Description</th></tr><tr><td><code>role</code></td><td>Human-readable role stored with the agent.</td></tr><tr><td><code>count</code></td><td>Expands one config entry into numbered agents such as <code>worker-1</code> and <code>worker-2</code>.</td></tr><tr><td><code>prompt</code></td><td>Agent instructions included in every turn prompt. Usually imported from Markdown.</td></tr><tr><td><code>model</code></td><td>Optional model preset override for AI mode. Preset ids are the model names you assign.</td></tr><tr><td><code>tools</code></td><td>Allowed tool names for this agent. Supports exact names, <code>namespace.*</code>, and <code>*</code>.</td></tr><tr><td><code>mounts</code></td><td>Explicit host files or directories mounted only for this agent.</td></tr><tr><td><code>env</code></td><td>Additional environment variables for runner containers.</td></tr></table>
 
     <h2>Channels</h2>
     <pre><code>channels:

@@ -27,11 +27,11 @@ Docker backend
         v
 Container runner
   Reads /turn/input.json
-  Runs mock or AI mode
+  Runs AI mode
   Calls Suzumio /tool for project tools
   Writes /turn/output.json</code></pre>
 
-    <h2>核心进程</h2><p>核心进程是项目级记录的权威来源。CLI、HTTP、WebUI 或审计日志需要看到的数据，都应通过 core store 写入 SQLite。</p><table><tr><th>模块</th><th>职责</th></tr><tr><td><code>config.ts</code></td><td>加载 YAML、解析 import、应用 <code>extends</code>、验证配置并渲染最终 YAML。</td></tr><tr><td><code>store.ts</code></td><td>创建和查询 projects、agents、messages、reads、turns、events、tool_calls、artifacts 等 SQLite 表。</td></tr><tr><td><code>scheduler.ts</code></td><td>实现 <code>nonpreemptive-mailbox</code> 调度规则。</td></tr><tr><td><code>tools.ts</code></td><td>定义 core tools，并对 ToolHost call 做 token 和 allowlist 检查。</td></tr><tr><td><code>server.ts</code></td><td>HTTP API、SSE stream、ToolHost route 和内嵌 WebUI。</td></tr><tr><td><code>backend.ts</code></td><td>Docker 容器创建、bind mount、runner input/output、turn completion。</td></tr><tr><td><code>runner.ts</code></td><td>mock 或模型驱动 turn 的容器入口。</td></tr></table>
+    <h2>核心进程</h2><p>核心进程是项目级记录的权威来源。CLI、HTTP、WebUI 或审计日志需要看到的数据，都应通过 core store 写入 SQLite。</p><table><tr><th>模块</th><th>职责</th></tr><tr><td><code>config.ts</code></td><td>加载 YAML、解析 import、应用 <code>extends</code>、验证配置并渲染最终 YAML。</td></tr><tr><td><code>store.ts</code></td><td>创建和查询 projects、agents、messages、reads、turns、events、tool_calls、artifacts 等 SQLite 表。</td></tr><tr><td><code>scheduler.ts</code></td><td>实现 <code>nonpreemptive-mailbox</code> 调度规则。</td></tr><tr><td><code>tools.ts</code></td><td>定义工具 registry，并对 ToolHost call 做 token 和 allowlist 检查。</td></tr><tr><td><code>server.ts</code></td><td>HTTP API、SSE stream、ToolHost route 和内嵌 WebUI。</td></tr><tr><td><code>backend.ts</code></td><td>Docker 容器创建、配置的 bind mounts、runner input/output、turn completion。</td></tr><tr><td><code>runner.ts</code></td><td>模型驱动 turn 的容器入口。</td></tr></table>
 
     <h2>Runner Contract</h2><p>Runner 通过一个 input 文件接收全部上下文，通过一个 output 文件返回结果。这让执行层可替换，同时不改变项目状态语义。</p><pre><code>type RunnerTurnInput = {
   project: string

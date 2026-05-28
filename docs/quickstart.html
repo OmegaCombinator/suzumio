@@ -5,7 +5,7 @@
   <div class="mobile-nav"><select onchange="location.href=this.value"><option value="index.html">Overview</option><option value="quickstart.html" selected>Quickstart</option><option value="concepts.html">Core Concepts</option><option value="configuration.html">Configuration</option><option value="cli.html">CLI Reference</option><option value="architecture.html">Architecture</option><option value="operations.html">Operations</option><option value="api.html">HTTP API</option><option value="roadmap.html">Roadmap</option><option value="zh/quickstart.html">中文</option></select></div>
   <div class="shell"><aside class="sidebar"><a class="brand" href="index.html"><strong>Suzumio</strong></a><div class="language-switch"><a class="active" href="quickstart.html">EN</a><a href="zh/quickstart.html">中文</a></div><div class="nav-group"><p class="nav-title">Start</p><a class="nav-link" href="index.html">Overview</a><a class="nav-link active" href="quickstart.html">Quickstart</a><a class="nav-link" href="concepts.html">Core Concepts</a></div><div class="nav-group"><p class="nav-title">Build</p><a class="nav-link" href="configuration.html">Configuration</a><a class="nav-link" href="cli.html">CLI Reference</a><a class="nav-link" href="architecture.html">Architecture</a><a class="nav-link" href="operations.html">Operations</a></div><div class="nav-group"><p class="nav-title">Reference</p><a class="nav-link" href="api.html">HTTP API</a><a class="nav-link" href="roadmap.html">Roadmap</a><a class="nav-link" href="https://github.com/OmegaCombinator/suzumio">GitHub</a></div></aside>
   <main class="content">
-    <section class="hero"><p class="eyebrow">Quickstart</p><h1>Run the runtime end to end</h1><p class="lead">This guide runs a mock agent turn in Docker. It does not require a model API key, and it verifies the core path: config, SQLite, scheduler, Docker backend, runner, HTTP API, and WebUI.</p></section>
+    <section class="hero"><p class="eyebrow">Quickstart</p><h1>Run the runtime end to end</h1><p class="lead">This guide runs an AI-backed agent turn in Docker. It verifies the core path: config, SQLite, scheduler, Docker backend, runner, ToolHost, HTTP API, and WebUI.</p></section>
 
     <h2>Prerequisites</h2>
     <table><tr><th>Requirement</th><th>Why it is needed</th><th>Check</th></tr><tr><td>Node.js 24+</td><td>CLI, server, runner build, built-in SQLite module.</td><td><code>node --version</code></td></tr><tr><td>npm</td><td>Install TypeScript and runtime dependencies.</td><td><code>npm --version</code></td></tr><tr><td>Docker</td><td>Every agent turn runs in a container.</td><td><code>docker ps</code></td></tr><tr><td>Git</td><td>Clone repository and manage local changes.</td><td><code>git --version</code></td></tr></table>
@@ -25,40 +25,43 @@ npm run build</code></pre>
 mkdir -p "$SUZUMIO_ROOT"</code></pre>
     <p><code>SUZUMIO_ROOT</code> stores project databases, turn files, workspaces, and artifacts. Keep it outside the Git repository.</p>
 
-    <h2>4. Inspect the Config</h2>
-    <pre><code>suzumio config render examples/demo.yaml</code></pre>
+    <h2>4. Configure Model Credentials</h2>
+    <p>The committed examples are sanitized. Copy an example config to a local untracked file if you need to replace the placeholder gateway URL, then export the configured API key environment variable.</p>
+    <pre><code>cp examples/demo.yaml /tmp/suzumio-demo.yaml
+# edit /tmp/suzumio-demo.yaml locally if you need a private gateway URL
+export SUZUMIO_GATEWAY_API_KEY=...</code></pre>
+
+    <h2>5. Inspect the Config</h2>
+    <pre><code>suzumio config render /tmp/suzumio-demo.yaml</code></pre>
     <p>Rendering config before running is recommended. It shows imported content, default values, and the final shape stored in SQLite.</p>
 
-    <h2>5. Initialize the Project</h2>
-    <pre><code>suzumio init examples/demo.yaml
+    <h2>6. Initialize the Project</h2>
+    <pre><code>suzumio init /tmp/suzumio-demo.yaml
 suzumio status demo</code></pre>
     <p>After initialization, the project is not scheduled yet. Start it explicitly when the server is running.</p>
 
-    <h2>6. Start the Server</h2>
+    <h2>7. Start the Server</h2>
     <pre><code>suzumio serve --host 0.0.0.0 --port 39400</code></pre>
     <p>This starts the HTTP API, ToolHost, WebUI, SSE stream, and scheduler loop. Open <code>http://127.0.0.1:39400</code> in a browser.</p>
 
-    <h2>7. Send the First Message</h2>
+    <h2>8. Send the First Message</h2>
     <p>Open another terminal with the same <code>SUZUMIO_ROOT</code>.</p>
     <pre><code>export SUZUMIO_ROOT=/tmp/suzumio-root
 suzumio start demo
-suzumio send demo pm P1 "Start the mock demo and report status."</code></pre>
+suzumio send demo pm P1 "Send one short status update to the user."</code></pre>
     <p>The scheduler will see an unread message for <code>pm</code>, create one turn, and start one Docker container.</p>
 
-    <h2>8. Inspect Results</h2>
+    <h2>9. Inspect Results</h2>
     <pre><code>suzumio turns demo --limit 5
 suzumio messages demo --limit 10
 suzumio events demo --limit 20</code></pre>
-    <p>A successful mock run shows a completed turn with text similar to:</p>
-    <pre><code>Mock turn completed for pm.
+    <p>A successful run shows a completed turn, plus any messages or tool calls the model created through ToolHost.</p>
 
-This container runner is wired correctly. In AI mode, the same runner calls the configured model and Suzumio ToolHost.</code></pre>
-
-    <h2>9. Verify Non-preemptive Behavior</h2>
+    <h2>10. Verify Non-preemptive Behavior</h2>
     <p>If an agent is already <code>running</code>, sending another message does not interrupt the current turn. The new message remains unread until the current turn completes. This is the expected default behavior.</p>
 
-    <h2>10. Optional AI Runner Test</h2>
-    <p><code>examples/ai-demo.yaml</code> is sanitized. Copy it to a local untracked file before adding private endpoints.</p>
+    <h2>Optional Alternate AI Config</h2>
+    <p><code>examples/ai-demo.yaml</code> is also sanitized. Copy it to a local untracked file before adding private endpoints.</p>
     <pre><code>cp examples/ai-demo.yaml /tmp/suzumio-ai-demo.yaml
 # edit /tmp/suzumio-ai-demo.yaml locally
 export SUZUMIO_GATEWAY_API_KEY=...

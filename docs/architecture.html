@@ -28,13 +28,13 @@ Docker backend
         v
 Container runner
   Reads /turn/input.json
-  Runs mock or AI mode
+  Runs AI mode
   Calls Suzumio /tool for project tools
   Writes /turn/output.json</code></pre>
 
     <h2>Core Process</h2>
     <p>The core process is the authority for project-level records. If data should be visible in CLI, HTTP, WebUI, or audit logs, it belongs in SQLite through the core store.</p>
-    <table><tr><th>Module</th><th>Responsibility</th></tr><tr><td><code>config.ts</code></td><td>Loads YAML, resolves imports, applies <code>extends</code>, validates config, and renders final YAML.</td></tr><tr><td><code>store.ts</code></td><td>Creates and queries SQLite tables for projects, agents, messages, reads, turns, events, tool calls, and artifacts.</td></tr><tr><td><code>scheduler.ts</code></td><td>Implements the <code>nonpreemptive-mailbox</code> scheduling rule.</td></tr><tr><td><code>tools.ts</code></td><td>Defines core tools and executes ToolHost calls with token and allowlist checks.</td></tr><tr><td><code>server.ts</code></td><td>HTTP API, SSE stream, ToolHost route, and embedded WebUI.</td></tr><tr><td><code>backend.ts</code></td><td>Docker container creation, bind mounts, runner input/output, and turn completion.</td></tr><tr><td><code>runner.ts</code></td><td>Container entrypoint for mock or model-backed turns.</td></tr></table>
+    <table><tr><th>Module</th><th>Responsibility</th></tr><tr><td><code>config.ts</code></td><td>Loads YAML, resolves imports, applies <code>extends</code>, validates config, and renders final YAML.</td></tr><tr><td><code>store.ts</code></td><td>Creates and queries SQLite tables for projects, agents, messages, reads, turns, events, tool calls, and artifacts.</td></tr><tr><td><code>scheduler.ts</code></td><td>Implements the <code>nonpreemptive-mailbox</code> scheduling rule.</td></tr><tr><td><code>tools.ts</code></td><td>Defines the tool registry and executes ToolHost calls with token and allowlist checks.</td></tr><tr><td><code>server.ts</code></td><td>HTTP API, SSE stream, ToolHost route, and embedded WebUI.</td></tr><tr><td><code>backend.ts</code></td><td>Docker container creation, configured bind mounts, runner input/output, and turn completion.</td></tr><tr><td><code>runner.ts</code></td><td>Container entrypoint for model-backed turns.</td></tr></table>
 
     <h2>Runner Contract</h2>
     <p>The runner receives all context through one input file and reports back through one output file. This keeps execution replaceable without changing project-state semantics.</p>

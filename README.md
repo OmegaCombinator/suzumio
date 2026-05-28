@@ -17,7 +17,7 @@ This repository is an early build. The first implementation includes:
 - YAML config loading with whole-field `@import(path)` and top-level `extends`.
 - SQLite project storage using Node's built-in SQLite module.
 - A Docker-first chat backend and container runner.
-- Core tools: `messages.send`, `artifacts.publish`, `artifacts.list`, `completion.submit`.
+- Built-in tools: `messages.send`, `artifacts.publish`, `artifacts.list`, `artifacts.read`, `completion.submit`, `web.fetch`.
 - A non-preemptive mailbox scheduler.
 - CLI, HTTP API, SSE stream, and a minimal flat WebUI.
 
@@ -31,6 +31,7 @@ npm run build
 docker build -t suzumio-runner:dev .
 
 export SUZUMIO_ROOT=/tmp/suzumio-root
+export SUZUMIO_GATEWAY_API_KEY=...
 suzumio init examples/demo.yaml
 suzumio serve --host 127.0.0.1 --port 39400
 ```
@@ -70,10 +71,17 @@ Do not put API keys in committed config. Use `apiKeyEnv` and pass the key throug
 backend:
   runner:
     mode: ai
+    model: main
     models:
+      default: main
       providers:
         gateway:
           type: openai-compatible
           baseURL: https://example.invalid/v1
           apiKeyEnv: GATEWAY_API_KEY
+      presets:
+        main:
+          provider: gateway
+          displayName: Main agent model
+          model: gpt-5.5
 ```

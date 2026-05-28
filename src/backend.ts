@@ -1,8 +1,8 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import Docker from "dockerode";
 import { safeName } from "./id.js";
-import type { AgentRecord, ProjectConfig, RunnerTurnInput, RunnerTurnOutput, TurnRecord } from "./types.js";
+import type { AgentConfig, AgentRecord, DockerMountConfig, ProjectConfig, RunnerTurnInput, RunnerTurnOutput, TurnRecord } from "./types.js";
 import { ProjectStore } from "./store.js";
 import { toolDefinitions } from "./tools.js";
 
@@ -41,13 +41,19 @@ export class DockerChatBackend {
   }
 
   private async createContainer(config: ProjectConfig, agent: AgentRecord, turn: TurnRecord, containerName: string): Promise<Docker.Container> {
+    const spec = agentSpec(config, agent);
     const env = [
       `SUZUMIO_PROJECT=${turn.project}`,
       `SUZUMIO_AGENT=${agent.id}`,
       `SUZUMIO_TURN=${turn.id}`,
       `SUZUMIO_TOKEN=${agent.token}`,
       ...modelEnv(config),
-      ...Object.entries(config.agents[agent.id]?.env ?? {}).map(([key, value]) => `${key}=${value}`),
+      ...Object.entries(spec?.env ?? {}).map(([key, value]) => `${key}=${value}`),
+    ];
+    const binds = [
+      `${path.dirname(turn.inputPath)}:/turn:rw`,
+      `${agent.workspacePath}:/workspace:rw`,
+      ...(await mountBinds([...(config.backend.docker?.mounts ?? []), ...(spec?.mounts ?? [])])),
     ];
     return this.docker.createContainer({
       name: containerName,
@@ -59,7 +65,7 @@ export class DockerChatBackend {
         AutoRemove: false,
         ExtraHosts: ["host.docker.internal:host-gateway"],
         NetworkMode: config.backend.docker?.network,
-        Binds: [`${path.dirname(turn.inputPath)}:/turn:rw`, `${agent.workspacePath}:/workspace:rw`],
+        Binds: binds,
       },
     });
   }
@@ -81,6 +87,22 @@ export class DockerChatBackend {
       store.close();
     }
   }
+}
+
+function agentSpec(config: ProjectConfig, agent: AgentRecord): AgentConfig | undefined {
+  return config.agents[agent.id] ?? config.agents[agent.id.replace(/-\d+$/, "")];
+}
+
+async function mountBinds(mounts: DockerMountConfig[]): Promise<string[]> {
+  const binds: string[] = [];
+  for (const mount of mounts) {
+    await stat(mount.source);
+    const target = path.posix.normalize(mount.target);
+    if (!target.startsWith("/")) throw new Error(`Docker mount target must be absolute: ${mount.target}`);
+    if (target === "/turn" || target.startsWith("/turn/") || target === "/workspace" || target.startsWith("/workspace/")) throw new Error(`Docker mount target is reserved: ${mount.target}`);
+    binds.push(`${mount.source}:${target}:${mount.readonly ? "ro" : "rw"}`);
+  }
+  return binds;
 }
 
 function modelEnv(config: ProjectConfig): string[] {

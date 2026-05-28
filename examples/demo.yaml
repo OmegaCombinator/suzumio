@@ -1,6 +1,6 @@
 name: demo
 task: |
-  Demonstrate that Suzumio can deliver a user message to an isolated Docker runner and record the completed turn.
+  Demonstrate that Suzumio can deliver a user message to an isolated Docker AI runner and record the completed turn.
 
 scheduler:
   kind: nonpreemptive-mailbox
@@ -11,8 +11,31 @@ backend:
   kind: docker-chat
   image: suzumio-runner:dev
   controllerUrl: http://host.docker.internal:39400
+  docker:
+    mounts:
+      - source: fragments
+        target: /mnt/demo-fragments
+        readonly: true
+        description: Example files mounted read-only for the agent.
   runner:
-    mode: mock
+    mode: ai
+    model: main
+    models:
+      default: main
+      providers:
+        gateway:
+          type: openai-compatible
+          baseURL: https://your-gateway.example/v1
+          apiKeyEnv: SUZUMIO_GATEWAY_API_KEY
+          timeoutMs: 300000
+      presets:
+        main:
+          provider: gateway
+          displayName: Main agent model
+          model: gpt-5.5
+          apiModel: gpt-5.5
+          maxOutputTokens: 2000
+          toolChoice: auto
 
 agents:
   pm:
@@ -31,6 +54,7 @@ agents:
       - messages.send
       - artifacts.publish
       - artifacts.list
+      - artifacts.read
 
 channels:
   - "#project"

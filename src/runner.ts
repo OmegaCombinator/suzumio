@@ -9,17 +9,8 @@ async function main(): Promise<void> {
   const inputPath = required(args.input, "--input");
   const outputPath = required(args.output, "--output");
   const input = JSON.parse(await readFile(inputPath, "utf8")) as RunnerTurnInput;
-  const output = input.runner.mode === "mock" ? await runMock(input) : await runAi(input);
+  const output = await runAi(input);
   await writeFile(outputPath, JSON.stringify(output, null, 2) + "\n", "utf8");
-}
-
-async function runMock(input: RunnerTurnInput): Promise<RunnerTurnOutput> {
-  const text = [
-    `Mock turn completed for ${input.agent.id}.`,
-    "",
-    "This container runner is wired correctly. In AI mode, the same runner calls the configured model and Suzumio ToolHost.",
-  ].join("\n");
-  return { text, usage: { mode: "mock" } };
 }
 
 async function runAi(input: RunnerTurnInput): Promise<RunnerTurnOutput> {
@@ -46,7 +37,7 @@ async function runAi(input: RunnerTurnInput): Promise<RunnerTurnOutput> {
     if (event.type === "text-delta") text += event.text;
     if (event.type === "error") throw event.error;
   }
-  return { text: text.trim() || "(model returned no text)", usage: { model: resolved.presetId } };
+  return { text: text.trim() || "(model returned no text)", usage: { model: resolved.presetId, displayName: resolved.preset.displayName } };
 }
 
 function toAiTools(input: RunnerTurnInput): Record<string, unknown> {

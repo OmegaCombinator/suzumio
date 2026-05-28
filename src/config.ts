@@ -27,6 +27,7 @@ const ProviderSchema = z.object({
 
 const ModelPresetSchema = z.object({
   provider: z.string(),
+  displayName: z.string().optional(),
   model: z.string(),
   apiModel: z.string().optional(),
   temperature: z.number().optional(),
@@ -48,14 +49,21 @@ const ModelsSchema = z.object({
 
 const RunnerSchema = z
   .object({
-    mode: z.enum(["mock", "ai"]).default("mock"),
+    mode: z.literal("ai").default("ai"),
     model: z.string().optional(),
     maxIterations: z.number().int().positive().default(8),
     maxToolCalls: z.number().int().positive().default(20),
     finalPrompt: z.string().optional(),
     models: ModelsSchema.optional(),
   })
-  .default({ mode: "mock", maxIterations: 8, maxToolCalls: 20 });
+  .default({ mode: "ai", maxIterations: 8, maxToolCalls: 20 });
+
+const MountSchema = z.object({
+  source: z.string().min(1),
+  target: z.string().min(1),
+  readonly: z.boolean().default(true),
+  description: z.string().optional(),
+});
 
 const BackendSchema = z
   .object({
@@ -67,11 +75,12 @@ const BackendSchema = z
         network: z.string().optional(),
         memory: z.string().optional(),
         cpus: z.number().positive().optional(),
+        mounts: z.array(MountSchema).default([]),
       })
-      .default({}),
+      .default({ mounts: [] }),
     runner: RunnerSchema,
   })
-  .default({ kind: "docker-chat", image: "suzumio-runner:dev", controllerUrl: "http://host.docker.internal:39400", docker: {}, runner: { mode: "mock", maxIterations: 8, maxToolCalls: 20 } });
+  .default({ kind: "docker-chat", image: "suzumio-runner:dev", controllerUrl: "http://host.docker.internal:39400", docker: { mounts: [] }, runner: { mode: "ai", maxIterations: 8, maxToolCalls: 20 } });
 
 const AgentSchema = z.object({
   role: z.string().optional(),
@@ -79,6 +88,7 @@ const AgentSchema = z.object({
   prompt: z.string().default(""),
   model: z.string().optional(),
   tools: z.array(z.string()).default([]),
+  mounts: z.array(MountSchema).default([]),
   env: z.record(z.string(), z.string()).default({}),
   workspace: z.string().optional(),
 });
@@ -120,6 +130,7 @@ export async function loadProjectConfig(filePath: string): Promise<LoadedProject
   const imported = await loadAny(sourcePath, []);
   const resolved = resolveExtends(imported);
   const config = ProjectConfigSchema.parse(resolved) as ProjectConfig;
+  normalizeMountSources(config, path.dirname(sourcePath));
   if (Object.keys(config.agents).length === 0) throw new Error("Project config needs at least one agent");
   return { config, sourcePath, resolved: config };
 }
@@ -203,4 +214,17 @@ function substituteEnv(text: string): string {
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizeMountSources(config: ProjectConfig, baseDir: string): void {
+  const mounts = [...(config.backend.docker?.mounts ?? []), ...Object.values(config.agents).flatMap((agent) => agent.mounts ?? [])];
+  for (const mount of mounts) {
+    if (!path.isAbsolute(mount.source)) mount.source = path.resolve(baseDir, mount.source);
+    if (!mount.target.startsWith("/")) throw new Error(`Docker mount target must be absolute: ${mount.target}`);
+    const target = path.posix.normalize(mount.target);
+    if (target === "/turn" || target.startsWith("/turn/") || target === "/workspace" || target.startsWith("/workspace/")) {
+      throw new Error(`Docker mount target is reserved: ${mount.target}`);
+    }
+    mount.target = target;
+  }
 }
