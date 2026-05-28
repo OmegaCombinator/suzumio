@@ -15,7 +15,7 @@ npm install
 npm run build</code></pre>
     <h2>2. 构建 Runner 镜像</h2><pre><code>docker build -t suzumio-runner:dev .</code></pre><p>示例配置使用 <code>suzumio-runner:dev</code>。如果使用其他 tag，请修改项目配置中的 <code>backend.image</code>。</p>
     <h2>3. 选择 Runtime Root</h2><pre><code>export SUZUMIO_ROOT=/tmp/suzumio-root
-mkdir -p "$SUZUMIO_ROOT"</code></pre><p><code>SUZUMIO_ROOT</code> 存储项目数据库、turn 文件、workspace 和 artifact。建议放在 Git 仓库外。</p>
+mkdir -p "$SUZUMIO_ROOT"</code></pre><p><code>SUZUMIO_ROOT</code> 存储项目数据库、turn input 文件、workspace 和 artifact。建议放在 Git 仓库外。</p>
     <h2>4. 配置模型凭据</h2><p>提交的示例已脱敏。如果需要替换 placeholder gateway URL，请复制到本地未跟踪文件后再编辑，并导出配置中引用的 API key 环境变量。</p><pre><code>cp examples/demo.yaml /tmp/suzumio-demo.yaml
 # 如需私有 gateway URL，在本地编辑 /tmp/suzumio-demo.yaml
 export SUZUMIO_GATEWAY_API_KEY=...</code></pre>
@@ -34,7 +34,7 @@ suzumio events demo --limit 20</code></pre><p>成功运行会显示 completed tu
 # 在本地编辑 /tmp/suzumio-ai-demo.yaml
 export SUZUMIO_GATEWAY_API_KEY=...
 suzumio init /tmp/suzumio-ai-demo.yaml</code></pre><div class="notice danger"><p>不要提交真实 API key、私有 gateway URL 或私有 provider 名称。请放在本地配置和环境变量中。</p></div>
-    <h2>排错</h2><table><tr><th>现象</th><th>原因</th><th>处理</th></tr><tr><td>Turn 没有写 output 就失败。</td><td>镜像未构建、镜像名错误或容器启动失败。</td><td>运行 <code>docker build -t suzumio-runner:dev .</code> 并检查 <code>docker logs &lt;container&gt;</code>。</td></tr><tr><td>Tool call connection refused。</td><td>容器无法访问 Suzumio server。</td><td>用 <code>--host 0.0.0.0</code> 启动 server，并使用 <code>http://host.docker.internal:39400</code>。</td></tr><tr><td>Agent 不启动。</td><td>项目不是 <code>running</code>，或 agent 没有 unread inbound message。</td><td>运行 <code>suzumio start project</code> 并向该 agent 发送直接消息。</td></tr><tr><td>自定义域名只有 HTTP。</td><td>GitHub Pages 证书仍在签发。</td><td>等待证书完成后再启用 HTTPS enforcement。</td></tr></table>
+    <h2>排错</h2><table><tr><th>现象</th><th>原因</th><th>处理</th></tr><tr><td>Turn 提交结果前失败。</td><td>镜像未构建、镜像名错误、容器启动失败或 ToolHost 连接问题。</td><td>运行 <code>docker build -t suzumio-runner:dev .</code> 并检查 <code>docker logs &lt;container&gt;</code>。</td></tr><tr><td>Tool call connection refused。</td><td>容器无法访问 Suzumio server。</td><td>用 <code>--host 0.0.0.0</code> 启动 server，并使用 <code>http://host.docker.internal:39400</code>。</td></tr><tr><td>Agent 不启动。</td><td>项目不是 <code>running</code>，或 agent 没有 unread inbound message。</td><td>运行 <code>suzumio start project</code> 并向该 agent 发送直接消息。</td></tr><tr><td>自定义域名只有 HTTP。</td><td>GitHub Pages 证书仍在签发。</td><td>等待证书完成后再启用 HTTPS enforcement。</td></tr></table>
     <div class="footer">下一步：<a href="concepts.html">核心概念</a>。</div>
   </main></div>
 </body>

@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, readdir, stat } from "node:fs/promises";
 import type { AgentRecord, JsonObject, MessagePriority, ToolDefinition } from "./types.js";
 import { ProjectStore } from "./store.js";
 
@@ -51,21 +51,30 @@ export class ToolRegistry {
   }
 }
 
-export const defaultToolRegistry = new ToolRegistry([
-  messagesSendTool(),
-  artifactsPublishTool(),
-  artifactsListTool(),
-  artifactsReadTool(),
-  completionSubmitTool(),
-  webFetchTool(),
-]);
+export const TOOLPACKS: Record<string, () => ToolPlugin[]> = {
+  core: () => [messagesSendTool(), completionSubmitTool()],
+  artifacts: () => [artifactsPublishTool(), artifactsListTool(), artifactsReadTool()],
+  web: () => [webFetchTool()],
+};
 
-export function toolDefinitions(agent: AgentRecord, registry = defaultToolRegistry): ToolDefinition[] {
-  return registry.definitions(agent);
+export const defaultToolRegistry = toolRegistryForToolpacks(["core", "artifacts", "web"]);
+
+export function toolRegistryForToolpacks(toolpacks: string[]): ToolRegistry {
+  const plugins: ToolPlugin[] = [];
+  for (const name of toolpacks) {
+    const toolpack = TOOLPACKS[name];
+    if (!toolpack) throw new Error(`Unknown toolpack: ${name}`);
+    plugins.push(...toolpack());
+  }
+  return new ToolRegistry(plugins);
+}
+
+export function toolDefinitions(agent: AgentRecord, toolpacks?: string[]): ToolDefinition[] {
+  return (toolpacks ? toolRegistryForToolpacks(toolpacks) : defaultToolRegistry).definitions(agent);
 }
 
 export class ToolHost {
-  constructor(private readonly root?: string, private readonly registry = defaultToolRegistry) {}
+  constructor(private readonly root?: string) {}
 
   async call(input: ToolCallInput): Promise<ToolCallOutput> {
     const store = new ProjectStore(input.project, this.root);
@@ -73,9 +82,10 @@ export class ToolHost {
       const agent = store.requireAgent(input.agentId);
       if (agent.token !== input.token) throw new Error("Invalid agent token");
       if (!isAllowed(input.tool, agent.tools)) throw new Error(`Tool not allowed for ${agent.id}: ${input.tool}`);
+      const registry = toolRegistryForToolpacks(store.config().tools.toolpacks);
       const toolCallId = store.recordToolCall({ turnId: input.turnId, agentId: agent.id, tool: input.tool, input: input.input, status: "running" });
       try {
-        const result = await this.registry.execute({ store, agent, turnId: input.turnId }, input.tool, input.input);
+        const result = await registry.execute({ store, agent, turnId: input.turnId }, input.tool, input.input);
         store.finishToolCall(toolCallId, "completed", result.output);
         return result;
       } catch (error) {
@@ -122,11 +132,11 @@ function artifactsPublishTool(): ToolPlugin {
   return {
     definition: {
       name: "artifacts.publish",
-      description: "Publish a file from this agent workspace as a project artifact.",
+      description: "Publish a file or directory from this agent workspace as a project artifact.",
       inputSchema: {
         type: "object",
         properties: {
-          path: { type: "string", description: "Workspace-relative file path." },
+          path: { type: "string", description: "Workspace-relative file or directory path." },
           name: { type: "string" },
           description: { type: "string" },
         },
@@ -160,12 +170,13 @@ function artifactsReadTool(): ToolPlugin {
   return {
     definition: {
       name: "artifacts.read",
-      description: "Read a text artifact by id or name.",
+      description: "Read a file artifact by id or name, or list a directory artifact.",
       inputSchema: {
         type: "object",
         properties: {
           id: { type: "string", description: "Artifact id." },
           name: { type: "string", description: "Artifact name." },
+          encoding: { type: "string", enum: ["auto", "utf8", "base64"], default: "auto" },
           maxBytes: { type: "number", description: "Maximum characters to return, capped at 100000." },
         },
         additionalProperties: false,
@@ -179,12 +190,18 @@ function artifactsReadTool(): ToolPlugin {
       const artifact = store.listArtifacts(1000).find((item) => (id && item.id === id) || (name && item.name === name));
       if (!artifact) throw new Error(`Artifact not found: ${id ?? name}`);
       const maxBytes = boundedNumber(args.maxBytes, 20_000, 100_000);
-      const text = await readFile(String(artifact.path), "utf8");
+      const path = String(artifact.path);
+      const info = await stat(path);
+      if (info.isDirectory()) return readArtifactDirectory(path, maxBytes, String(artifact.id), String(artifact.name));
+      const encoding = encodingArg(args.encoding);
+      const buffer = await readFile(path);
+      const binary = isBinary(buffer);
+      const text = encoding === "base64" || (encoding === "auto" && binary) ? buffer.toString("base64") : buffer.toString("utf8");
       const truncated = text.length > maxBytes;
       return {
         title: "artifact read",
         output: truncated ? `${text.slice(0, maxBytes)}\n\n[truncated]` : text,
-        metadata: { artifactId: String(artifact.id), name: String(artifact.name), truncated },
+        metadata: { artifactId: String(artifact.id), name: String(artifact.name), type: binary ? "binary" : "text", encoding: encoding === "base64" || (encoding === "auto" && binary) ? "base64" : "utf8", truncated },
       };
     },
   };
@@ -221,6 +238,7 @@ function webFetchTool(): ToolPlugin {
           url: { type: "string" },
           maxBytes: { type: "number", description: "Maximum characters to return, capped at 100000." },
           timeoutMs: { type: "number", description: "Request timeout in milliseconds, capped at 120000." },
+          format: { type: "string", enum: ["text", "raw"], default: "text" },
         },
         required: ["url"],
         additionalProperties: false,
@@ -234,12 +252,15 @@ function webFetchTool(): ToolPlugin {
       const timeoutMs = boundedNumber(args.timeoutMs, 30_000, 120_000);
       const maxBytes = boundedNumber(args.maxBytes, 20_000, 100_000);
       const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
-      const text = await response.text();
+      const raw = await response.text();
+      const contentType = response.headers.get("content-type") ?? "";
+      const format = formatArg(args.format);
+      const text = format === "raw" ? raw : contentType.includes("html") ? htmlToText(raw) : raw;
       const truncated = text.length > maxBytes;
       return {
         title: "web fetch",
         output: truncated ? `${text.slice(0, maxBytes)}\n\n[truncated]` : text,
-        metadata: { url: url.toString(), status: response.status, contentType: response.headers.get("content-type") ?? undefined, truncated },
+        metadata: { url: url.toString(), status: response.status, contentType: contentType || undefined, format, truncated },
       };
     },
   };
@@ -273,8 +294,64 @@ function priorityArg(value: unknown): MessagePriority {
   throw new Error(`Invalid priority: ${String(value)}`);
 }
 
+function encodingArg(value: unknown): "auto" | "utf8" | "base64" {
+  if (value === undefined || value === "auto" || value === "utf8" || value === "base64") return value ?? "auto";
+  throw new Error(`Invalid encoding: ${String(value)}`);
+}
+
+function formatArg(value: unknown): "text" | "raw" {
+  if (value === undefined || value === "text" || value === "raw") return value ?? "text";
+  throw new Error(`Invalid format: ${String(value)}`);
+}
+
 function boundedNumber(value: unknown, fallback: number, max: number): number {
   if (value === undefined) return fallback;
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) throw new Error("Expected a positive number");
   return Math.min(Math.floor(value), max);
+}
+
+async function readArtifactDirectory(directory: string, maxBytes: number, artifactId: string, name: string): Promise<ToolCallOutput> {
+  const entries = await directoryEntries(directory, directory);
+  const output = entries.length ? entries.join("\n") : "(empty directory)";
+  const truncated = output.length > maxBytes;
+  return {
+    title: "artifact directory",
+    output: truncated ? `${output.slice(0, maxBytes)}\n\n[truncated]` : output,
+    metadata: { artifactId, name, type: "directory", entries: entries.length, truncated },
+  };
+}
+
+async function directoryEntries(root: string, directory: string): Promise<string[]> {
+  const out: string[] = [];
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const absolute = `${directory}/${entry.name}`;
+    const relative = absolute.slice(root.length + 1);
+    if (entry.isDirectory()) {
+      out.push(`${relative}/`);
+      out.push(...(await directoryEntries(root, absolute)));
+    } else if (entry.isFile()) {
+      out.push(relative);
+    }
+  }
+  return out.sort((a, b) => a.localeCompare(b));
+}
+
+function isBinary(buffer: Buffer): boolean {
+  const sample = buffer.subarray(0, Math.min(buffer.length, 4096));
+  return sample.includes(0);
+}
+
+function htmlToText(html: string): string {
+  return html
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, " ")
+    .trim();
 }

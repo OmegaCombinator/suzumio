@@ -8,4 +8,5 @@ COPY src ./src
 RUN npm run build
 
 ENV NODE_ENV=production
+RUN mkdir -p /turn /workspace
 ENTRYPOINT ["node", "/app/dist/runner.js"]

@@ -23,7 +23,7 @@ npm run build</code></pre>
     <h2>3. Choose a Runtime Root</h2>
     <pre><code>export SUZUMIO_ROOT=/tmp/suzumio-root
 mkdir -p "$SUZUMIO_ROOT"</code></pre>
-    <p><code>SUZUMIO_ROOT</code> stores project databases, turn files, workspaces, and artifacts. Keep it outside the Git repository.</p>
+    <p><code>SUZUMIO_ROOT</code> stores project databases, turn input files, workspaces, and artifacts. Keep it outside the Git repository.</p>
 
     <h2>4. Configure Model Credentials</h2>
     <p>The committed examples are sanitized. Copy an example config to a local untracked file if you need to replace the placeholder gateway URL, then export the configured API key environment variable.</p>
@@ -69,7 +69,7 @@ suzumio init /tmp/suzumio-ai-demo.yaml</code></pre>
     <div class="notice danger"><p>Do not commit real API keys, private gateway URLs, or private provider names. Keep them in local config and environment variables.</p></div>
 
     <h2>Troubleshooting</h2>
-    <table><tr><th>Symptom</th><th>Cause</th><th>Action</th></tr><tr><td>Turn fails before writing output.</td><td>Runner image not built, wrong image name, or container startup failure.</td><td>Run <code>docker build -t suzumio-runner:dev .</code> and inspect <code>docker logs &lt;container&gt;</code>.</td></tr><tr><td>Tool call connection refused.</td><td>Container cannot reach Suzumio server.</td><td>Run server with <code>--host 0.0.0.0</code> and use <code>http://host.docker.internal:39400</code>.</td></tr><tr><td>Agent does not start.</td><td>Project is not <code>running</code> or agent has no unread inbound message.</td><td>Run <code>suzumio start project</code> and send a direct message to the agent.</td></tr><tr><td>GitHub Pages custom domain is HTTP only.</td><td>Certificate is still provisioning.</td><td>Wait for GitHub Pages certificate issuance, then enable HTTPS enforcement.</td></tr></table>
+    <table><tr><th>Symptom</th><th>Cause</th><th>Action</th></tr><tr><td>Turn fails before submitting a result.</td><td>Runner image not built, wrong image name, container startup failure, or ToolHost connection issue.</td><td>Run <code>docker build -t suzumio-runner:dev .</code> and inspect <code>docker logs &lt;container&gt;</code>.</td></tr><tr><td>Tool call connection refused.</td><td>Container cannot reach Suzumio server.</td><td>Run server with <code>--host 0.0.0.0</code> and use <code>http://host.docker.internal:39400</code>.</td></tr><tr><td>Agent does not start.</td><td>Project is not <code>running</code> or agent has no unread inbound message.</td><td>Run <code>suzumio start project</code> and send a direct message to the agent.</td></tr><tr><td>GitHub Pages custom domain is HTTP only.</td><td>Certificate is still provisioning.</td><td>Wait for GitHub Pages certificate issuance, then enable HTTPS enforcement.</td></tr></table>
 
     <div class="footer">Next: <a href="concepts.html">Core Concepts</a>.</div>
   </main></div>

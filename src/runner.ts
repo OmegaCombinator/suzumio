@@ -1,21 +1,32 @@
 #!/usr/bin/env node
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { jsonSchema, streamText, tool as aiTool, type ModelMessage } from "ai";
-import { resolveRunnerModel } from "./runner-model.js";
+import { resolveRunnerModels, type ResolvedRunnerModel } from "./runner-model.js";
 import type { RunnerTurnInput, RunnerTurnOutput, ToolDefinition } from "./types.js";
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const inputPath = required(args.input, "--input");
-  const outputPath = required(args.output, "--output");
   const input = JSON.parse(await readFile(inputPath, "utf8")) as RunnerTurnInput;
   const output = await runAi(input);
-  await writeFile(outputPath, JSON.stringify(output, null, 2) + "\n", "utf8");
+  await submitTurnOutput(input, output);
 }
 
 async function runAi(input: RunnerTurnInput): Promise<RunnerTurnOutput> {
   if (!input.runner.models) throw new Error("runner.models is required in ai mode");
-  const resolved = resolveRunnerModel(input.runner.models, input.agent.model ?? input.runner.model);
+  const models = resolveRunnerModels(input.runner.models, input.agent.model ?? input.runner.model);
+  const errors: string[] = [];
+  for (const resolved of models) {
+    try {
+      return await runAiWithModel(input, resolved);
+    } catch (error) {
+      errors.push(`${resolved.presetId}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  throw new Error(`All model attempts failed:\n${errors.join("\n")}`);
+}
+
+async function runAiWithModel(input: RunnerTurnInput, resolved: ResolvedRunnerModel): Promise<RunnerTurnOutput> {
   const tools = toAiTools(input);
   const messages: ModelMessage[] = [{ role: "user", content: input.turn.prompt }];
   let text = "";
@@ -37,7 +48,16 @@ async function runAi(input: RunnerTurnInput): Promise<RunnerTurnOutput> {
     if (event.type === "text-delta") text += event.text;
     if (event.type === "error") throw event.error;
   }
-  return { text: text.trim() || "(model returned no text)", usage: { model: resolved.presetId, displayName: resolved.preset.displayName } };
+  return { text: text.trim() || "(model returned no text)", usage: { selectedModel: resolved.selectedPresetId, model: resolved.presetId, apiModel: resolved.apiModel } };
+}
+
+async function submitTurnOutput(input: RunnerTurnInput, output: RunnerTurnOutput): Promise<void> {
+  const response = await fetch(new URL("/turn-output", input.controllerUrl), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ project: input.project, agentId: input.agent.id, turnId: input.turn.id, token: input.token, output }),
+  });
+  if (!response.ok) throw new Error((await response.text()) || `Turn output submit failed: ${response.status}`);
 }
 
 function toAiTools(input: RunnerTurnInput): Record<string, unknown> {

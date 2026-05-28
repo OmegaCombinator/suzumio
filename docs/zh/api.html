@@ -30,7 +30,7 @@
 event: message.created
 data: { ...event row... }</code></pre>
 
-    <h2>ToolHost</h2><p>Docker runner 使用 <code>POST /tool</code> 执行项目工具。这不是公共用户 API。</p><pre><code>POST /tool
+    <h2>ToolHost</h2><p>Docker runner 使用 <code>POST /tool</code> 执行项目工具，并使用 <code>POST /turn-output</code> 提交最终 turn 文本。这些不是公共用户 API。</p><pre><code>POST /tool
 {
   "project": "demo",
   "agentId": "pm",
@@ -42,7 +42,16 @@ data: { ...event row... }</code></pre>
     "priority": "P1",
     "body": "Done."
   }
-}</code></pre><p>ToolHost 校验 token 与 agent 匹配，并确认工具在 agent allowlist 中。执行前记录 <code>tool_calls</code>，成功或失败后更新。</p>
+}</code></pre><p>ToolHost 校验 token 与 agent 匹配，并确认工具在 agent allowlist 中。执行前记录 <code>tool_calls</code>，成功或失败后更新。</p><h3><code>POST /turn-output</code></h3><pre><code>{
+  "project": "demo",
+  "agentId": "pm",
+  "turnId": "turn_...",
+  "token": "agent-private-token",
+  "output": {
+    "text": "Turn result text",
+    "usage": { "model": "worker-main" }
+  }
+}</code></pre><p>Backend 只有在收到这个已鉴权提交后才把 turn 标记为完成。<code>/turn/input.json</code> 是只读输入和调试 contract；turn output 不再从容器可写文件读取。</p>
 
     <h2>Core Tool Inputs</h2><h3><code>messages.send</code></h3><pre><code>{
   "recipient": "worker",
@@ -53,16 +62,18 @@ data: { ...event row... }</code></pre>
   "path": "relative/path/in/workspace.txt",
   "name": "optional-name.txt",
   "description": "What this artifact contains"
-}</code></pre><p>Path 相对 agent workspace。Suzumio 会复制文件到 artifact registry 并记录 SHA-256 hash。</p><h3><code>artifacts.list</code></h3><pre><code>{}</code></pre><h3><code>artifacts.read</code></h3><pre><code>{
+}</code></pre><p>Path 相对 agent workspace。Suzumio 会复制文件或目录到 artifact registry 并记录 SHA-256 hash。</p><h3><code>artifacts.list</code></h3><pre><code>{}</code></pre><h3><code>artifacts.read</code></h3><pre><code>{
   "id": "art_...",
+  "encoding": "auto",
   "maxBytes": 20000
-}</code></pre><p>使用 <code>id</code> 或 <code>name</code> 其一。工具返回已发布 artifact 的文本内容，并按请求限制截断。</p><h3><code>completion.submit</code></h3><pre><code>{
+}</code></pre><p>使用 <code>id</code> 或 <code>name</code> 其一。文件 artifact 可用 <code>auto</code>、<code>utf8</code> 或 <code>base64</code> 编码；二进制文件在 auto 模式使用 base64。目录 artifact 返回递归文件列表。结果会按请求限制截断。</p><h3><code>completion.submit</code></h3><pre><code>{
   "report": "# Final Report\n\n..."
 }</code></pre><p>该工具写入 <code>final-report.md</code>，把项目设为 <code>submitted</code>，等待用户审批。</p><h3><code>web.fetch</code></h3><pre><code>{
   "url": "https://example.com/",
   "maxBytes": 20000,
-  "timeoutMs": 30000
-}</code></pre><p>获取 HTTP(S) URL 并返回响应文本。只给确实需要联网的 agent 授权。</p>
+  "timeoutMs": 30000,
+  "format": "text"
+}</code></pre><p>获取 HTTP(S) URL。<code>format: "text"</code> 对 HTML 响应返回清洗文本，对其他内容类型返回原始文本；<code>format: "raw"</code> 返回未修改的响应文本。只给确实需要联网的 agent 授权。</p>
 
     <h2>WebUI</h2><p>根路径 <code>/</code> 提供内嵌 WebUI。第一版保持简单：项目选择器、消息表单、agents、messages、turns、events 和 artifacts。</p>
     <div class="footer">下一步：<a href="roadmap.html">路线图</a>。</div>

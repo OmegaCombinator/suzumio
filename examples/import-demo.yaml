@@ -7,9 +7,8 @@ backend:
   controllerUrl: http://host.docker.internal:39400
   runner:
     mode: ai
-    model: main
+    model: main-with-fallback
     models:
-      default: main
       providers:
         gateway:
           type: openai-compatible
@@ -19,11 +18,18 @@ backend:
       presets:
         main:
           provider: gateway
-          displayName: Main agent model
           model: gpt-5.5
           apiModel: gpt-5.5
           maxOutputTokens: 2000
           toolChoice: auto
+        main-with-fallback:
+          model-list:
+            - main
+
+tools:
+  toolpacks:
+    - core
+    - web
 
 agents:
   pm: @import(fragments/pm.yaml)

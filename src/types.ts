@@ -16,7 +16,12 @@ export interface ProjectConfig {
   backend: BackendConfig;
   agents: Record<string, AgentConfig>;
   channels: string[];
+  tools: ToolpackConfig;
   observability: ObservabilityConfig;
+}
+
+export interface ToolpackConfig {
+  toolpacks: string[];
 }
 
 export interface SchedulerConfig {
@@ -48,7 +53,6 @@ export interface RunnerConfig {
 }
 
 export interface ModelRegistryConfig {
-  default: string;
   providers: Record<string, ProviderConfig>;
   presets: Record<string, ModelPresetConfig>;
 }
@@ -65,9 +69,9 @@ export interface ProviderConfig {
 }
 
 export interface ModelPresetConfig {
-  provider: string;
-  displayName?: string;
-  model: string;
+  provider?: string;
+  model?: string;
+  modelList?: string[];
   apiModel?: string;
   temperature?: number;
   topP?: number;
@@ -82,6 +86,8 @@ export interface ModelPresetConfig {
 
 export interface AgentConfig {
   role?: string;
+  displayName?: string;
+  names?: string[];
   count?: number;
   prompt?: string;
   model?: string;
@@ -164,6 +170,7 @@ export interface RunnerTurnInput {
   project: string;
   agent: {
     id: string;
+    displayName: string;
     role: string;
     prompt: string;
     model?: string;

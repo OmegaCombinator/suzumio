@@ -25,27 +25,48 @@ const ProviderSchema = z.object({
   options: JsonObjectSchema.default({}),
 });
 
-const ModelPresetSchema = z.object({
-  provider: z.string(),
-  displayName: z.string().optional(),
-  model: z.string(),
-  apiModel: z.string().optional(),
-  temperature: z.number().optional(),
-  topP: z.number().optional(),
-  topK: z.number().optional(),
-  maxOutputTokens: z.number().int().positive().optional(),
-  contextLimit: z.number().int().positive().optional(),
-  toolChoice: z.enum(["auto", "required", "none"]).optional(),
-  fallbacks: z.array(z.string()).default([]),
-  providerOptions: JsonObjectSchema.default({}),
-  headers: z.record(z.string(), z.string()).default({}),
-});
+const ModelPresetSchema = z.preprocess(
+  (value) => {
+    if (!isPlainObject(value)) return value;
+    const out = { ...value };
+    if (out.modelList === undefined && out["model-list"] !== undefined) out.modelList = out["model-list"];
+    delete out["model-list"];
+    return out;
+  },
+  z
+    .object({
+      provider: z.string().optional(),
+      model: z.string().optional(),
+      modelList: z.array(z.string()).optional(),
+      apiModel: z.string().optional(),
+      temperature: z.number().optional(),
+      topP: z.number().optional(),
+      topK: z.number().optional(),
+      maxOutputTokens: z.number().int().positive().optional(),
+      contextLimit: z.number().int().positive().optional(),
+      toolChoice: z.enum(["auto", "required", "none"]).optional(),
+      providerOptions: JsonObjectSchema.default({}),
+      headers: z.record(z.string(), z.string()).default({}),
+    })
+    .superRefine((preset, ctx) => {
+      const isList = preset.modelList !== undefined;
+      const isConcrete = preset.provider !== undefined || preset.model !== undefined || preset.apiModel !== undefined;
+      if (isList && isConcrete) ctx.addIssue({ code: "custom", message: "modelList presets cannot also set provider/model/apiModel" });
+      if (!isList && (!preset.provider || !preset.model)) ctx.addIssue({ code: "custom", message: "model presets need provider and model, or model-list" });
+      if (isList && preset.modelList!.length === 0) ctx.addIssue({ code: "custom", message: "model-list cannot be empty" });
+    }),
+);
 
 const ModelsSchema = z.object({
-  default: z.string().default("main"),
   providers: z.record(z.string(), ProviderSchema).default({}),
   presets: z.record(z.string(), ModelPresetSchema).default({}),
 });
+
+const ToolsSchema = z
+  .object({
+    toolpacks: z.array(z.enum(["core", "artifacts", "web"])).default(["core", "artifacts", "web"]),
+  })
+  .default({ toolpacks: ["core", "artifacts", "web"] });
 
 const RunnerSchema = z
   .object({
@@ -84,6 +105,8 @@ const BackendSchema = z
 
 const AgentSchema = z.object({
   role: z.string().optional(),
+  displayName: z.string().optional(),
+  names: z.array(z.string()).optional(),
   count: z.number().int().positive().optional(),
   prompt: z.string().default(""),
   model: z.string().optional(),
@@ -101,6 +124,7 @@ const ProjectConfigSchema = z.object({
   backend: BackendSchema,
   agents: z.record(z.string(), AgentSchema).default({}),
   channels: z.array(z.string()).default(["#project", "#blocked"]),
+  tools: ToolsSchema,
   observability: z
     .object({
       http: z
@@ -131,8 +155,9 @@ export async function loadProjectConfig(filePath: string): Promise<LoadedProject
   const resolved = resolveExtends(imported);
   const config = ProjectConfigSchema.parse(resolved) as ProjectConfig;
   normalizeMountSources(config, path.dirname(sourcePath));
+  validateRunnerModels(config);
   if (Object.keys(config.agents).length === 0) throw new Error("Project config needs at least one agent");
-  return { config, sourcePath, resolved: config };
+  return { config, sourcePath, resolved: externalizeConfig(config) };
 }
 
 export async function renderProjectConfig(filePath: string): Promise<string> {
@@ -226,5 +251,27 @@ function normalizeMountSources(config: ProjectConfig, baseDir: string): void {
       throw new Error(`Docker mount target is reserved: ${mount.target}`);
     }
     mount.target = target;
+  }
+}
+
+function externalizeConfig(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(externalizeConfig);
+  if (!isPlainObject(value)) return value;
+  const out: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value)) {
+    out[key === "modelList" ? "model-list" : key] = externalizeConfig(item);
+  }
+  return out;
+}
+
+function validateRunnerModels(config: ProjectConfig): void {
+  const runner = config.backend.runner;
+  if (!runner.models) throw new Error("backend.runner.models is required");
+  if (Object.keys(runner.models.providers).length === 0) throw new Error("backend.runner.models.providers needs at least one provider");
+  if (Object.keys(runner.models.presets).length === 0) throw new Error("backend.runner.models.presets needs at least one preset");
+  for (const [id, agent] of Object.entries(config.agents)) {
+    const selected = agent.model ?? runner.model;
+    if (!selected) throw new Error(`Agent ${id} needs an explicit model, or set backend.runner.model`);
+    if (!runner.models.presets[selected]) throw new Error(`Agent ${id} selected unknown model preset: ${selected}`);
   }
 }

@@ -29,7 +29,6 @@ backend:
     mode: ai
     model: main
     models:
-      default: main
       providers:
         gateway:
           type: openai-compatible
@@ -38,13 +37,17 @@ backend:
       presets:
         main:
           provider: gateway
-          displayName: Main agent model
           model: gpt-5.5
           apiModel: gpt-5.5
+
+tools:
+  toolpacks:
+    - core
 
 agents:
   pm:
     role: project-manager
+    displayName: Yuki
     prompt: |
       Handle the user request and stay concise.
     tools:
@@ -73,9 +76,8 @@ backend:
     network: bridge
   runner:
     mode: ai
-    model: main
+    model: worker-with-fallback
     models:
-      default: main
       providers:
         gateway:
           type: openai-compatible
@@ -83,19 +85,35 @@ backend:
           apiKeyEnv: SUZUMIO_GATEWAY_API_KEY
           timeoutMs: 300000
       presets:
-        main:
+        worker-main:
           provider: gateway
-          displayName: Main agent model
           model: gpt-5.5
           apiModel: gpt-5.5
           toolChoice: auto
           maxOutputTokens: 2000
+        pm-main:
+          provider: gateway
+          model: gpt-5.5
+          apiModel: gpt-5.5
+          toolChoice: auto
+          maxOutputTokens: 2000
+        worker-with-fallback:
+          model-list:
+            - worker-main
+            - pm-main
+
+tools:
+  toolpacks:
+    - core
+    - artifacts
+    - web
 
 agents:
   pm:
     role: project-manager
+    displayName: Yuki
     prompt: @import(prompts/pm.md)
-    model: main
+    model: pm-main
     tools:
       - messages.send
       - artifacts.list
@@ -103,15 +121,20 @@ agents:
   worker:
     role: worker
     count: 2
+    names:
+      - Akari
+      - Ren
     prompt: @import(prompts/worker.md)
-    model: main
+    model: worker-with-fallback
     tools:
       - messages.send
       - artifacts.publish
-      - artifacts.list</code></pre>
+      - artifacts.list
+      - artifacts.read
+      - web.fetch</code></pre>
 
     <h2>Top-level Fields</h2>
-    <table><tr><th>Field</th><th>Required</th><th>Description</th></tr><tr><td><code>name</code></td><td>Yes</td><td>Project id and runtime directory name under <code>SUZUMIO_ROOT</code>.</td></tr><tr><td><code>task</code></td><td>Yes</td><td>Durable task statement rendered into every turn prompt.</td></tr><tr><td><code>agents</code></td><td>Yes</td><td>Map of agent ids to agent configs. At least one agent is required.</td></tr><tr><td><code>extends</code></td><td>No</td><td>One profile object or a list of profile objects to merge before local fields.</td></tr><tr><td><code>scheduler</code></td><td>No</td><td>Scheduler kind and prompt-message batching. Defaults to <code>nonpreemptive-mailbox</code>.</td></tr><tr><td><code>backend</code></td><td>No</td><td>Docker runner image, ToolHost URL, Docker options, and model runner settings.</td></tr><tr><td><code>channels</code></td><td>No</td><td>Allowed channel names. Defaults include <code>#project</code> and <code>#blocked</code>.</td></tr><tr><td><code>observability</code></td><td>No</td><td>Documentation-level server defaults for HTTP/WebUI. The CLI flags still control the actual server bind address.</td></tr></table>
+    <table><tr><th>Field</th><th>Required</th><th>Description</th></tr><tr><td><code>name</code></td><td>Yes</td><td>Project id and runtime directory name under <code>SUZUMIO_ROOT</code>.</td></tr><tr><td><code>task</code></td><td>Yes</td><td>Durable task statement rendered into every turn prompt.</td></tr><tr><td><code>agents</code></td><td>Yes</td><td>Map of agent ids to agent configs. At least one agent is required.</td></tr><tr><td><code>tools</code></td><td>No</td><td>Toolpacks registered for the project. Defaults to <code>core</code>, <code>artifacts</code>, and <code>web</code>.</td></tr><tr><td><code>extends</code></td><td>No</td><td>One profile object or a list of profile objects to merge before local fields.</td></tr><tr><td><code>scheduler</code></td><td>No</td><td>Scheduler kind and prompt-message batching. Defaults to <code>nonpreemptive-mailbox</code>.</td></tr><tr><td><code>backend</code></td><td>No</td><td>Docker runner image, ToolHost URL, Docker options, and model runner settings.</td></tr><tr><td><code>channels</code></td><td>No</td><td>Allowed channel names. Defaults include <code>#project</code> and <code>#blocked</code>.</td></tr><tr><td><code>observability</code></td><td>No</td><td>Documentation-level server defaults for HTTP/WebUI. The CLI flags still control the actual server bind address.</td></tr></table>
 
     <h2>YAML Conventions</h2>
     <p>Suzumio uses ordinary YAML maps, arrays, scalars, and block strings. Keep long text in block strings or imported files so rendered prompts are readable.</p>
@@ -235,9 +258,8 @@ channels: ["#project", "#reviews"]</code></pre>
     <pre><code>backend:
   runner:
     mode: ai
-    model: main
+    model: worker-with-fallback
     models:
-      default: main
       providers:
         gateway:
           type: openai-compatible
@@ -245,22 +267,41 @@ channels: ["#project", "#reviews"]</code></pre>
           apiKeyEnv: SUZUMIO_GATEWAY_API_KEY
           timeoutMs: 300000
       presets:
-        main:
+        worker-main:
           provider: gateway
-          displayName: Main agent model
           model: gpt-5.5
           apiModel: gpt-5.5
           toolChoice: auto
-          maxOutputTokens: 2000</code></pre>
+          maxOutputTokens: 2000
+        pm-main:
+          provider: gateway
+          model: gpt-5.5
+          apiModel: gpt-5.5
+        worker-with-fallback:
+          model-list:
+            - worker-main
+            - pm-main</code></pre>
+    <p>Model selection is explicit. Set <code>backend.runner.model</code> for a project-level selection, or set <code>agents.*.model</code> per agent. Presets with <code>model-list</code> expand to an ordered fallback list; the runner tries each concrete preset in order.</p>
     <div class="notice danger"><p>Committed examples must stay sanitized. Put real provider endpoints and keys in local untracked config and environment variables.</p></div>
+
+    <h2>Toolpacks</h2>
+    <pre><code>tools:
+  toolpacks:
+    - core
+    - artifacts
+    - web</code></pre>
+    <table><tr><th>Toolpack</th><th>Registered tools</th></tr><tr><td><code>core</code></td><td><code>messages.send</code>, <code>completion.submit</code></td></tr><tr><td><code>artifacts</code></td><td><code>artifacts.publish</code>, <code>artifacts.list</code>, <code>artifacts.read</code></td></tr><tr><td><code>web</code></td><td><code>web.fetch</code></td></tr></table>
 
     <h2>Agent Config</h2>
     <pre><code>agents:
   worker:
     role: worker
     count: 2
+    names:
+      - Akari
+      - Ren
     prompt: @import(prompts/worker.md)
-    model: main
+    model: worker-with-fallback
     tools:
       - messages.send
       - artifacts.publish
@@ -271,7 +312,7 @@ channels: ["#project", "#reviews"]</code></pre>
       - source: ./worker-notes
         target: /mnt/worker-notes
         readonly: true</code></pre>
-    <table><tr><th>Field</th><th>Description</th></tr><tr><td><code>role</code></td><td>Human-readable role stored with the agent.</td></tr><tr><td><code>count</code></td><td>Expands one config entry into numbered agents such as <code>worker-1</code> and <code>worker-2</code>.</td></tr><tr><td><code>prompt</code></td><td>Agent instructions included in every turn prompt. Usually imported from Markdown.</td></tr><tr><td><code>model</code></td><td>Optional model preset override for AI mode. Preset ids are the model names you assign.</td></tr><tr><td><code>tools</code></td><td>Allowed tool names for this agent. Supports exact names, <code>namespace.*</code>, and <code>*</code>.</td></tr><tr><td><code>mounts</code></td><td>Explicit host files or directories mounted only for this agent.</td></tr><tr><td><code>env</code></td><td>Additional environment variables for runner containers.</td></tr></table>
+    <table><tr><th>Field</th><th>Description</th></tr><tr><td><code>role</code></td><td>Human-readable role stored with the agent.</td></tr><tr><td><code>displayName</code></td><td>Human-readable name for a single agent or the fallback name for counted agents.</td></tr><tr><td><code>names</code></td><td>Optional name list for counted agents, assigned by index.</td></tr><tr><td><code>count</code></td><td>Expands one config entry into numbered agents such as <code>worker-1</code> and <code>worker-2</code>.</td></tr><tr><td><code>prompt</code></td><td>Agent instructions included in every turn prompt. Usually imported from Markdown.</td></tr><tr><td><code>model</code></td><td>Explicit model preset selection for this agent. If omitted, <code>backend.runner.model</code> must be set.</td></tr><tr><td><code>tools</code></td><td>Allowed tool names for this agent. Supports exact names, <code>namespace.*</code>, and <code>*</code>. The tool must also be registered by a project toolpack.</td></tr><tr><td><code>mounts</code></td><td>Explicit host files or directories mounted only for this agent.</td></tr><tr><td><code>env</code></td><td>Additional environment variables for runner containers.</td></tr></table>
 
     <h2>Channels</h2>
     <pre><code>channels:

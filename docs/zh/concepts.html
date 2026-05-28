@@ -14,10 +14,10 @@
   "priority": "P1",
   "body": "Start the project."
 }</code></pre><p>只有当消息被写入某个 agent 的 turn prompt 时，才会对该 agent 变成 read。</p>
-    <h2>Turn</h2><p>Turn 是一个 agent 的一次隔离执行。Suzumio 创建 turn record，写入 <code>input.json</code>，启动 Docker 容器，等待 <code>output.json</code>，并记录成功或失败。</p><pre><code>turn.started -> container runs -> output.json -> turn.completed</code></pre>
+    <h2>Turn</h2><p>Turn 是一个 agent 的一次隔离执行。Suzumio 创建 turn record，写入只读 <code>input.json</code>，启动 Docker 容器，通过 <code>POST /turn-output</code> 接收完成结果，并记录成功或失败。</p><pre><code>turn.started -> container runs -> POST /turn-output -> turn.completed</code></pre>
     <h2>Mailbox Scheduler</h2><p>默认 scheduler 是 <code>nonpreemptive-mailbox</code>。</p><ol><li>跳过非 <code>running</code> 项目。</li><li>跳过已经 <code>running</code> 的 agent。</li><li>为每个 idle agent 获取 unread inbound messages。</li><li>没有 unread message 时保持 quiet。</li><li>有 unread message 时渲染一个 prompt 并启动一个 turn。</li><li>不创建 heartbeat、status prompt 或自动提醒。</li></ol>
-    <h2>ToolHost</h2><p>工具由 Suzumio core 提供，而不是由模型 runner 任意执行。每次调用都会校验 project、agent、turn、token、tool name 和 allowlist。</p><div class="grid"><div class="card"><h3><code>messages.send</code></h3><p>创建直接或频道消息。</p></div><div class="card"><h3><code>artifacts.publish</code></h3><p>把 workspace 文件发布到 artifact registry。</p></div><div class="card"><h3><code>artifacts.list</code></h3><p>返回已发布 artifact。</p></div><div class="card"><h3><code>artifacts.read</code></h3><p>按 id 或 name 读取文本 artifact。</p></div><div class="card"><h3><code>completion.submit</code></h3><p>写入最终报告并标记项目 submitted。</p></div><div class="card"><h3><code>web.fetch</code></h3><p>以文本形式获取 HTTP(S) URL。</p></div></div>
-    <h2>Artifact 和 Event</h2><p>Artifact 是从 agent workspace 发布的文件，记录 id、creator、turn、路径、hash 和描述。Event 是项目时间线，用于 WebUI、debug、审计和未来 replay 工具。</p><pre><code>project.initialized
+    <h2>ToolHost</h2><p>工具由 Suzumio core 提供，而不是由模型 runner 任意执行。每次调用都会校验 project、agent、turn、token、tool name 和 allowlist。</p><div class="grid"><div class="card"><h3><code>messages.send</code></h3><p>创建直接或频道消息。</p></div><div class="card"><h3><code>artifacts.publish</code></h3><p>把 workspace 文件或目录发布到 artifact registry。</p></div><div class="card"><h3><code>artifacts.list</code></h3><p>返回已发布 artifact。</p></div><div class="card"><h3><code>artifacts.read</code></h3><p>读取文本/二进制文件 artifact，或列出目录 artifact。</p></div><div class="card"><h3><code>completion.submit</code></h3><p>写入最终报告并标记项目 submitted。</p></div><div class="card"><h3><code>web.fetch</code></h3><p>以清洗文本或原始内容获取 HTTP(S) URL。</p></div></div>
+    <h2>Artifact 和 Event</h2><p>Artifact 是从 agent workspace 发布的文件或目录，记录 id、creator、turn、路径、hash 和描述。Event 是项目时间线，用于 WebUI、debug、审计和未来 replay 工具。</p><pre><code>project.initialized
 message.created
 turn.started
 tool.called

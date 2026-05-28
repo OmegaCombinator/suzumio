@@ -34,7 +34,7 @@
       <section class="grid">
         <div class="card"><h3>Non-preemptive scheduling</h3><p>Running agents are not prompted, nudged, or interrupted. New inbound messages wait in the mailbox until the current turn finishes.</p></div>
         <div class="card"><h3>Durable project state</h3><p>Projects store resolved configuration, agents, messages, message reads, turns, events, tool calls, and artifacts in SQLite.</p></div>
-        <div class="card"><h3>Docker-first execution</h3><p>Each turn runs in a container with a turn input file, an output file, an agent workspace, and ToolHost access.</p></div>
+        <div class="card"><h3>Docker-first execution</h3><p>Each turn runs in a container with a read-only turn input file, an agent workspace, ToolHost access, and HTTP result submission.</p></div>
         <div class="card"><h3>Audited tools</h3><p>Project tools are checked against each agent allowlist and recorded before and after execution.</p></div>
       </section>
 
@@ -70,7 +70,7 @@
   resolved.yaml       fully resolved config
   agents/             per-agent workspaces
   artifacts/          published files
-  turns/              turn input/output directories
+  turns/              turn input directories
   logs/               reserved for runtime logs</code></pre>
       </section>
 

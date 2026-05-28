@@ -44,6 +44,7 @@ function renderTurnPrompt(config: ProjectConfig, agent: AgentRecord, messages: M
   const mountedInputs = renderMountedInputs(config, agent);
   return [
     `# Project Task\n\n${config.task.trim()}`,
+    `# Agent Identity\n\nID: ${agent.id}\nName: ${agent.displayName}\nRole: ${agent.role}`,
     agent.prompt.trim() ? `# Agent Instructions\n\n${agent.prompt.trim()}` : undefined,
     mountedInputs,
     "# New Inbound Messages",

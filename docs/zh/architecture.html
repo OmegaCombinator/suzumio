@@ -29,11 +29,11 @@ Container runner
   Reads /turn/input.json
   Runs AI mode
   Calls Suzumio /tool for project tools
-  Writes /turn/output.json</code></pre>
+  POSTs /turn-output with final text</code></pre>
 
-    <h2>核心进程</h2><p>核心进程是项目级记录的权威来源。CLI、HTTP、WebUI 或审计日志需要看到的数据，都应通过 core store 写入 SQLite。</p><table><tr><th>模块</th><th>职责</th></tr><tr><td><code>config.ts</code></td><td>加载 YAML、解析 import、应用 <code>extends</code>、验证配置并渲染最终 YAML。</td></tr><tr><td><code>store.ts</code></td><td>创建和查询 projects、agents、messages、reads、turns、events、tool_calls、artifacts 等 SQLite 表。</td></tr><tr><td><code>scheduler.ts</code></td><td>实现 <code>nonpreemptive-mailbox</code> 调度规则。</td></tr><tr><td><code>tools.ts</code></td><td>定义工具 registry，并对 ToolHost call 做 token 和 allowlist 检查。</td></tr><tr><td><code>server.ts</code></td><td>HTTP API、SSE stream、ToolHost route 和内嵌 WebUI。</td></tr><tr><td><code>backend.ts</code></td><td>Docker 容器创建、配置的 bind mounts、runner input/output、turn completion。</td></tr><tr><td><code>runner.ts</code></td><td>模型驱动 turn 的容器入口。</td></tr></table>
+    <h2>核心进程</h2><p>核心进程是项目级记录的权威来源。CLI、HTTP、WebUI 或审计日志需要看到的数据，都应通过 core store 写入 SQLite。</p><table><tr><th>模块</th><th>职责</th></tr><tr><td><code>config.ts</code></td><td>加载 YAML、解析 import、应用 <code>extends</code>、验证配置并渲染最终 YAML。</td></tr><tr><td><code>store.ts</code></td><td>创建和查询 projects、agents、messages、reads、turns、events、tool_calls、artifacts 等 SQLite 表。</td></tr><tr><td><code>scheduler.ts</code></td><td>实现 <code>nonpreemptive-mailbox</code> 调度规则。</td></tr><tr><td><code>tools.ts</code></td><td>定义工具 registry，并对 ToolHost call 做 token 和 allowlist 检查。</td></tr><tr><td><code>server.ts</code></td><td>HTTP API、SSE stream、ToolHost route、turn result route 和内嵌 WebUI。</td></tr><tr><td><code>backend.ts</code></td><td>Docker 容器创建、配置的 bind mounts、runner input 和 turn completion monitoring。</td></tr><tr><td><code>runner.ts</code></td><td>模型驱动 turn 的容器入口。</td></tr></table>
 
-    <h2>Runner Contract</h2><p>Runner 通过一个 input 文件接收全部上下文，通过一个 output 文件返回结果。这让执行层可替换，同时不改变项目状态语义。</p><pre><code>type RunnerTurnInput = {
+    <h2>Runner Contract</h2><p>Runner 通过一个只读 input 文件接收全部上下文，并通过 HTTP 回传完成结果。这样执行层仍可替换，同时不会让模型可写文件成为 output authority。</p><pre><code>type RunnerTurnInput = {
   project: string
   agent: { id: string; role: string; prompt: string; model?: string }
   turn: { id: string; prompt: string }
@@ -47,7 +47,7 @@ Container runner
   usage?: Record&lt;string, unknown&gt;
 }</code></pre>
 
-    <h2>Docker 隔离</h2><p>每个 turn container 只获得明确的小环境：</p><ul><li><code>/turn</code> bind mount，包含 input/output 文件。</li><li><code>/workspace</code> bind mount，作为 agent workspace。</li><li>project、agent、turn、token 以及配置的 provider key 环境变量。</li><li><code>host.docker.internal</code> 映射，用于访问 host 上的 Suzumio ToolHost。</li></ul><p>当前版本保留 completed containers 便于 early debugging。后续应把 cleanup policy 配置化。</p>
+    <h2>Docker 隔离</h2><p>每个 turn container 只获得明确的小环境：</p><ul><li>只读 <code>/turn/input.json</code> bind mount。</li><li><code>/workspace</code> bind mount，作为 agent workspace。</li><li>按配置显式挂载到非保留 target 的 host 文件或目录。</li><li>project、agent、turn、token 以及配置的 provider key 环境变量。</li><li><code>host.docker.internal</code> 映射，用于访问 host 上的 Suzumio ToolHost 和 <code>/turn-output</code>。</li></ul><p>当前版本保留 completed containers 便于 early debugging。后续应把 cleanup policy 配置化。</p>
 
     <h2>Tool Flow</h2><pre><code>Model asks for tool
   runner converts model tool call
@@ -58,7 +58,7 @@ Container runner
   ToolHost records success or failure
   runner returns tool output to model</code></pre><p>模型默认不会获得任意 host tools。工具按 agent 配置，并由 core ToolHost 执行。</p>
 
-    <h2>SQLite 是项目事实</h2><p>每个项目有一个 SQLite 文件。Container runner 不维护项目数据库；持久状态必须通过 output 文件或 ToolHost call 回到 core。</p><table><tr><th>表</th><th>用途</th></tr><tr><td><code>projects</code></td><td>项目状态、任务、resolved config JSON、submitted report path。</td></tr><tr><td><code>agents</code></td><td>Agent roster、prompt、tool allowlist、token、active turn。</td></tr><tr><td><code>messages</code></td><td>直接消息和频道消息。</td></tr><tr><td><code>message_reads</code></td><td>哪个 turn 消费了哪个 inbound message。</td></tr><tr><td><code>turns</code></td><td>Turn 执行记录和 output text。</td></tr><tr><td><code>events</code></td><td>Append-style event timeline。</td></tr><tr><td><code>tool_calls</code></td><td>已审计的工具调用记录。</td></tr><tr><td><code>artifacts</code></td><td>带 hash 和 metadata 的已发布文件。</td></tr></table>
+    <h2>SQLite 是项目事实</h2><p>每个项目有一个 SQLite 文件。Container runner 不维护项目数据库；持久状态必须通过已鉴权 HTTP submit 或 ToolHost call 回到 core。</p><table><tr><th>表</th><th>用途</th></tr><tr><td><code>projects</code></td><td>项目状态、任务、resolved config JSON、submitted report path。</td></tr><tr><td><code>agents</code></td><td>Agent roster、prompt、tool allowlist、token、active turn。</td></tr><tr><td><code>messages</code></td><td>直接消息和频道消息。</td></tr><tr><td><code>message_reads</code></td><td>哪个 turn 消费了哪个 inbound message。</td></tr><tr><td><code>turns</code></td><td>Turn 执行记录和 output text。</td></tr><tr><td><code>events</code></td><td>Append-style event timeline。</td></tr><tr><td><code>tool_calls</code></td><td>已审计的工具调用记录。</td></tr><tr><td><code>artifacts</code></td><td>带 hash 和 metadata 的已发布文件。</td></tr></table>
 
     <h2>边界的价值</h2><p>项目事实留在 core 中，agent execution 就可以是一次性的。Runner 可以失败、替换或升级，而项目数据库、消息历史、artifact 和用户控制面保持稳定。</p>
     <div class="footer">下一步：<a href="operations.html">运维</a>。</div>

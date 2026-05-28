@@ -9,7 +9,7 @@
 
     <h2>Runtime Root</h2>
     <pre><code>export SUZUMIO_ROOT=/data/suzumio-runtime</code></pre>
-    <p>Runtime state should live outside the source repository. The root contains project databases, turn input/output files, agent workspaces, artifacts, and logs.</p>
+    <p>Runtime state should live outside the source repository. The root contains project databases, turn input files, agent workspaces, artifacts, and logs.</p>
 
     <h2>Recommended Run Pattern</h2>
     <pre><code>npm run build
@@ -25,17 +25,16 @@ suzumio start demo
 suzumio send demo pm P1 "Start the project."</code></pre>
 
     <h2>Operational Checklist</h2>
-    <table><tr><th>Stage</th><th>Check</th><th>Command</th></tr><tr><td>Build</td><td>TypeScript emits <code>dist/</code>.</td><td><code>npm run build</code></td></tr><tr><td>Image</td><td>Runner image exists locally.</td><td><code>docker image inspect suzumio-runner:dev</code></td></tr><tr><td>Config</td><td>Imports resolve and secrets are not committed.</td><td><code>suzumio config render file.yaml</code></td></tr><tr><td>Store</td><td>Project was initialized under the expected root.</td><td><code>suzumio status project</code></td></tr><tr><td>Server</td><td>HTTP and ToolHost are reachable.</td><td><code>curl http://127.0.0.1:39400/health</code></td></tr><tr><td>Scheduler</td><td>Project is running and idle agents have unread messages.</td><td><code>suzumio messages project</code></td></tr><tr><td>Turn</td><td>Container completed and output was captured.</td><td><code>suzumio turns project</code></td></tr></table>
+    <table><tr><th>Stage</th><th>Check</th><th>Command</th></tr><tr><td>Build</td><td>TypeScript emits <code>dist/</code>.</td><td><code>npm run build</code></td></tr><tr><td>Image</td><td>Runner image exists locally.</td><td><code>docker image inspect suzumio-runner:dev</code></td></tr><tr><td>Config</td><td>Imports resolve and secrets are not committed.</td><td><code>suzumio config render file.yaml</code></td></tr><tr><td>Store</td><td>Project was initialized under the expected root.</td><td><code>suzumio status project</code></td></tr><tr><td>Server</td><td>HTTP and ToolHost are reachable.</td><td><code>curl http://127.0.0.1:39400/health</code></td></tr><tr><td>Scheduler</td><td>Project is running and idle agents have unread messages.</td><td><code>suzumio messages project</code></td></tr><tr><td>Turn</td><td>Container completed and turn text was submitted over HTTP.</td><td><code>suzumio turns project</code></td></tr></table>
 
     <h2>Inspecting a Turn</h2>
-    <p>A turn directory contains the exact runner input and output:</p>
+    <p>A turn directory contains the exact runner input:</p>
     <pre><code>$SUZUMIO_ROOT/demo/turns/turn_.../
-  input.json
-  output.json</code></pre>
-    <p>The input includes the rendered prompt, agent identity, controller URL, runner config, and tool definitions available to the model. This makes failed turns reproducible and reviewable.</p>
+  input.json</code></pre>
+    <p>The input includes the rendered prompt, agent identity, controller URL, runner config, and tool definitions available to the model. Final turn text is submitted through <code>POST /turn-output</code> and stored in SQLite, so failed turns are still reviewable without trusting a container-writable output file.</p>
 
     <h2>Debugging Scheduler Silence</h2>
-    <table><tr><th>Symptom</th><th>Likely cause</th><th>Action</th></tr><tr><td>Project never starts a turn.</td><td>Project is not <code>running</code>.</td><td><code>suzumio start project</code></td></tr><tr><td>Agent stays quiet.</td><td>No unread inbound messages for that agent.</td><td><code>suzumio send project agent P1 "..."</code></td></tr><tr><td>Message exists but no new turn starts.</td><td>Agent is already <code>running</code>.</td><td>Wait for completion. Suzumio is intentionally non-preemptive.</td></tr><tr><td>Turn fails immediately.</td><td>Image, mount, or Docker daemon issue.</td><td>Inspect <code>suzumio turns</code>, turn files, and <code>docker logs</code>.</td></tr></table>
+    <table><tr><th>Symptom</th><th>Likely cause</th><th>Action</th></tr><tr><td>Project never starts a turn.</td><td>Project is not <code>running</code>.</td><td><code>suzumio start project</code></td></tr><tr><td>Agent stays quiet.</td><td>No unread inbound messages for that agent.</td><td><code>suzumio send project agent P1 "..."</code></td></tr><tr><td>Message exists but no new turn starts.</td><td>Agent is already <code>running</code>.</td><td>Wait for completion. Suzumio is intentionally non-preemptive.</td></tr><tr><td>Turn fails immediately.</td><td>Image, mount, or Docker daemon issue.</td><td>Inspect <code>suzumio turns</code>, turn input, and <code>docker logs</code>.</td></tr></table>
 
     <h2>Cleaning Debug Containers</h2>
     <p>Early Suzumio keeps completed turn containers for debugging. Remove only containers that Suzumio created:</p>

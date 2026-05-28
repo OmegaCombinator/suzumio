@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { ProjectStore } from "./store.js";
 import { ToolHost } from "./tools.js";
 import { NonPreemptiveMailboxScheduler } from "./scheduler.js";
-import type { AgentRecord, MessagePriority } from "./types.js";
+import type { AgentRecord, MessagePriority, RunnerTurnOutput } from "./types.js";
 
 export type ServeOptions = {
   host: string;
@@ -40,6 +40,7 @@ async function handleRequest(
   if (request.method === "GET" && url.pathname === "/health") return json(response, { healthy: true });
   if (request.method === "GET" && url.pathname === "/") return html(response, WEBUI_HTML);
   if (request.method === "POST" && url.pathname === "/tool") return json(response, await ctx.toolHost.call(await readBody(request)));
+  if (request.method === "POST" && url.pathname === "/turn-output") return json(response, await submitTurnOutput(await readBody(request), ctx.root));
 
   if (request.method === "GET" && url.pathname === "/api/projects") return json(response, await listProjects(ctx.root));
   if (parts[0] !== "api" || parts[1] !== "projects" || !parts[2]) return json(response, { error: "not found" }, 404);
@@ -88,6 +89,32 @@ async function handleRequest(
     store.close();
   }
   return json(response, { error: "not found" }, 404);
+}
+
+async function submitTurnOutput(body: Record<string, unknown>, root?: string): Promise<Record<string, unknown>> {
+  const project = requiredString(body.project, "project");
+  const agentId = requiredString(body.agentId, "agentId");
+  const turnId = requiredString(body.turnId, "turnId");
+  const token = requiredString(body.token, "token");
+  const output = outputBody(body.output);
+  const store = new ProjectStore(project, root);
+  try {
+    const agent = store.requireAgent(agentId);
+    if (agent.token !== token) throw new Error("Invalid agent token");
+    const turn = store.turn(turnId);
+    if (turn.agentId !== agent.id) throw new Error(`Turn ${turnId} does not belong to ${agent.id}`);
+    if (turn.status !== "running") return { status: turn.status, turnId };
+    store.completeTurn(turnId, output);
+    return { status: "completed", turnId };
+  } finally {
+    store.close();
+  }
+}
+
+function outputBody(value: unknown): RunnerTurnOutput {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("output is required");
+  const output = value as Record<string, unknown>;
+  return { text: requiredString(output.text, "output.text"), usage: typeof output.usage === "object" && output.usage && !Array.isArray(output.usage) ? (output.usage as Record<string, unknown>) : undefined };
 }
 
 async function listProjects(root?: string): Promise<Record<string, unknown>[]> {

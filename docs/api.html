@@ -43,7 +43,7 @@ event: message.created
 data: { ...event row... }</code></pre>
 
     <h2>ToolHost</h2>
-    <p>The Docker runner uses <code>POST /tool</code> to execute project tools. This route is not a public user API.</p>
+    <p>The Docker runner uses <code>POST /tool</code> to execute project tools and <code>POST /turn-output</code> to submit final turn text. These routes are not public user APIs.</p>
     <pre><code>POST /tool
 {
   "project": "demo",
@@ -58,6 +58,19 @@ data: { ...event row... }</code></pre>
   }
 }</code></pre>
     <p>The ToolHost verifies that the token matches the agent and that the requested tool is in the agent allowlist. It records a <code>tool_calls</code> row before execution and updates it after success or failure.</p>
+
+    <h3><code>POST /turn-output</code></h3>
+    <pre><code>{
+  "project": "demo",
+  "agentId": "pm",
+  "turnId": "turn_...",
+  "token": "agent-private-token",
+  "output": {
+    "text": "Turn result text",
+    "usage": { "model": "worker-main" }
+  }
+}</code></pre>
+    <p>The backend marks the turn complete only after this authenticated submission. <code>/turn/input.json</code> is a read-only input/debug contract; turn output is not read from a container-writable file.</p>
 
     <h2>Core Tool Inputs</h2>
     <h3><code>messages.send</code></h3>
@@ -75,7 +88,7 @@ data: { ...event row... }</code></pre>
   "name": "optional-name.txt",
   "description": "What this artifact contains"
 }</code></pre>
-    <p>The path is relative to the agent workspace. Suzumio copies the file into the project artifact registry and records a SHA-256 hash.</p>
+    <p>The path is relative to the agent workspace. Suzumio copies the file or directory into the project artifact registry and records a SHA-256 hash.</p>
 
     <h3><code>artifacts.list</code></h3>
     <pre><code>{}</code></pre>
@@ -83,9 +96,10 @@ data: { ...event row... }</code></pre>
     <h3><code>artifacts.read</code></h3>
     <pre><code>{
   "id": "art_...",
+  "encoding": "auto",
   "maxBytes": 20000
 }</code></pre>
-    <p>Use either <code>id</code> or <code>name</code>. The tool returns text content from the published artifact, truncated at the requested limit.</p>
+    <p>Use either <code>id</code> or <code>name</code>. For files, <code>encoding</code> may be <code>auto</code>, <code>utf8</code>, or <code>base64</code>; binary files use base64 in auto mode. For directories, the tool returns a recursive listing. Results are truncated at the requested limit.</p>
 
     <h3><code>completion.submit</code></h3>
     <pre><code>{
@@ -97,9 +111,10 @@ data: { ...event row... }</code></pre>
     <pre><code>{
   "url": "https://example.com/",
   "maxBytes": 20000,
-  "timeoutMs": 30000
+  "timeoutMs": 30000,
+  "format": "text"
 }</code></pre>
-    <p>Fetches an HTTP(S) URL and returns response text. Grant it only to agents that should have web access.</p>
+    <p>Fetches an HTTP(S) URL. <code>format: "text"</code> returns cleaned text for HTML responses and raw text for other content types; <code>format: "raw"</code> returns the unmodified response text. Grant it only to agents that should have web access.</p>
 
     <h2>WebUI</h2>
     <p>The root path <code>/</code> serves the embedded WebUI. It calls the API routes above and refreshes periodically. The first version is intentionally simple: project selector, message form, agents, messages, turns, events, and artifacts.</p>

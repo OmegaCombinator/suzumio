@@ -30,14 +30,14 @@ Container runner
   Reads /turn/input.json
   Runs AI mode
   Calls Suzumio /tool for project tools
-  Writes /turn/output.json</code></pre>
+  POSTs /turn-output with final text</code></pre>
 
     <h2>Core Process</h2>
     <p>The core process is the authority for project-level records. If data should be visible in CLI, HTTP, WebUI, or audit logs, it belongs in SQLite through the core store.</p>
-    <table><tr><th>Module</th><th>Responsibility</th></tr><tr><td><code>config.ts</code></td><td>Loads YAML, resolves imports, applies <code>extends</code>, validates config, and renders final YAML.</td></tr><tr><td><code>store.ts</code></td><td>Creates and queries SQLite tables for projects, agents, messages, reads, turns, events, tool calls, and artifacts.</td></tr><tr><td><code>scheduler.ts</code></td><td>Implements the <code>nonpreemptive-mailbox</code> scheduling rule.</td></tr><tr><td><code>tools.ts</code></td><td>Defines the tool registry and executes ToolHost calls with token and allowlist checks.</td></tr><tr><td><code>server.ts</code></td><td>HTTP API, SSE stream, ToolHost route, and embedded WebUI.</td></tr><tr><td><code>backend.ts</code></td><td>Docker container creation, configured bind mounts, runner input/output, and turn completion.</td></tr><tr><td><code>runner.ts</code></td><td>Container entrypoint for model-backed turns.</td></tr></table>
+    <table><tr><th>Module</th><th>Responsibility</th></tr><tr><td><code>config.ts</code></td><td>Loads YAML, resolves imports, applies <code>extends</code>, validates config, and renders final YAML.</td></tr><tr><td><code>store.ts</code></td><td>Creates and queries SQLite tables for projects, agents, messages, reads, turns, events, tool calls, and artifacts.</td></tr><tr><td><code>scheduler.ts</code></td><td>Implements the <code>nonpreemptive-mailbox</code> scheduling rule.</td></tr><tr><td><code>tools.ts</code></td><td>Defines the tool registry and executes ToolHost calls with token and allowlist checks.</td></tr><tr><td><code>server.ts</code></td><td>HTTP API, SSE stream, ToolHost route, turn result route, and embedded WebUI.</td></tr><tr><td><code>backend.ts</code></td><td>Docker container creation, configured bind mounts, runner input, and turn completion monitoring.</td></tr><tr><td><code>runner.ts</code></td><td>Container entrypoint for model-backed turns.</td></tr></table>
 
     <h2>Runner Contract</h2>
-    <p>The runner receives all context through one input file and reports back through one output file. This keeps execution replaceable without changing project-state semantics.</p>
+    <p>The runner receives all context through one read-only input file and reports completion back over HTTP. This keeps execution replaceable without letting a model-editable file become the output authority.</p>
     <pre><code>type RunnerTurnInput = {
   project: string
   agent: { id: string; role: string; prompt: string; model?: string }
@@ -55,7 +55,7 @@ Container runner
 
     <h2>Docker Isolation</h2>
     <p>Each turn container receives a small, explicit environment:</p>
-    <ul><li>A bind mount for <code>/turn</code> containing input and output files.</li><li>A bind mount for the agent workspace at <code>/workspace</code>.</li><li>Environment variables for project id, agent id, turn id, token, and configured model-provider key variables.</li><li><code>host.docker.internal</code> mapping so the runner can call the Suzumio ToolHost on the host.</li></ul>
+    <ul><li>A read-only bind mount for <code>/turn/input.json</code>.</li><li>A bind mount for the agent workspace at <code>/workspace</code>.</li><li>Configured host files or directories mounted at explicit non-reserved targets.</li><li>Environment variables for project id, agent id, turn id, token, and configured model-provider key variables.</li><li><code>host.docker.internal</code> mapping so the runner can call the Suzumio ToolHost and <code>/turn-output</code> on the host.</li></ul>
     <p>Completed containers are currently kept for early debugging. Cleanup policy should become configurable as the Docker backend hardens.</p>
 
     <h2>Tool Flow</h2>
@@ -73,7 +73,7 @@ Container runner
     <p>Agents do not poll for messages. Suzumio renders unread inbound messages into the next turn prompt and records which turn consumed which message. This avoids polling loops and makes scheduling decisions auditable.</p>
 
     <h2>SQLite as Project Truth</h2>
-    <p>Each project has one SQLite file. The container runner does not maintain the project database. Durable state must flow through output files or ToolHost calls.</p>
+    <p>Each project has one SQLite file. The container runner does not maintain the project database. Durable state must flow through authenticated HTTP submissions or ToolHost calls.</p>
     <table><tr><th>Table</th><th>Purpose</th></tr><tr><td><code>projects</code></td><td>Project status, task, resolved config JSON, submitted report path.</td></tr><tr><td><code>agents</code></td><td>Agent roster, prompts, tool allowlists, token, active turn.</td></tr><tr><td><code>messages</code></td><td>Direct and channel messages.</td></tr><tr><td><code>message_reads</code></td><td>Which turn consumed which inbound message.</td></tr><tr><td><code>turns</code></td><td>Turn execution records and output text.</td></tr><tr><td><code>events</code></td><td>Append-style event timeline.</td></tr><tr><td><code>tool_calls</code></td><td>Audited tool execution records.</td></tr><tr><td><code>artifacts</code></td><td>Published file artifacts with hashes and metadata.</td></tr></table>
 
     <h2>Why the Boundary Matters</h2>

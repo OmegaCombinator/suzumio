@@ -19,9 +19,8 @@ backend:
         description: Example files mounted read-only for the agent.
   runner:
     mode: ai
-    model: main
+    model: worker-with-fallback
     models:
-      default: main
       providers:
         gateway:
           type: openai-compatible
@@ -29,17 +28,34 @@ backend:
           apiKeyEnv: SUZUMIO_GATEWAY_API_KEY
           timeoutMs: 300000
       presets:
-        main:
+        worker-main:
           provider: gateway
-          displayName: Main agent model
           model: gpt-5.5
           apiModel: gpt-5.5
           maxOutputTokens: 2000
           toolChoice: auto
+        pm-main:
+          provider: gateway
+          model: gpt-5.5
+          apiModel: gpt-5.5
+          maxOutputTokens: 2000
+          toolChoice: auto
+        worker-with-fallback:
+          model-list:
+            - worker-main
+            - pm-main
+
+tools:
+  toolpacks:
+    - core
+    - artifacts
+    - web
 
 agents:
   pm:
     role: project-manager
+    displayName: Yuki
+    model: pm-main
     prompt: |
       You coordinate the project. When you receive a user request, handle it in one non-preemptive turn.
     tools:
@@ -48,6 +64,11 @@ agents:
 
   worker:
     role: worker
+    count: 2
+    names:
+      - Akari
+      - Ren
+    model: worker-with-fallback
     prompt: |
       Work uninterrupted. Report only when you have a result, useful artifact, blocker, or question.
     tools:
@@ -55,6 +76,7 @@ agents:
       - artifacts.publish
       - artifacts.list
       - artifacts.read
+      - web.fetch
 
 channels:
   - "#project"

@@ -11,9 +11,8 @@ backend:
   controllerUrl: http://host.docker.internal:39400
   runner:
     mode: ai
-    model: main
+    model: main-with-fallback
     models:
-      default: main
       providers:
         gateway:
           type: openai-compatible
@@ -23,7 +22,6 @@ backend:
       presets:
         main:
           provider: gateway
-          displayName: Main agent model
           model: gpt-5.5
           apiModel: gpt-5.5
           maxOutputTokens: 2000
@@ -35,10 +33,19 @@ backend:
             reasoningSummary: auto
             include:
               - reasoning.encrypted_content
+        main-with-fallback:
+          model-list:
+            - main
+
+tools:
+  toolpacks:
+    - core
 
 agents:
   pm:
     role: project-manager
+    displayName: Yuki
+    model: main-with-fallback
     prompt: |
       You are a concise project manager. Send one short status update to the user using messages.send.
     tools:

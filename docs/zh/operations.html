@@ -7,7 +7,7 @@
   <main class="content">
     <section class="hero"><p class="eyebrow">运维</p><h1>运行、检查和清理项目</h1><p class="lead">Suzumio 的运行状态是透明的。每个关键对象都有 CLI 视图和 HTTP 视图，并由同一个 SQLite store 支撑。</p></section>
 
-    <h2>Runtime Root</h2><pre><code>export SUZUMIO_ROOT=/data/suzumio-runtime</code></pre><p>运行时状态应放在源码仓库外。Root 包含项目数据库、turn input/output、agent workspace、artifact 和日志。</p>
+    <h2>Runtime Root</h2><pre><code>export SUZUMIO_ROOT=/data/suzumio-runtime</code></pre><p>运行时状态应放在源码仓库外。Root 包含项目数据库、turn input、agent workspace、artifact 和日志。</p>
 
     <h2>推荐运行模式</h2><pre><code>npm run build
 docker build -t suzumio-runner:dev .
@@ -19,13 +19,12 @@ suzumio serve --host 0.0.0.0 --port 39400</code></pre><p>另开一个终端：</
 suzumio start demo
 suzumio send demo pm P1 "Start the project."</code></pre>
 
-    <h2>运维检查表</h2><table><tr><th>阶段</th><th>检查</th><th>命令</th></tr><tr><td>Build</td><td>TypeScript 生成 <code>dist/</code>。</td><td><code>npm run build</code></td></tr><tr><td>Image</td><td>本地存在 runner 镜像。</td><td><code>docker image inspect suzumio-runner:dev</code></td></tr><tr><td>Config</td><td>Import 可解析，且没有提交 secret。</td><td><code>suzumio config render file.yaml</code></td></tr><tr><td>Store</td><td>项目初始化在预期 root 下。</td><td><code>suzumio status project</code></td></tr><tr><td>Server</td><td>HTTP 和 ToolHost 可访问。</td><td><code>curl http://127.0.0.1:39400/health</code></td></tr><tr><td>Scheduler</td><td>项目为 running，idle agent 有 unread message。</td><td><code>suzumio messages project</code></td></tr><tr><td>Turn</td><td>容器完成，output 被捕获。</td><td><code>suzumio turns project</code></td></tr></table>
+    <h2>运维检查表</h2><table><tr><th>阶段</th><th>检查</th><th>命令</th></tr><tr><td>Build</td><td>TypeScript 生成 <code>dist/</code>。</td><td><code>npm run build</code></td></tr><tr><td>Image</td><td>本地存在 runner 镜像。</td><td><code>docker image inspect suzumio-runner:dev</code></td></tr><tr><td>Config</td><td>Import 可解析，且没有提交 secret。</td><td><code>suzumio config render file.yaml</code></td></tr><tr><td>Store</td><td>项目初始化在预期 root 下。</td><td><code>suzumio status project</code></td></tr><tr><td>Server</td><td>HTTP 和 ToolHost 可访问。</td><td><code>curl http://127.0.0.1:39400/health</code></td></tr><tr><td>Scheduler</td><td>项目为 running，idle agent 有 unread message。</td><td><code>suzumio messages project</code></td></tr><tr><td>Turn</td><td>容器完成，turn 文本已通过 HTTP 提交。</td><td><code>suzumio turns project</code></td></tr></table>
 
-    <h2>检查 Turn</h2><p>Turn 目录包含精确的 runner input 和 output：</p><pre><code>$SUZUMIO_ROOT/demo/turns/turn_.../
-  input.json
-  output.json</code></pre><p>Input 包含渲染后的 prompt、agent identity、controller URL、runner config 和工具定义，因此失败 turn 可复现、可审阅。</p>
+    <h2>检查 Turn</h2><p>Turn 目录包含精确的 runner input：</p><pre><code>$SUZUMIO_ROOT/demo/turns/turn_.../
+  input.json</code></pre><p>Input 包含渲染后的 prompt、agent identity、controller URL、runner config 和工具定义。最终 turn 文本通过 <code>POST /turn-output</code> 提交并存入 SQLite，因此不需要信任容器可写文件，失败 turn 仍可审阅。</p>
 
-    <h2>调试 Scheduler Silence</h2><table><tr><th>现象</th><th>可能原因</th><th>处理</th></tr><tr><td>项目从不启动 turn。</td><td>项目不是 <code>running</code>。</td><td><code>suzumio start project</code></td></tr><tr><td>Agent 保持 quiet。</td><td>没有给该 agent 的 unread inbound message。</td><td><code>suzumio send project agent P1 "..."</code></td></tr><tr><td>有消息但没有新 turn。</td><td>Agent 已经 <code>running</code>。</td><td>等待完成。Suzumio 默认就是非抢占式。</td></tr><tr><td>Turn 立即失败。</td><td>镜像、mount 或 Docker daemon 问题。</td><td>检查 <code>suzumio turns</code>、turn 文件和 <code>docker logs</code>。</td></tr></table>
+    <h2>调试 Scheduler Silence</h2><table><tr><th>现象</th><th>可能原因</th><th>处理</th></tr><tr><td>项目从不启动 turn。</td><td>项目不是 <code>running</code>。</td><td><code>suzumio start project</code></td></tr><tr><td>Agent 保持 quiet。</td><td>没有给该 agent 的 unread inbound message。</td><td><code>suzumio send project agent P1 "..."</code></td></tr><tr><td>有消息但没有新 turn。</td><td>Agent 已经 <code>running</code>。</td><td>等待完成。Suzumio 默认就是非抢占式。</td></tr><tr><td>Turn 立即失败。</td><td>镜像、mount 或 Docker daemon 问题。</td><td>检查 <code>suzumio turns</code>、turn input 和 <code>docker logs</code>。</td></tr></table>
 
     <h2>清理 Debug Containers</h2><p>早期 Suzumio 会保留 completed turn containers 方便调试。只删除 Suzumio 创建的容器：</p><pre><code>docker ps -a --filter name=suzumio
 docker rm &lt;container-name&gt;</code></pre><div class="notice danger"><p>不要在共享机器上执行宽泛的 Docker prune 命令。只清理 Suzumio 创建的容器。</p></div>

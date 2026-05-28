@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { copyFile, cp, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { createHash, randomBytes } from "node:crypto";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -133,7 +133,7 @@ export class ProjectStore {
     const turnId = createId("turn");
     const turnDir = path.join(this.paths.turns, turnId);
     const inputPath = path.join(turnDir, "input.json");
-    const outputPath = path.join(turnDir, "output.json");
+    const outputPath = path.join(turnDir, "result.json");
     const now = nowIso();
     this.db.prepare("INSERT INTO turns (id, project, agent_id, status, prompt, input_path, output_path, started_at, emitted_messages) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(turnId, this.project, agent.id, "running", prompt, inputPath, outputPath, now, 0);
     this.setAgentStatus(agent.id, "running", turnId);
@@ -194,12 +194,13 @@ export class ProjectStore {
     const resolved = path.resolve(input.workspacePath, input.sourcePath);
     assertInside(resolved, input.workspacePath);
     const info = await stat(resolved);
-    if (!info.isFile()) throw new Error("Only file artifacts are supported in the first version");
     const name = safeName(input.name ?? path.basename(resolved));
     const id = createId("art");
     const destination = path.join(this.paths.artifacts, `${id}_${name}`);
-    await copyFile(resolved, destination);
-    const sha256 = createHash("sha256").update(await readFile(destination)).digest("hex");
+    if (info.isDirectory()) await cp(resolved, destination, { recursive: true, errorOnExist: true });
+    else if (info.isFile()) await copyFile(resolved, destination);
+    else throw new Error("Only file and directory artifacts are supported");
+    const sha256 = info.isDirectory() ? await directorySha256(destination) : createHash("sha256").update(await readFile(destination)).digest("hex");
     const createdAt = nowIso();
     this.db.prepare("INSERT INTO artifacts (id, project, creator, turn_id, name, path, sha256, description, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(id, this.project, input.creator, input.turnId, name, destination, sha256, input.description ?? null, createdAt);
     const artifact = { id, project: this.project, creator: input.creator, turnId: input.turnId, name, path: destination, sha256, description: input.description, createdAt };
@@ -258,7 +259,7 @@ async function expandAgents(config: ProjectConfig, root?: string): Promise<Agent
         id,
         project: config.name,
         role: spec.role ?? baseId,
-        displayName: id,
+        displayName: displayName(spec, id, index),
         status: "quiet",
         prompt: spec.prompt ?? "",
         model: spec.model,
@@ -273,11 +274,38 @@ async function expandAgents(config: ProjectConfig, root?: string): Promise<Agent
   return records;
 }
 
+function displayName(spec: { displayName?: string; names?: string[] }, id: string, index: number): string {
+  return spec.names?.[index - 1] ?? spec.displayName ?? id;
+}
+
 function assertInside(filePath: string, root: string): void {
   const resolved = path.resolve(filePath);
   const base = path.resolve(root);
   if (resolved === base || resolved.startsWith(base + path.sep)) return;
   throw new Error(`Path is outside workspace: ${filePath}`);
+}
+
+async function directorySha256(directory: string): Promise<string> {
+  const hash = createHash("sha256");
+  const files = await directoryFiles(directory, directory);
+  for (const file of files.sort((a, b) => a.relative.localeCompare(b.relative))) {
+    hash.update(file.relative);
+    hash.update("\0");
+    hash.update(await readFile(file.absolute));
+    hash.update("\0");
+  }
+  return hash.digest("hex");
+}
+
+async function directoryFiles(root: string, directory: string): Promise<Array<{ absolute: string; relative: string }>> {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const files: Array<{ absolute: string; relative: string }> = [];
+  for (const entry of entries) {
+    const absolute = path.join(directory, entry.name);
+    if (entry.isDirectory()) files.push(...(await directoryFiles(root, absolute)));
+    else if (entry.isFile()) files.push({ absolute, relative: path.relative(root, absolute) });
+  }
+  return files;
 }
 
 type DbAgent = {

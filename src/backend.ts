@@ -1,8 +1,8 @@
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import Docker from "dockerode";
 import { safeName } from "./id.js";
-import type { AgentConfig, AgentRecord, DockerMountConfig, ProjectConfig, RunnerTurnInput, RunnerTurnOutput, TurnRecord } from "./types.js";
+import type { AgentConfig, AgentRecord, DockerMountConfig, ProjectConfig, RunnerTurnInput, TurnRecord } from "./types.js";
 import { ProjectStore } from "./store.js";
 import { toolDefinitions } from "./tools.js";
 
@@ -17,13 +17,13 @@ export class DockerChatBackend {
     await mkdir(turnDir, { recursive: true });
     const input: RunnerTurnInput = {
       project: store.project,
-      agent: { id: agent.id, role: agent.role, prompt: agent.prompt, model: agent.model },
+      agent: { id: agent.id, displayName: agent.displayName, role: agent.role, prompt: agent.prompt, model: agent.model },
       turn: { id: turn.id, prompt },
       workspace: "/workspace",
       controllerUrl: config.backend.controllerUrl,
       token: agent.token,
       runner: config.backend.runner,
-      tools: toolDefinitions(agent),
+      tools: toolDefinitions(agent, config.tools.toolpacks),
     };
     await writeFile(turn.inputPath, JSON.stringify(input, null, 2) + "\n", "utf8");
     const containerName = safeName(`suzumio_${store.project}_${agent.id}_${turn.id}`);
@@ -51,14 +51,14 @@ export class DockerChatBackend {
       ...Object.entries(spec?.env ?? {}).map(([key, value]) => `${key}=${value}`),
     ];
     const binds = [
-      `${path.dirname(turn.inputPath)}:/turn:rw`,
+      `${turn.inputPath}:/turn/input.json:ro`,
       `${agent.workspacePath}:/workspace:rw`,
       ...(await mountBinds([...(config.backend.docker?.mounts ?? []), ...(spec?.mounts ?? [])])),
     ];
     return this.docker.createContainer({
       name: containerName,
       Image: config.backend.image,
-      Cmd: ["--input", "/turn/input.json", "--output", "/turn/output.json"],
+      Cmd: ["--input", "/turn/input.json"],
       WorkingDir: "/workspace",
       Env: env,
       HostConfig: {
@@ -81,8 +81,8 @@ export class DockerChatBackend {
         store.failTurn(turnId, `Runner exited with ${result.StatusCode}\n${logs.toString("utf8")}`.trim());
         return;
       }
-      const output = JSON.parse(await readFile(turn.outputPath, "utf8")) as RunnerTurnOutput;
-      store.completeTurn(turnId, output);
+      const completed = store.turn(turnId);
+      if (completed.status !== "completed") store.failTurn(turnId, "Runner exited without submitting turn output");
     } finally {
       store.close();
     }

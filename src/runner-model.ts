@@ -10,6 +10,7 @@ const fetchWithDispatcher = undiciFetch as unknown as FetchWithDispatcher;
 
 export type ResolvedRunnerModel = {
   presetId: string;
+  selectedPresetId: string;
   preset: ModelPresetConfig;
   providerId: string;
   provider: ProviderConfig;
@@ -17,15 +18,22 @@ export type ResolvedRunnerModel = {
   languageModel: unknown;
 };
 
-export function resolveRunnerModel(models: ModelRegistryConfig, presetId?: string): ResolvedRunnerModel {
-  const id = presetId ?? models.default;
-  const preset = models.presets[id];
-  if (!preset) throw new Error(`Model preset not found: ${id}`);
+export function resolveRunnerModels(models: ModelRegistryConfig, presetId?: string): ResolvedRunnerModel[] {
+  if (!presetId) throw new Error("No model preset selected. Set backend.runner.model or agents.<id>.model explicitly.");
+  return expandPreset(models, presetId, presetId, []);
+}
+
+function expandPreset(models: ModelRegistryConfig, presetId: string, selectedPresetId: string, stack: string[]): ResolvedRunnerModel[] {
+  if (stack.includes(presetId)) throw new Error(`Circular model-list preset: ${[...stack, presetId].join(" -> ")}`);
+  const preset = models.presets[presetId];
+  if (!preset) throw new Error(`Model preset not found: ${presetId}`);
+  if (preset.modelList) return preset.modelList.flatMap((id) => expandPreset(models, id, selectedPresetId, [...stack, presetId]));
+  if (!preset.provider || !preset.model) throw new Error(`Model preset needs provider and model: ${presetId}`);
   const provider = models.providers[preset.provider];
   if (!provider) throw new Error(`Provider not found: ${preset.provider}`);
   const apiModel = preset.apiModel ?? preset.model;
   const languageModel = selectLanguageModel(createProvider(preset.provider, provider), apiModel, provider.type);
-  return { presetId: id, preset, providerId: preset.provider, provider, apiModel, languageModel };
+  return [{ presetId, selectedPresetId, preset, providerId: preset.provider, provider, apiModel, languageModel }];
 }
 
 function createProvider(providerId: string, provider: ProviderConfig): unknown {
