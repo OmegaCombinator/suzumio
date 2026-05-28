@@ -49,6 +49,7 @@ tools:
   toolpacks:
     - core
     - artifacts
+    - inputs
     - web
 
 agents:
@@ -60,6 +61,8 @@ agents:
       You coordinate the project. When you receive a user request, handle it in one non-preemptive turn.
     tools:
       - messages.send
+      - inputs.list
+      - inputs.copy
       - completion.submit
 
   worker:
@@ -76,6 +79,8 @@ agents:
       - artifacts.publish
       - artifacts.list
       - artifacts.read
+      - inputs.list
+      - inputs.copy
       - web.fetch
 
 channels:

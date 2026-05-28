@@ -64,9 +64,9 @@ const ModelsSchema = z.object({
 
 const ToolsSchema = z
   .object({
-    toolpacks: z.array(z.enum(["core", "artifacts", "web"])).default(["core", "artifacts", "web"]),
+    toolpacks: z.array(z.enum(["core", "artifacts", "inputs", "web"])).default(["core", "artifacts", "inputs", "web"]),
   })
-  .default({ toolpacks: ["core", "artifacts", "web"] });
+  .default({ toolpacks: ["core", "artifacts", "inputs", "web"] });
 
 const RunnerSchema = z
   .object({

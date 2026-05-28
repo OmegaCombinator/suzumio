@@ -59,7 +59,7 @@ function renderMountedInputs(config: ProjectConfig, agent: AgentRecord): string 
   const spec = agentSpec(config, agent);
   const mounts = [...(config.backend.docker?.mounts ?? []), ...(spec?.mounts ?? [])];
   if (mounts.length === 0) return undefined;
-  return ["# Mounted Inputs", ...mounts.map((mount) => mountLine(mount))].join("\n");
+  return ["# Mounted Inputs", "These paths are read-only unless marked read-write. Copy inputs into /workspace before modifying them.", ...mounts.map((mount) => mountLine(mount))].join("\n");
 }
 
 function mountLine(mount: DockerMountConfig): string {

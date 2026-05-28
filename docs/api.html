@@ -96,10 +96,24 @@ data: { ...event row... }</code></pre>
     <h3><code>artifacts.read</code></h3>
     <pre><code>{
   "id": "art_...",
-  "encoding": "auto",
   "maxBytes": 20000
 }</code></pre>
-    <p>Use either <code>id</code> or <code>name</code>. For files, <code>encoding</code> may be <code>auto</code>, <code>utf8</code>, or <code>base64</code>; binary files use base64 in auto mode. For directories, the tool returns a recursive listing. Results are truncated at the requested limit.</p>
+    <p>Use either <code>id</code> or <code>name</code>. This reads text file artifacts from the artifact registry. For configured read-only host files or directories, use mounted input paths and <code>inputs.copy</code> instead.</p>
+
+    <h3><code>inputs.list</code></h3>
+    <pre><code>{
+  "path": "/mnt/reference",
+  "maxEntries": 200
+}</code></pre>
+    <p>Without <code>path</code>, this lists mounted input roots visible to the agent. With <code>path</code>, it lists files under that mounted input path.</p>
+
+    <h3><code>inputs.copy</code></h3>
+    <pre><code>{
+  "source": "/mnt/reference/data.bin",
+  "destination": "inputs/data.bin",
+  "overwrite": false
+}</code></pre>
+    <p>Copies a configured mounted input file or directory into the agent workspace. This is the supported path for binary files and directories that the model needs to work with or publish later.</p>
 
     <h3><code>completion.submit</code></h3>
     <pre><code>{

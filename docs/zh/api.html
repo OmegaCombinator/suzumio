@@ -64,9 +64,15 @@ data: { ...event row... }</code></pre>
   "description": "What this artifact contains"
 }</code></pre><p>Path 相对 agent workspace。Suzumio 会复制文件或目录到 artifact registry 并记录 SHA-256 hash。</p><h3><code>artifacts.list</code></h3><pre><code>{}</code></pre><h3><code>artifacts.read</code></h3><pre><code>{
   "id": "art_...",
-  "encoding": "auto",
   "maxBytes": 20000
-}</code></pre><p>使用 <code>id</code> 或 <code>name</code> 其一。文件 artifact 可用 <code>auto</code>、<code>utf8</code> 或 <code>base64</code> 编码；二进制文件在 auto 模式使用 base64。目录 artifact 返回递归文件列表。结果会按请求限制截断。</p><h3><code>completion.submit</code></h3><pre><code>{
+}</code></pre><p>使用 <code>id</code> 或 <code>name</code> 其一。该工具读取 artifact registry 中的文本文件 artifact。对于配置挂载的只读 host 文件或目录，使用 mounted input 路径和 <code>inputs.copy</code>。</p><h3><code>inputs.list</code></h3><pre><code>{
+  "path": "/mnt/reference",
+  "maxEntries": 200
+}</code></pre><p>不传 <code>path</code> 时列出 agent 可见的 mounted input root；传 <code>path</code> 时列出该 mounted input 下的文件。</p><h3><code>inputs.copy</code></h3><pre><code>{
+  "source": "/mnt/reference/data.bin",
+  "destination": "inputs/data.bin",
+  "overwrite": false
+}</code></pre><p>把配置的 mounted input 文件或目录复制到 agent workspace。这是模型处理二进制文件或目录、后续再发布 artifact 时应使用的路径。</p><h3><code>completion.submit</code></h3><pre><code>{
   "report": "# Final Report\n\n..."
 }</code></pre><p>该工具写入 <code>final-report.md</code>，把项目设为 <code>submitted</code>，等待用户审批。</p><h3><code>web.fetch</code></h3><pre><code>{
   "url": "https://example.com/",

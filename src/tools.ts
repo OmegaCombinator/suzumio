@@ -1,5 +1,6 @@
-import { readFile, readdir, stat } from "node:fs/promises";
-import type { AgentRecord, JsonObject, MessagePriority, ToolDefinition } from "./types.js";
+import { copyFile, cp, mkdir, readFile, readdir, stat } from "node:fs/promises";
+import path from "node:path";
+import type { AgentConfig, AgentRecord, DockerMountConfig, JsonObject, MessagePriority, ProjectConfig, ToolDefinition } from "./types.js";
 import { ProjectStore } from "./store.js";
 
 export type ToolCallInput = {
@@ -54,10 +55,11 @@ export class ToolRegistry {
 export const TOOLPACKS: Record<string, () => ToolPlugin[]> = {
   core: () => [messagesSendTool(), completionSubmitTool()],
   artifacts: () => [artifactsPublishTool(), artifactsListTool(), artifactsReadTool()],
+  inputs: () => [inputsListTool(), inputsCopyTool()],
   web: () => [webFetchTool()],
 };
 
-export const defaultToolRegistry = toolRegistryForToolpacks(["core", "artifacts", "web"]);
+export const defaultToolRegistry = toolRegistryForToolpacks(["core", "artifacts", "inputs", "web"]);
 
 export function toolRegistryForToolpacks(toolpacks: string[]): ToolRegistry {
   const plugins: ToolPlugin[] = [];
@@ -170,13 +172,12 @@ function artifactsReadTool(): ToolPlugin {
   return {
     definition: {
       name: "artifacts.read",
-      description: "Read a file artifact by id or name, or list a directory artifact.",
+      description: "Read a text artifact by id or name.",
       inputSchema: {
         type: "object",
         properties: {
           id: { type: "string", description: "Artifact id." },
           name: { type: "string", description: "Artifact name." },
-          encoding: { type: "string", enum: ["auto", "utf8", "base64"], default: "auto" },
           maxBytes: { type: "number", description: "Maximum characters to return, capped at 100000." },
         },
         additionalProperties: false,
@@ -190,18 +191,15 @@ function artifactsReadTool(): ToolPlugin {
       const artifact = store.listArtifacts(1000).find((item) => (id && item.id === id) || (name && item.name === name));
       if (!artifact) throw new Error(`Artifact not found: ${id ?? name}`);
       const maxBytes = boundedNumber(args.maxBytes, 20_000, 100_000);
-      const path = String(artifact.path);
-      const info = await stat(path);
-      if (info.isDirectory()) return readArtifactDirectory(path, maxBytes, String(artifact.id), String(artifact.name));
-      const encoding = encodingArg(args.encoding);
-      const buffer = await readFile(path);
-      const binary = isBinary(buffer);
-      const text = encoding === "base64" || (encoding === "auto" && binary) ? buffer.toString("base64") : buffer.toString("utf8");
+      const artifactPath = String(artifact.path);
+      const info = await stat(artifactPath);
+      if (info.isDirectory()) throw new Error("artifacts.read only reads text file artifacts. Use mounted inputs for directory handoff.");
+      const text = await readFile(artifactPath, "utf8");
       const truncated = text.length > maxBytes;
       return {
         title: "artifact read",
         output: truncated ? `${text.slice(0, maxBytes)}\n\n[truncated]` : text,
-        metadata: { artifactId: String(artifact.id), name: String(artifact.name), type: binary ? "binary" : "text", encoding: encoding === "base64" || (encoding === "auto" && binary) ? "base64" : "utf8", truncated },
+        metadata: { artifactId: String(artifact.id), name: String(artifact.name), truncated },
       };
     },
   };
@@ -223,6 +221,79 @@ function completionSubmitTool(): ToolPlugin {
       const args = objectInput(input);
       const reportPath = await store.submitProject({ agentId: agent.id, report: stringArg(args, "report") });
       return { title: "project submitted", output: `Project submitted for user approval. Report: ${reportPath}`, metadata: { reportPath } };
+    },
+  };
+}
+
+function inputsListTool(): ToolPlugin {
+  return {
+    definition: {
+      name: "inputs.list",
+      description: "List configured mounted input paths, or list files under one mounted input path.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          path: { type: "string", description: "Optional mounted container path such as /mnt/reference." },
+          maxEntries: { type: "number", description: "Maximum entries to return, capped at 2000." },
+        },
+        additionalProperties: false,
+      },
+    },
+    execute: async ({ store, agent }, input) => {
+      const args = objectInput(input);
+      const config = store.config();
+      const requested = optionalString(args.path);
+      if (!requested) {
+        const mounts = mountedInputs(config, agent);
+        const output = mounts.length ? mounts.map((mount) => `${mount.target} (${mount.readonly ? "read-only" : "read-write"})${mount.description ? `: ${mount.description}` : ""}`).join("\n") : "No mounted inputs configured.";
+        return { title: "mounted inputs", output, metadata: { count: mounts.length } };
+      }
+      const maxEntries = boundedNumber(args.maxEntries, 200, 2_000);
+      const resolved = await resolveMountedInputPath(config, agent, requested);
+      const info = await stat(resolved.hostPath);
+      if (info.isFile()) return { title: "mounted input", output: `${resolved.containerPath} (${info.size} bytes)`, metadata: { path: resolved.containerPath, type: "file", size: info.size } };
+      if (!info.isDirectory()) throw new Error(`Mounted input is neither file nor directory: ${resolved.containerPath}`);
+      const entries = await directoryEntries(resolved.hostPath, resolved.hostPath);
+      const selected = entries.slice(0, maxEntries);
+      const prefix = resolved.containerPath.endsWith("/") ? resolved.containerPath.slice(0, -1) : resolved.containerPath;
+      const output = selected.length ? selected.map((entry) => `${prefix}/${entry}`).join("\n") : "(empty directory)";
+      return { title: "mounted input listing", output: entries.length > selected.length ? `${output}\n\n[truncated]` : output, metadata: { path: resolved.containerPath, type: "directory", entries: entries.length, truncated: entries.length > selected.length } };
+    },
+  };
+}
+
+function inputsCopyTool(): ToolPlugin {
+  return {
+    definition: {
+      name: "inputs.copy",
+      description: "Copy a configured mounted input file or directory into this agent workspace.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          source: { type: "string", description: "Mounted container path such as /mnt/reference/file.txt." },
+          destination: { type: "string", description: "Workspace-relative destination path." },
+          overwrite: { type: "boolean", default: false },
+        },
+        required: ["source", "destination"],
+        additionalProperties: false,
+      },
+    },
+    execute: async ({ store, agent }, input) => {
+      const args = objectInput(input);
+      const config = store.config();
+      const source = await resolveMountedInputPath(config, agent, stringArg(args, "source"));
+      const destination = workspaceDestination(agent.workspacePath, stringArg(args, "destination"));
+      const overwrite = booleanArg(args.overwrite ?? false, "overwrite");
+      if (!overwrite && (await pathExists(destination))) throw new Error(`Destination already exists: ${path.relative(agent.workspacePath, destination)}`);
+      const info = await stat(source.hostPath);
+      if (info.isDirectory()) await cp(source.hostPath, destination, { recursive: true, force: overwrite, errorOnExist: !overwrite });
+      else if (info.isFile()) {
+        await mkdir(path.dirname(destination), { recursive: true });
+        await copyFile(source.hostPath, destination);
+      } else {
+        throw new Error(`Mounted input is neither file nor directory: ${source.containerPath}`);
+      }
+      return { title: "input copied", output: `Copied ${source.containerPath} to /workspace/${path.relative(agent.workspacePath, destination)}`, metadata: { source: source.containerPath, destination: path.relative(agent.workspacePath, destination), type: info.isDirectory() ? "directory" : "file" } };
     },
   };
 }
@@ -294,14 +365,14 @@ function priorityArg(value: unknown): MessagePriority {
   throw new Error(`Invalid priority: ${String(value)}`);
 }
 
-function encodingArg(value: unknown): "auto" | "utf8" | "base64" {
-  if (value === undefined || value === "auto" || value === "utf8" || value === "base64") return value ?? "auto";
-  throw new Error(`Invalid encoding: ${String(value)}`);
-}
-
 function formatArg(value: unknown): "text" | "raw" {
   if (value === undefined || value === "text" || value === "raw") return value ?? "text";
   throw new Error(`Invalid format: ${String(value)}`);
+}
+
+function booleanArg(value: unknown, key: string): boolean {
+  if (typeof value === "boolean") return value;
+  throw new Error(`${key} must be a boolean`);
 }
 
 function boundedNumber(value: unknown, fallback: number, max: number): number {
@@ -310,15 +381,53 @@ function boundedNumber(value: unknown, fallback: number, max: number): number {
   return Math.min(Math.floor(value), max);
 }
 
-async function readArtifactDirectory(directory: string, maxBytes: number, artifactId: string, name: string): Promise<ToolCallOutput> {
-  const entries = await directoryEntries(directory, directory);
-  const output = entries.length ? entries.join("\n") : "(empty directory)";
-  const truncated = output.length > maxBytes;
-  return {
-    title: "artifact directory",
-    output: truncated ? `${output.slice(0, maxBytes)}\n\n[truncated]` : output,
-    metadata: { artifactId, name, type: "directory", entries: entries.length, truncated },
-  };
+function mountedInputs(config: ProjectConfig, agent: AgentRecord): DockerMountConfig[] {
+  const spec = agentSpec(config, agent);
+  return [...(config.backend.docker?.mounts ?? []), ...(spec?.mounts ?? [])];
+}
+
+function agentSpec(config: ProjectConfig, agent: AgentRecord): AgentConfig | undefined {
+  return config.agents[agent.id] ?? config.agents[agent.id.replace(/-\d+$/, "")];
+}
+
+async function resolveMountedInputPath(config: ProjectConfig, agent: AgentRecord, inputPath: string): Promise<{ containerPath: string; hostPath: string }> {
+  const containerPath = path.posix.normalize(inputPath);
+  if (!containerPath.startsWith("/")) throw new Error(`Mounted input path must be absolute: ${inputPath}`);
+  const mounts = mountedInputs(config, agent).sort((a, b) => b.target.length - a.target.length);
+  for (const mount of mounts) {
+    const target = path.posix.normalize(mount.target);
+    if (containerPath !== target && !containerPath.startsWith(`${target}/`)) continue;
+    const relative = containerPath === target ? "" : containerPath.slice(target.length + 1);
+    const sourceInfo = await stat(mount.source);
+    if (sourceInfo.isFile() && relative) throw new Error(`Mounted input is a file, not a directory: ${target}`);
+    const hostPath = sourceInfo.isFile() ? mount.source : path.resolve(mount.source, relative);
+    assertInsideHostPath(hostPath, mount.source);
+    return { containerPath, hostPath };
+  }
+  throw new Error(`Path is not under a configured mounted input: ${inputPath}`);
+}
+
+function workspaceDestination(workspacePath: string, destination: string): string {
+  if (path.isAbsolute(destination)) throw new Error("destination must be relative to /workspace");
+  const resolved = path.resolve(workspacePath, destination);
+  assertInsideHostPath(resolved, workspacePath);
+  return resolved;
+}
+
+function assertInsideHostPath(filePath: string, root: string): void {
+  const resolved = path.resolve(filePath);
+  const base = path.resolve(root);
+  if (resolved === base || resolved.startsWith(base + path.sep)) return;
+  throw new Error(`Path is outside allowed root: ${filePath}`);
+}
+
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await stat(filePath);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function directoryEntries(root: string, directory: string): Promise<string[]> {
@@ -334,11 +443,6 @@ async function directoryEntries(root: string, directory: string): Promise<string
     }
   }
   return out.sort((a, b) => a.localeCompare(b));
-}
-
-function isBinary(buffer: Buffer): boolean {
-  const sample = buffer.subarray(0, Math.min(buffer.length, 4096));
-  return sample.includes(0);
 }
 
 function htmlToText(html: string): string {

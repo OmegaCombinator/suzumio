@@ -17,7 +17,7 @@ This repository is an early build. The first implementation includes:
 - YAML config loading with whole-field `@import(path)` and top-level `extends`.
 - SQLite project storage using Node's built-in SQLite module.
 - A Docker-first chat backend and container runner.
-- Configured toolpacks for `core`, `artifacts`, and `web` tools.
+- Configured toolpacks for `core`, `artifacts`, `inputs`, and `web` tools.
 - A non-preemptive mailbox scheduler.
 - CLI, HTTP API, SSE stream, and a minimal flat WebUI.
 
@@ -94,6 +94,7 @@ tools:
   toolpacks:
     - core
     - artifacts
+    - inputs
     - web
 
 agents:

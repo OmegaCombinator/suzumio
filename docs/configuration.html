@@ -106,6 +106,7 @@ tools:
   toolpacks:
     - core
     - artifacts
+    - inputs
     - web
 
 agents:
@@ -131,10 +132,12 @@ agents:
       - artifacts.publish
       - artifacts.list
       - artifacts.read
+      - inputs.list
+      - inputs.copy
       - web.fetch</code></pre>
 
     <h2>Top-level Fields</h2>
-    <table><tr><th>Field</th><th>Required</th><th>Description</th></tr><tr><td><code>name</code></td><td>Yes</td><td>Project id and runtime directory name under <code>SUZUMIO_ROOT</code>.</td></tr><tr><td><code>task</code></td><td>Yes</td><td>Durable task statement rendered into every turn prompt.</td></tr><tr><td><code>agents</code></td><td>Yes</td><td>Map of agent ids to agent configs. At least one agent is required.</td></tr><tr><td><code>tools</code></td><td>No</td><td>Toolpacks registered for the project. Defaults to <code>core</code>, <code>artifacts</code>, and <code>web</code>.</td></tr><tr><td><code>extends</code></td><td>No</td><td>One profile object or a list of profile objects to merge before local fields.</td></tr><tr><td><code>scheduler</code></td><td>No</td><td>Scheduler kind and prompt-message batching. Defaults to <code>nonpreemptive-mailbox</code>.</td></tr><tr><td><code>backend</code></td><td>No</td><td>Docker runner image, ToolHost URL, Docker options, and model runner settings.</td></tr><tr><td><code>channels</code></td><td>No</td><td>Allowed channel names. Defaults include <code>#project</code> and <code>#blocked</code>.</td></tr><tr><td><code>observability</code></td><td>No</td><td>Documentation-level server defaults for HTTP/WebUI. The CLI flags still control the actual server bind address.</td></tr></table>
+    <table><tr><th>Field</th><th>Required</th><th>Description</th></tr><tr><td><code>name</code></td><td>Yes</td><td>Project id and runtime directory name under <code>SUZUMIO_ROOT</code>.</td></tr><tr><td><code>task</code></td><td>Yes</td><td>Durable task statement rendered into every turn prompt.</td></tr><tr><td><code>agents</code></td><td>Yes</td><td>Map of agent ids to agent configs. At least one agent is required.</td></tr><tr><td><code>tools</code></td><td>No</td><td>Toolpacks registered for the project. Defaults to <code>core</code>, <code>artifacts</code>, <code>inputs</code>, and <code>web</code>.</td></tr><tr><td><code>extends</code></td><td>No</td><td>One profile object or a list of profile objects to merge before local fields.</td></tr><tr><td><code>scheduler</code></td><td>No</td><td>Scheduler kind and prompt-message batching. Defaults to <code>nonpreemptive-mailbox</code>.</td></tr><tr><td><code>backend</code></td><td>No</td><td>Docker runner image, ToolHost URL, Docker options, and model runner settings.</td></tr><tr><td><code>channels</code></td><td>No</td><td>Allowed channel names. Defaults include <code>#project</code> and <code>#blocked</code>.</td></tr><tr><td><code>observability</code></td><td>No</td><td>Documentation-level server defaults for HTTP/WebUI. The CLI flags still control the actual server bind address.</td></tr></table>
 
     <h2>YAML Conventions</h2>
     <p>Suzumio uses ordinary YAML maps, arrays, scalars, and block strings. Keep long text in block strings or imported files so rendered prompts are readable.</p>
@@ -289,8 +292,10 @@ channels: ["#project", "#reviews"]</code></pre>
   toolpacks:
     - core
     - artifacts
+    - inputs
     - web</code></pre>
-    <table><tr><th>Toolpack</th><th>Registered tools</th></tr><tr><td><code>core</code></td><td><code>messages.send</code>, <code>completion.submit</code></td></tr><tr><td><code>artifacts</code></td><td><code>artifacts.publish</code>, <code>artifacts.list</code>, <code>artifacts.read</code></td></tr><tr><td><code>web</code></td><td><code>web.fetch</code></td></tr></table>
+    <table><tr><th>Toolpack</th><th>Registered tools</th></tr><tr><td><code>core</code></td><td><code>messages.send</code>, <code>completion.submit</code></td></tr><tr><td><code>artifacts</code></td><td><code>artifacts.publish</code>, <code>artifacts.list</code>, <code>artifacts.read</code></td></tr><tr><td><code>inputs</code></td><td><code>inputs.list</code>, <code>inputs.copy</code></td></tr><tr><td><code>web</code></td><td><code>web.fetch</code></td></tr></table>
+    <p>Mounted inputs are host files or directories exposed at configured container paths. Suzumio renders those paths into the turn prompt. If the AI runner needs a writable copy, grant <code>inputs.copy</code> and copy the mounted path into <code>/workspace</code>.</p>
 
     <h2>Agent Config</h2>
     <pre><code>agents:
@@ -307,6 +312,8 @@ channels: ["#project", "#reviews"]</code></pre>
       - artifacts.publish
       - artifacts.list
       - artifacts.read
+      - inputs.list
+      - inputs.copy
       - web.fetch
     mounts:
       - source: ./worker-notes
