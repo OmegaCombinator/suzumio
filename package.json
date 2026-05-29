@@ -9,7 +9,10 @@
   },
   "scripts": {
     "build": "tsc",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "docs:preview": "vitepress preview docs"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "latest",
@@ -25,6 +28,7 @@
   "devDependencies": {
     "@types/dockerode": "latest",
     "@types/node": "latest",
-    "typescript": "latest"
+    "typescript": "latest",
+    "vitepress": "^1.6.4"
   }
 }

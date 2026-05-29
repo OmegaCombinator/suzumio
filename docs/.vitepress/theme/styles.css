@@ -161,6 +161,16 @@ h3 {
 h4 { margin: 24px 0 8px; font-size: 17px; }
 p { margin: 0 0 16px; }
 
+.header-anchor {
+  color: var(--green);
+  opacity: 0;
+  text-decoration: none;
+}
+
+h2:hover .header-anchor,
+h3:hover .header-anchor,
+h4:hover .header-anchor { opacity: 0.7; }
+
 .lead {
   max-width: 760px;
   color: #415047;
@@ -211,17 +221,24 @@ p { margin: 0 0 16px; }
   font-weight: 680;
 }
 
-.notice {
+.notice,
+.custom-block.warning,
+.custom-block.tip {
   border-left: 4px solid #efc94f;
   border-radius: 8px;
   background: var(--yellow-soft);
   padding: 14px 16px;
   margin: 18px 0;
 }
-.notice.danger {
+
+.notice.danger,
+.custom-block.danger {
   border-left-color: #e78a8a;
   background: var(--danger-soft);
 }
+
+.custom-block-title { font-weight: 760; margin-bottom: 4px; }
+.custom-block p:last-child { margin-bottom: 0; }
 
 code {
   border: 1px solid rgba(48, 112, 63, 0.16);
@@ -240,6 +257,11 @@ pre {
   padding: 16px;
 }
 pre code { border: 0; background: transparent; color: var(--code-text); padding: 0; }
+
+div[class*="language-"] { position: relative; margin: 18px 0; }
+div[class*="language-"] pre { margin: 0; }
+div[class*="language-"] > span.lang,
+div[class*="language-"] > button.copy { display: none; }
 
 table {
   width: 100%;
