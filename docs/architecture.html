@@ -16,7 +16,7 @@ Suzumio Core
   SQLite store
   Message router
   Artifact registry
-  ToolHost
+  Tool support routes
   Non-preemptive scheduler
         |
         v
@@ -29,12 +29,13 @@ Docker backend
 Container runner
   Reads /turn/input.json
   Runs AI mode
-  Calls Suzumio /tool for project tools
+  Runs model-facing tools
+  Calls Suzumio support routes for stateful tools
   POSTs /turn-output with final text</code></pre>
 
     <h2>Core Process</h2>
     <p>The core process is the authority for project-level records. If data should be visible in CLI, HTTP, WebUI, or audit logs, it belongs in SQLite through the core store.</p>
-    <table><tr><th>Module</th><th>Responsibility</th></tr><tr><td><code>config.ts</code></td><td>Loads YAML, resolves imports, applies <code>extends</code>, validates config, and renders final YAML.</td></tr><tr><td><code>store.ts</code></td><td>Creates and queries SQLite tables for projects, agents, messages, reads, turns, events, tool calls, and artifacts.</td></tr><tr><td><code>scheduler.ts</code></td><td>Implements the <code>nonpreemptive-mailbox</code> scheduling rule.</td></tr><tr><td><code>tools.ts</code></td><td>Defines the tool registry and executes ToolHost calls with token and allowlist checks.</td></tr><tr><td><code>server.ts</code></td><td>HTTP API, SSE stream, ToolHost route, turn result route, and embedded WebUI.</td></tr><tr><td><code>backend.ts</code></td><td>Docker container creation, configured bind mounts, runner input, and turn completion monitoring.</td></tr><tr><td><code>runner.ts</code></td><td>Container entrypoint for model-backed turns.</td></tr></table>
+    <table><tr><th>Module</th><th>Responsibility</th></tr><tr><td><code>config.ts</code></td><td>Loads YAML, resolves imports, applies <code>extends</code>, validates config, and renders final YAML.</td></tr><tr><td><code>store.ts</code></td><td>Creates and queries SQLite tables for projects, agents, messages, reads, turns, events, controller-supported tool calls, and artifacts.</td></tr><tr><td><code>scheduler.ts</code></td><td>Implements the <code>nonpreemptive-mailbox</code> scheduling rule.</td></tr><tr><td><code>tools.ts</code></td><td>Defines tool metadata and executes controller-supported tool calls with token and allowlist checks.</td></tr><tr><td><code>server.ts</code></td><td>HTTP API, SSE stream, controller support route, turn result route, and embedded WebUI.</td></tr><tr><td><code>backend.ts</code></td><td>Docker container creation, configured bind mounts, runner input, and turn completion monitoring.</td></tr><tr><td><code>runner.ts</code></td><td>Container entrypoint for model-backed turns and runner-local tool execution.</td></tr></table>
 
     <h2>Runner Contract</h2>
     <p>The runner receives all context through one read-only input file and reports completion back over HTTP. This keeps execution replaceable without letting a model-editable file become the output authority.</p>
@@ -55,25 +56,26 @@ Container runner
 
     <h2>Docker Isolation</h2>
     <p>Each turn container receives a small, explicit environment:</p>
-    <ul><li>A read-only bind mount for <code>/turn/input.json</code>.</li><li>A bind mount for the agent workspace at <code>/workspace</code>.</li><li>Configured host files or directories mounted at explicit non-reserved targets.</li><li>Environment variables for project id, agent id, turn id, token, and configured model-provider key variables.</li><li><code>host.docker.internal</code> mapping so the runner can call the Suzumio ToolHost and <code>/turn-output</code> on the host.</li></ul>
+    <ul><li>A read-only bind mount for <code>/turn/input.json</code>.</li><li>A bind mount for the agent workspace at <code>/workspace</code>.</li><li>Configured host files or directories mounted at explicit non-reserved targets.</li><li>Environment variables for project id, agent id, turn id, token, and configured model-provider key variables.</li><li><code>host.docker.internal</code> mapping so the runner can call Suzumio support routes and <code>/turn-output</code> on the host.</li></ul>
     <p>Completed containers are currently kept for early debugging. Cleanup policy should become configurable as the Docker backend hardens.</p>
 
     <h2>Tool Flow</h2>
     <pre><code>Model asks for tool
   runner converts model tool call
-  runner POSTs /tool to Suzumio
-  ToolHost verifies token and tool allowlist
-  ToolHost records tool_calls row
-  core tool runs against SQLite/artifact store
-  ToolHost records success or failure
+  if the tool is runner-local:
+    runner executes it inside the Docker container
+  if the tool needs project state:
+    runner POSTs /tool to Suzumio
+    controller verifies token and tool allowlist
+    controller updates SQLite, messages, artifacts, or submission state
   runner returns tool output to model</code></pre>
-    <p>The model does not receive arbitrary host tools by default. Tools are configured per agent and executed by the core ToolHost.</p>
+    <p>The model does not receive arbitrary host tools by default. Tools are configured per agent. <code>shell.exec</code> and <code>web.fetch</code> run inside the Docker runner; message, artifact, and completion tools use Suzumio support APIs.</p>
 
     <h2>Message Delivery</h2>
     <p>Agents do not poll for messages. Suzumio renders unread inbound messages into the next turn prompt and records which turn consumed which message. This avoids polling loops and makes scheduling decisions auditable.</p>
 
     <h2>SQLite as Project Truth</h2>
-    <p>Each project has one SQLite file. The container runner does not maintain the project database. Durable state must flow through authenticated HTTP submissions or ToolHost calls.</p>
+    <p>Each project has one SQLite file. The container runner does not maintain the project database. Durable project state must flow through authenticated HTTP submissions or controller support calls.</p>
     <table><tr><th>Table</th><th>Purpose</th></tr><tr><td><code>projects</code></td><td>Project status, task, resolved config JSON, submitted report path.</td></tr><tr><td><code>agents</code></td><td>Agent roster, prompts, tool allowlists, token, active turn.</td></tr><tr><td><code>messages</code></td><td>Direct and channel messages.</td></tr><tr><td><code>message_reads</code></td><td>Which turn consumed which inbound message.</td></tr><tr><td><code>turns</code></td><td>Turn execution records and output text.</td></tr><tr><td><code>events</code></td><td>Append-style event timeline.</td></tr><tr><td><code>tool_calls</code></td><td>Audited tool execution records.</td></tr><tr><td><code>artifacts</code></td><td>Published file artifacts with hashes and metadata.</td></tr></table>
 
     <h2>Why the Boundary Matters</h2>

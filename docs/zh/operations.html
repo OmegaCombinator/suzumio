@@ -19,7 +19,7 @@ suzumio serve --host 0.0.0.0 --port 39400</code></pre><p>另开一个终端：</
 suzumio start demo
 suzumio send demo pm P1 "Start the project."</code></pre>
 
-    <h2>运维检查表</h2><table><tr><th>阶段</th><th>检查</th><th>命令</th></tr><tr><td>Build</td><td>TypeScript 生成 <code>dist/</code>。</td><td><code>npm run build</code></td></tr><tr><td>Image</td><td>本地存在 runner 镜像。</td><td><code>docker image inspect suzumio-runner:dev</code></td></tr><tr><td>Config</td><td>Import 可解析，且没有提交 secret。</td><td><code>suzumio config render file.yaml</code></td></tr><tr><td>Store</td><td>项目初始化在预期 root 下。</td><td><code>suzumio status project</code></td></tr><tr><td>Server</td><td>HTTP 和 ToolHost 可访问。</td><td><code>curl http://127.0.0.1:39400/health</code></td></tr><tr><td>Scheduler</td><td>项目为 running，idle agent 有 unread message。</td><td><code>suzumio messages project</code></td></tr><tr><td>Turn</td><td>容器完成，turn 文本已通过 HTTP 提交。</td><td><code>suzumio turns project</code></td></tr></table>
+    <h2>运维检查表</h2><table><tr><th>阶段</th><th>检查</th><th>命令</th></tr><tr><td>Build</td><td>TypeScript 生成 <code>dist/</code>。</td><td><code>npm run build</code></td></tr><tr><td>Image</td><td>本地存在 runner 镜像。</td><td><code>docker image inspect suzumio-runner:dev</code></td></tr><tr><td>Config</td><td>Import 可解析，且没有提交 secret。</td><td><code>suzumio config render file.yaml</code></td></tr><tr><td>Store</td><td>项目初始化在预期 root 下。</td><td><code>suzumio status project</code></td></tr><tr><td>Server</td><td>HTTP 和 controller support routes 可访问。</td><td><code>curl http://127.0.0.1:39400/health</code></td></tr><tr><td>Scheduler</td><td>项目为 running，idle agent 有 unread message。</td><td><code>suzumio messages project</code></td></tr><tr><td>Turn</td><td>容器完成，turn 文本已通过 HTTP 提交。</td><td><code>suzumio turns project</code></td></tr></table>
 
     <h2>检查 Turn</h2><p>Turn 目录包含精确的 runner input：</p><pre><code>$SUZUMIO_ROOT/demo/turns/turn_.../
   input.json</code></pre><p>Input 包含渲染后的 prompt、agent identity、controller URL、runner config 和工具定义。最终 turn 文本通过 <code>POST /turn-output</code> 提交并存入 SQLite，因此不需要信任容器可写文件，失败 turn 仍可审阅。</p>
@@ -32,7 +32,7 @@ docker rm &lt;container-name&gt;</code></pre><div class="notice danger"><p>不�
     <h2>Secrets</h2><p>API key 使用环境变量，私有 gateway URL 放在本地未跟踪配置中。</p><pre><code>export SUZUMIO_GATEWAY_API_KEY=...
 suzumio serve --host 0.0.0.0 --port 39400</code></pre><p>Runner backend 会把配置中引用且主机环境存在的 provider key 环境变量传入容器。提交示例应只使用占位 endpoint 和环境变量名。</p>
 
-    <h2>长时间运行 Server</h2><p>长时间运行时建议使用 systemd、容器 supervisor 或受监督的 shell session。在用户 API 鉴权完成前，只绑定到可信接口。</p><pre><code>suzumio serve --host 127.0.0.1 --port 39400</code></pre><p>如果 Docker 容器需要调用 host ToolHost，需要绑定到 Docker 可访问的地址，并设置对应的 <code>backend.controllerUrl</code>。</p>
+    <h2>长时间运行 Server</h2><p>长时间运行时建议使用 systemd、容器 supervisor 或受监督的 shell session。在用户 API 鉴权完成前，只绑定到可信接口。</p><pre><code>suzumio serve --host 127.0.0.1 --port 39400</code></pre><p>如果 Docker 容器需要调用 host support routes，需要绑定到 Docker 可访问的地址，并设置对应的 <code>backend.controllerUrl</code>。</p>
 
     <h2>文档部署</h2><p>GitHub Pages workflow 上传静态 <code>docs/</code> 目录。自定义域名由 <code>docs/CNAME</code> 和 DNS 配置。GitHub 证书签发完成前，自定义域名可能只通过 HTTP 提供服务；证书 ready 后再启用 HTTPS enforcement。</p>
     <div class="footer">下一步：<a href="api.html">HTTP API</a>。</div>

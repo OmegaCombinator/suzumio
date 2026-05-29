@@ -5,7 +5,7 @@
   <div class="mobile-nav"><select onchange="location.href=this.value"><option value="index.html">概览</option><option value="quickstart.html">快速开始</option><option value="concepts.html">核心概念</option><option value="configuration.html">配置</option><option value="cli.html">CLI 参考</option><option value="architecture.html">架构</option><option value="operations.html">运维</option><option value="api.html" selected>HTTP API</option><option value="roadmap.html">路线图</option><option value="../api.html">English</option></select></div>
   <div class="shell"><aside class="sidebar"><a class="brand" href="index.html"><strong>Suzumio</strong></a><div class="language-switch"><a href="../api.html">EN</a><a class="active" href="api.html">中文</a></div><div class="nav-group"><p class="nav-title">开始</p><a class="nav-link" href="index.html">概览</a><a class="nav-link" href="quickstart.html">快速开始</a><a class="nav-link" href="concepts.html">核心概念</a></div><div class="nav-group"><p class="nav-title">构建</p><a class="nav-link" href="configuration.html">配置</a><a class="nav-link" href="cli.html">CLI 参考</a><a class="nav-link" href="architecture.html">架构</a><a class="nav-link" href="operations.html">运维</a></div><div class="nav-group"><p class="nav-title">参考</p><a class="nav-link active" href="api.html">HTTP API</a><a class="nav-link" href="roadmap.html">路线图</a><a class="nav-link" href="https://github.com/OmegaCombinator/suzumio">GitHub</a></div></aside>
   <main class="content">
-    <section class="hero"><p class="eyebrow">参考</p><h1>HTTP API 和 ToolHost</h1><p class="lead">HTTP server 暴露项目观测、用户控制动作、SSE 事件流，以及面向容器的 ToolHost。</p></section>
+    <section class="hero"><p class="eyebrow">参考</p><h1>HTTP API 和工具支持</h1><p class="lead">HTTP server 暴露项目观测、用户控制动作、SSE 事件流，以及 Docker runner 使用的 controller support routes。</p></section>
 
     <h2>Server</h2><pre><code>suzumio serve --host 0.0.0.0 --port 39400</code></pre><p>当前 API 面向本地或可信网络使用。第一版尚未实现用户 API 鉴权。面向容器的 tool route 使用每个 agent 的 token。</p>
 
@@ -30,7 +30,7 @@
 event: message.created
 data: { ...event row... }</code></pre>
 
-    <h2>ToolHost</h2><p>Docker runner 使用 <code>POST /tool</code> 执行项目工具，并使用 <code>POST /turn-output</code> 提交最终 turn 文本。这些不是公共用户 API。</p><pre><code>POST /tool
+    <h2>Tool Support Routes</h2><p>Docker runner 把工具展示给模型。需要 Suzumio 项目状态的工具使用 <code>POST /tool</code> 作为 controller support route；<code>shell.exec</code> 和 <code>web.fetch</code> 这类 runner-local tools 在 Docker 容器内执行，不调用该 route。<code>POST /turn-output</code> 用于提交最终 turn 文本。这些不是公共用户 API。</p><pre><code>POST /tool
 {
   "project": "demo",
   "agentId": "pm",
@@ -42,7 +42,7 @@ data: { ...event row... }</code></pre>
     "priority": "P1",
     "body": "Done."
   }
-}</code></pre><p>ToolHost 校验 token 与 agent 匹配，并确认工具在 agent allowlist 中。执行前记录 <code>tool_calls</code>，成功或失败后更新。</p><h3><code>POST /turn-output</code></h3><pre><code>{
+}</code></pre><p>Controller support route 校验 token 与 agent 匹配，并确认 controller-supported tool 在 agent allowlist 中。执行前记录 <code>tool_calls</code>，成功或失败后更新。</p><h3><code>POST /turn-output</code></h3><pre><code>{
   "project": "demo",
   "agentId": "pm",
   "turnId": "turn_...",
@@ -65,21 +65,19 @@ data: { ...event row... }</code></pre>
 }</code></pre><p>Path 相对 agent workspace。Suzumio 会复制文件或目录到 artifact registry 并记录 SHA-256 hash。</p><h3><code>artifacts.list</code></h3><pre><code>{}</code></pre><h3><code>artifacts.read</code></h3><pre><code>{
   "id": "art_...",
   "maxBytes": 20000
-}</code></pre><p>使用 <code>id</code> 或 <code>name</code> 其一。该工具读取 artifact registry 中的文本文件 artifact。对于配置挂载的只读 host 文件或目录，使用 mounted input 路径和 <code>inputs.copy</code>。</p><h3><code>inputs.list</code></h3><pre><code>{
-  "path": "/mnt/reference",
-  "maxEntries": 200
-}</code></pre><p>不传 <code>path</code> 时列出 agent 可见的 mounted input root；传 <code>path</code> 时列出该 mounted input 下的文件。</p><h3><code>inputs.copy</code></h3><pre><code>{
-  "source": "/mnt/reference/data.bin",
-  "destination": "inputs/data.bin",
-  "overwrite": false
-}</code></pre><p>把配置的 mounted input 文件或目录复制到 agent workspace。这是模型处理二进制文件或目录、后续再发布 artifact 时应使用的路径。</p><h3><code>completion.submit</code></h3><pre><code>{
+}</code></pre><p>使用 <code>id</code> 或 <code>name</code> 其一。该工具读取 artifact registry 中的文本文件 artifact。对于配置挂载的只读 host 文件或目录，使用 mounted path 和 <code>shell.exec</code>，例如 <code>cp -r /mnt/reference /workspace/reference</code>。</p><h3><code>shell.exec</code></h3><pre><code>{
+  "command": "cp -r /mnt/reference ./reference && make test",
+  "cwd": "/workspace",
+  "timeoutMs": 120000,
+  "maxOutputBytes": 40000
+}</code></pre><p>在 Docker runner 容器内运行 bash。用于复制 mounted inputs、编译代码、运行二进制、测试或项目本地脚本。只给应该执行容器命令的 agent 授权。</p><h3><code>completion.submit</code></h3><pre><code>{
   "report": "# Final Report\n\n..."
 }</code></pre><p>该工具写入 <code>final-report.md</code>，把项目设为 <code>submitted</code>，等待用户审批。</p><h3><code>web.fetch</code></h3><pre><code>{
   "url": "https://example.com/",
   "maxBytes": 20000,
   "timeoutMs": 30000,
   "format": "text"
-}</code></pre><p>获取 HTTP(S) URL。<code>format: "text"</code> 对 HTML 响应返回清洗文本，对其他内容类型返回原始文本；<code>format: "raw"</code> 返回未修改的响应文本。只给确实需要联网的 agent 授权。</p>
+}</code></pre><p>从 Docker runner 容器内获取 HTTP(S) URL。<code>format: "text"</code> 对 HTML 响应返回清洗文本，对其他内容类型返回原始文本；<code>format: "raw"</code> 返回未修改的响应文本。只给确实需要联网的 agent 授权。</p>
 
     <h2>WebUI</h2><p>根路径 <code>/</code> 提供内嵌 WebUI。第一版保持简单：项目选择器、消息表单、agents、messages、turns、events 和 artifacts。</p>
     <div class="footer">下一步：<a href="roadmap.html">路线图</a>。</div>

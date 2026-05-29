@@ -5,7 +5,7 @@
   <div class="mobile-nav"><select onchange="location.href=this.value"><option value="index.html">Overview</option><option value="quickstart.html">Quickstart</option><option value="concepts.html">Core Concepts</option><option value="configuration.html">Configuration</option><option value="cli.html">CLI Reference</option><option value="architecture.html">Architecture</option><option value="operations.html">Operations</option><option value="api.html" selected>HTTP API</option><option value="roadmap.html">Roadmap</option><option value="zh/api.html">中文</option></select></div>
   <div class="shell"><aside class="sidebar"><a class="brand" href="index.html"><strong>Suzumio</strong></a><div class="language-switch"><a class="active" href="api.html">EN</a><a href="zh/api.html">中文</a></div><div class="nav-group"><p class="nav-title">Start</p><a class="nav-link" href="index.html">Overview</a><a class="nav-link" href="quickstart.html">Quickstart</a><a class="nav-link" href="concepts.html">Core Concepts</a></div><div class="nav-group"><p class="nav-title">Build</p><a class="nav-link" href="configuration.html">Configuration</a><a class="nav-link" href="cli.html">CLI Reference</a><a class="nav-link" href="architecture.html">Architecture</a><a class="nav-link" href="operations.html">Operations</a></div><div class="nav-group"><p class="nav-title">Reference</p><a class="nav-link active" href="api.html">HTTP API</a><a class="nav-link" href="roadmap.html">Roadmap</a><a class="nav-link" href="https://github.com/OmegaCombinator/suzumio">GitHub</a></div></aside>
   <main class="content">
-    <section class="hero"><p class="eyebrow">Reference</p><h1>HTTP API and ToolHost</h1><p class="lead">The HTTP server exposes project observability, user control actions, SSE event streaming, and the container-facing ToolHost.</p></section>
+    <section class="hero"><p class="eyebrow">Reference</p><h1>HTTP API and Tool Support</h1><p class="lead">The HTTP server exposes project observability, user control actions, SSE event streaming, and controller support routes for the Docker runner.</p></section>
 
     <h2>Server</h2>
     <pre><code>suzumio serve --host 0.0.0.0 --port 39400</code></pre>
@@ -42,8 +42,8 @@
 event: message.created
 data: { ...event row... }</code></pre>
 
-    <h2>ToolHost</h2>
-    <p>The Docker runner uses <code>POST /tool</code> to execute project tools and <code>POST /turn-output</code> to submit final turn text. These routes are not public user APIs.</p>
+    <h2>Tool Support Routes</h2>
+    <p>The Docker runner presents tools to the model. Tools that need Suzumio project state use <code>POST /tool</code> as a controller support route. Runner-local tools such as <code>shell.exec</code> and <code>web.fetch</code> run inside the Docker container and do not call this route. <code>POST /turn-output</code> submits final turn text. These routes are not public user APIs.</p>
     <pre><code>POST /tool
 {
   "project": "demo",
@@ -57,7 +57,7 @@ data: { ...event row... }</code></pre>
     "body": "Done."
   }
 }</code></pre>
-    <p>The ToolHost verifies that the token matches the agent and that the requested tool is in the agent allowlist. It records a <code>tool_calls</code> row before execution and updates it after success or failure.</p>
+    <p>The controller support route verifies that the token matches the agent and that the requested controller-supported tool is in the agent allowlist. It records a <code>tool_calls</code> row before execution and updates it after success or failure.</p>
 
     <h3><code>POST /turn-output</code></h3>
     <pre><code>{
@@ -98,22 +98,16 @@ data: { ...event row... }</code></pre>
   "id": "art_...",
   "maxBytes": 20000
 }</code></pre>
-    <p>Use either <code>id</code> or <code>name</code>. This reads text file artifacts from the artifact registry. For configured read-only host files or directories, use mounted input paths and <code>inputs.copy</code> instead.</p>
+    <p>Use either <code>id</code> or <code>name</code>. This reads text file artifacts from the artifact registry. For configured read-only host files or directories, use their mounted paths and <code>shell.exec</code>, for example <code>cp -r /mnt/reference /workspace/reference</code>.</p>
 
-    <h3><code>inputs.list</code></h3>
+    <h3><code>shell.exec</code></h3>
     <pre><code>{
-  "path": "/mnt/reference",
-  "maxEntries": 200
+  "command": "cp -r /mnt/reference ./reference && make test",
+  "cwd": "/workspace",
+  "timeoutMs": 120000,
+  "maxOutputBytes": 40000
 }</code></pre>
-    <p>Without <code>path</code>, this lists mounted input roots visible to the agent. With <code>path</code>, it lists files under that mounted input path.</p>
-
-    <h3><code>inputs.copy</code></h3>
-    <pre><code>{
-  "source": "/mnt/reference/data.bin",
-  "destination": "inputs/data.bin",
-  "overwrite": false
-}</code></pre>
-    <p>Copies a configured mounted input file or directory into the agent workspace. This is the supported path for binary files and directories that the model needs to work with or publish later.</p>
+    <p>Runs bash inside the Docker runner container. Use it for copying mounted inputs, compiling code, running binaries, tests, or project-local scripts. Grant it only to agents that should execute container commands.</p>
 
     <h3><code>completion.submit</code></h3>
     <pre><code>{
@@ -128,7 +122,7 @@ data: { ...event row... }</code></pre>
   "timeoutMs": 30000,
   "format": "text"
 }</code></pre>
-    <p>Fetches an HTTP(S) URL. <code>format: "text"</code> returns cleaned text for HTML responses and raw text for other content types; <code>format: "raw"</code> returns the unmodified response text. Grant it only to agents that should have web access.</p>
+    <p>Fetches an HTTP(S) URL from inside the Docker runner container. <code>format: "text"</code> returns cleaned text for HTML responses and raw text for other content types; <code>format: "raw"</code> returns the unmodified response text. Grant it only to agents that should have web access.</p>
 
     <h2>WebUI</h2>
     <p>The root path <code>/</code> serves the embedded WebUI. It calls the API routes above and refreshes periodically. The first version is intentionally simple: project selector, message form, agents, messages, turns, events, and artifacts.</p>

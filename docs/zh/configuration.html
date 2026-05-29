@@ -106,7 +106,7 @@ tools:
   toolpacks:
     - core
     - artifacts
-    - inputs
+    - shell
     - web
 
 agents:
@@ -132,12 +132,11 @@ agents:
       - artifacts.publish
       - artifacts.list
       - artifacts.read
-      - inputs.list
-      - inputs.copy
+      - shell.exec
       - web.fetch</code></pre>
 
     <h2>顶层字段</h2>
-    <table><tr><th>字段</th><th>是否必需</th><th>说明</th></tr><tr><td><code>name</code></td><td>是</td><td><code>SUZUMIO_ROOT</code> 下的项目 id 和运行目录名。</td></tr><tr><td><code>task</code></td><td>是</td><td>持久任务描述，会渲染进每个 turn prompt。</td></tr><tr><td><code>agents</code></td><td>是</td><td>Agent id 到 agent config 的映射。至少需要一个 agent。</td></tr><tr><td><code>tools</code></td><td>否</td><td>项目注册的 toolpacks。默认包含 <code>core</code>、<code>artifacts</code>、<code>inputs</code> 和 <code>web</code>。</td></tr><tr><td><code>extends</code></td><td>否</td><td>一个 profile object 或 profile object 列表，在本地字段之前合并。</td></tr><tr><td><code>scheduler</code></td><td>否</td><td>Scheduler 类型和 prompt message batching。默认是 <code>nonpreemptive-mailbox</code>。</td></tr><tr><td><code>backend</code></td><td>否</td><td>Docker runner image、ToolHost URL、Docker options 和 model runner 设置。</td></tr><tr><td><code>channels</code></td><td>否</td><td>允许的频道名。默认包含 <code>#project</code> 和 <code>#blocked</code>。</td></tr><tr><td><code>observability</code></td><td>否</td><td>文档层面的 HTTP/WebUI 默认值。实际 server bind 地址仍由 CLI flags 控制。</td></tr></table>
+    <table><tr><th>字段</th><th>是否必需</th><th>说明</th></tr><tr><td><code>name</code></td><td>是</td><td><code>SUZUMIO_ROOT</code> 下的项目 id 和运行目录名。</td></tr><tr><td><code>task</code></td><td>是</td><td>持久任务描述，会渲染进每个 turn prompt。</td></tr><tr><td><code>agents</code></td><td>是</td><td>Agent id 到 agent config 的映射。至少需要一个 agent。</td></tr><tr><td><code>tools</code></td><td>否</td><td>项目注册的 toolpacks。默认包含 <code>core</code>、<code>artifacts</code> 和 <code>web</code>；需要容器内 bash 时添加 <code>shell</code>。</td></tr><tr><td><code>extends</code></td><td>否</td><td>一个 profile object 或 profile object 列表，在本地字段之前合并。</td></tr><tr><td><code>scheduler</code></td><td>否</td><td>Scheduler 类型和 prompt message batching。默认是 <code>nonpreemptive-mailbox</code>。</td></tr><tr><td><code>backend</code></td><td>否</td><td>Docker runner image、controller support URL、Docker options 和 model runner 设置。</td></tr><tr><td><code>channels</code></td><td>否</td><td>允许的频道名。默认包含 <code>#project</code> 和 <code>#blocked</code>。</td></tr><tr><td><code>observability</code></td><td>否</td><td>文档层面的 HTTP/WebUI 默认值。实际 server bind 地址仍由 CLI flags 控制。</td></tr></table>
 
     <h2>YAML 写法约定</h2>
     <p>Suzumio 使用普通 YAML map、array、scalar 和 block string。长文本建议使用 block string 或导入文件，这样 resolved prompt 更容易阅读。</p>
@@ -255,7 +254,7 @@ channels: ["#project", "#reviews"]</code></pre>
         description: Project reference material for agents.
   runner:
     mode: ai</code></pre>
-    <table><tr><th>字段</th><th>说明</th></tr><tr><td><code>kind</code></td><td>Backend implementation。当前 backend 基于 Docker。</td></tr><tr><td><code>image</code></td><td>每个 turn container 使用的 Docker image。</td></tr><tr><td><code>controllerUrl</code></td><td>容器访问 Suzumio ToolHost 的 URL。本地 Docker 通常使用 <code>host.docker.internal</code>。</td></tr><tr><td><code>docker.network</code></td><td>可选 Docker network mode。</td></tr><tr><td><code>docker.mounts</code></td><td>显式挂载到每个 turn container 的 host 文件或目录。Source 会在 render 时相对顶层项目配置解析。</td></tr><tr><td><code>runner.mode</code></td><td>只支持 <code>ai</code>。</td></tr></table>
+    <table><tr><th>字段</th><th>说明</th></tr><tr><td><code>kind</code></td><td>Backend implementation。当前 backend 基于 Docker。</td></tr><tr><td><code>image</code></td><td>每个 turn container 使用的 Docker image。</td></tr><tr><td><code>controllerUrl</code></td><td>容器访问 Suzumio support routes 并提交 turn output 的 URL。本地 Docker 通常使用 <code>host.docker.internal</code>。</td></tr><tr><td><code>docker.network</code></td><td>可选 Docker network mode。</td></tr><tr><td><code>docker.mounts</code></td><td>显式挂载到每个 turn container 的 host 文件或目录。Source 会在 render 时相对顶层项目配置解析。</td></tr><tr><td><code>runner.mode</code></td><td>只支持 <code>ai</code>。</td></tr></table>
 
     <h2>AI Runner Config</h2>
     <pre><code>backend:
@@ -292,10 +291,10 @@ channels: ["#project", "#reviews"]</code></pre>
   toolpacks:
     - core
     - artifacts
-    - inputs
+    - shell
     - web</code></pre>
-    <table><tr><th>Toolpack</th><th>注册工具</th></tr><tr><td><code>core</code></td><td><code>messages.send</code>, <code>completion.submit</code></td></tr><tr><td><code>artifacts</code></td><td><code>artifacts.publish</code>, <code>artifacts.list</code>, <code>artifacts.read</code></td></tr><tr><td><code>inputs</code></td><td><code>inputs.list</code>, <code>inputs.copy</code></td></tr><tr><td><code>web</code></td><td><code>web.fetch</code></td></tr></table>
-    <p>Mounted inputs 是通过配置挂载到容器路径的 host 文件或目录。Suzumio 会把这些路径渲染进 turn prompt。如果 AI runner 需要可写副本，可以给 agent 授权 <code>inputs.copy</code>，把 mounted path 复制到 <code>/workspace</code>。</p>
+    <table><tr><th>Toolpack</th><th>注册工具</th><th>运行位置</th></tr><tr><td><code>core</code></td><td><code>messages.send</code>, <code>completion.submit</code></td><td>Runner wrapper + Suzumio support API</td></tr><tr><td><code>artifacts</code></td><td><code>artifacts.publish</code>, <code>artifacts.list</code>, <code>artifacts.read</code></td><td>Runner wrapper + Suzumio support API</td></tr><tr><td><code>shell</code></td><td><code>shell.exec</code></td><td>Docker runner container</td></tr><tr><td><code>web</code></td><td><code>web.fetch</code></td><td>Docker runner container</td></tr></table>
+    <p>Mounted inputs 是通过配置挂载到容器路径的 host 文件或目录。Suzumio 会把这些路径渲染进 turn prompt。拥有 <code>shell.exec</code> 的 agent 可以把它们复制到 <code>/workspace</code>、编译代码、运行二进制，并发布生成的 artifact。</p>
 
     <h2>Agent Config</h2>
     <pre><code>agents:
@@ -312,8 +311,7 @@ channels: ["#project", "#reviews"]</code></pre>
       - artifacts.publish
       - artifacts.list
       - artifacts.read
-      - inputs.list
-      - inputs.copy
+      - shell.exec
       - web.fetch
     mounts:
       - source: ./worker-notes

@@ -25,7 +25,7 @@ suzumio start demo
 suzumio send demo pm P1 "Start the project."</code></pre>
 
     <h2>Operational Checklist</h2>
-    <table><tr><th>Stage</th><th>Check</th><th>Command</th></tr><tr><td>Build</td><td>TypeScript emits <code>dist/</code>.</td><td><code>npm run build</code></td></tr><tr><td>Image</td><td>Runner image exists locally.</td><td><code>docker image inspect suzumio-runner:dev</code></td></tr><tr><td>Config</td><td>Imports resolve and secrets are not committed.</td><td><code>suzumio config render file.yaml</code></td></tr><tr><td>Store</td><td>Project was initialized under the expected root.</td><td><code>suzumio status project</code></td></tr><tr><td>Server</td><td>HTTP and ToolHost are reachable.</td><td><code>curl http://127.0.0.1:39400/health</code></td></tr><tr><td>Scheduler</td><td>Project is running and idle agents have unread messages.</td><td><code>suzumio messages project</code></td></tr><tr><td>Turn</td><td>Container completed and turn text was submitted over HTTP.</td><td><code>suzumio turns project</code></td></tr></table>
+    <table><tr><th>Stage</th><th>Check</th><th>Command</th></tr><tr><td>Build</td><td>TypeScript emits <code>dist/</code>.</td><td><code>npm run build</code></td></tr><tr><td>Image</td><td>Runner image exists locally.</td><td><code>docker image inspect suzumio-runner:dev</code></td></tr><tr><td>Config</td><td>Imports resolve and secrets are not committed.</td><td><code>suzumio config render file.yaml</code></td></tr><tr><td>Store</td><td>Project was initialized under the expected root.</td><td><code>suzumio status project</code></td></tr><tr><td>Server</td><td>HTTP and controller support routes are reachable.</td><td><code>curl http://127.0.0.1:39400/health</code></td></tr><tr><td>Scheduler</td><td>Project is running and idle agents have unread messages.</td><td><code>suzumio messages project</code></td></tr><tr><td>Turn</td><td>Container completed and turn text was submitted over HTTP.</td><td><code>suzumio turns project</code></td></tr></table>
 
     <h2>Inspecting a Turn</h2>
     <p>A turn directory contains the exact runner input:</p>
@@ -51,7 +51,7 @@ suzumio serve --host 0.0.0.0 --port 39400</code></pre>
     <h2>Long-running Servers</h2>
     <p>For a long-running server, use a process manager such as systemd, a container supervisor, or a supervised shell session. Bind the server only to trusted interfaces until user-facing API authentication lands.</p>
     <pre><code>suzumio serve --host 127.0.0.1 --port 39400</code></pre>
-    <p>If Docker containers need to call the host ToolHost, bind to an address reachable from Docker and set <code>backend.controllerUrl</code> accordingly.</p>
+    <p>If Docker containers need to call host support routes, bind to an address reachable from Docker and set <code>backend.controllerUrl</code> accordingly.</p>
 
     <h2>Documentation Deployment</h2>
     <p>The GitHub Pages workflow uploads the static <code>docs/</code> directory. The custom domain is configured by <code>docs/CNAME</code> and DNS. GitHub may serve the custom domain over HTTP until certificate provisioning finishes; enable HTTPS enforcement once GitHub marks the certificate ready.</p>

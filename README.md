@@ -10,14 +10,16 @@ Core principles:
 - The scheduler never interrupts a running agent.
 - Agents are only woken by inbound mailbox messages or explicit user/system control.
 - Suzumio owns project state, messages, artifacts, tool audit logs, and observability.
-- The container runner is only a single-agent turn executor.
+- The Docker runner executes one agent turn and presents the model-facing tools.
+- Stateful tools call Suzumio support APIs for messages, artifacts, permissions, and final submission.
 
 This repository is an early build. The first implementation includes:
 
 - YAML config loading with whole-field `@import(path)` and top-level `extends`.
 - SQLite project storage using Node's built-in SQLite module.
 - A Docker-first chat backend and container runner.
-- Configured toolpacks for `core`, `artifacts`, `inputs`, and `web` tools.
+- Configured toolpacks for `core`, `artifacts`, `shell`, and `web` tools.
+- Runner-local `shell.exec` and `web.fetch`, plus controller-supported message, artifact, and completion tools.
 - A non-preemptive mailbox scheduler.
 - CLI, HTTP API, SSE stream, and a minimal flat WebUI.
 
@@ -94,7 +96,7 @@ tools:
   toolpacks:
     - core
     - artifacts
-    - inputs
+    - shell
     - web
 
 agents:

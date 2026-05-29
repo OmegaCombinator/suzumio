@@ -28,25 +28,25 @@
       <section>
         <h2>Purpose</h2>
         <p>Suzumio is a coordination runtime for projects where agents may need to work for a long time without being interrupted. It is suitable for formalization, code work, research workflows, review pipelines, benchmark experiments, and other tasks where progress is best represented as durable turns, messages, artifacts, and audit logs.</p>
-        <p>Suzumio separates project coordination from agent execution. The core runtime owns project state and scheduling. The Docker runner executes one agent turn, calls back to Suzumio for tools, writes a result, and exits.</p>
+        <p>Suzumio separates project coordination from agent execution. The core runtime owns project state and scheduling. The Docker runner executes one agent turn, presents the model-facing tools, calls back to Suzumio only when stateful support is needed, writes a result, and exits.</p>
       </section>
 
       <section class="grid">
         <div class="card"><h3>Non-preemptive scheduling</h3><p>Running agents are not prompted, nudged, or interrupted. New inbound messages wait in the mailbox until the current turn finishes.</p></div>
         <div class="card"><h3>Durable project state</h3><p>Projects store resolved configuration, agents, messages, message reads, turns, events, tool calls, and artifacts in SQLite.</p></div>
-        <div class="card"><h3>Docker-first execution</h3><p>Each turn runs in a container with a read-only turn input file, an agent workspace, ToolHost access, and HTTP result submission.</p></div>
-        <div class="card"><h3>Audited tools</h3><p>Project tools are checked against each agent allowlist and recorded before and after execution.</p></div>
+        <div class="card"><h3>Docker-first execution</h3><p>Each turn runs in a container with a read-only turn input file, an agent workspace, runner-local shell and web tools, and HTTP result submission.</p></div>
+        <div class="card"><h3>Allowlisted tools</h3><p>Project toolpacks choose available tools, and each agent receives only its configured allowlist.</p></div>
       </section>
 
       <section>
         <h2>What You Can Do Today</h2>
         <table>
           <tr><th>Task</th><th>Where to start</th><th>What you get</th></tr>
-          <tr><td>Run a local AI smoke test</td><td><a href="quickstart.html">Quickstart</a></td><td>A Docker-backed AI turn that verifies scheduling, storage, ToolHost access, and runner wiring.</td></tr>
+          <tr><td>Run a local AI smoke test</td><td><a href="quickstart.html">Quickstart</a></td><td>A Docker-backed AI turn that verifies scheduling, storage, controller support routes, and runner wiring.</td></tr>
           <tr><td>Define a project</td><td><a href="configuration.html">Configuration</a></td><td>YAML config with whole-field imports, profile composition, agents, tools, and backend settings.</td></tr>
           <tr><td>Operate projects from terminal</td><td><a href="cli.html">CLI Reference</a></td><td>Commands for init, serve, start, send, inspect, approve, and stop.</td></tr>
-          <tr><td>Integrate with other systems</td><td><a href="api.html">HTTP API</a></td><td>Project objects, user actions, event streams, and ToolHost calls.</td></tr>
-          <tr><td>Deploy docs or inspect architecture</td><td><a href="architecture.html">Architecture</a></td><td>Clear boundaries between core runtime, Docker backend, runner, ToolHost, and SQLite.</td></tr>
+          <tr><td>Integrate with other systems</td><td><a href="api.html">HTTP API</a></td><td>Project objects, user actions, event streams, and controller support calls.</td></tr>
+          <tr><td>Deploy docs or inspect architecture</td><td><a href="architecture.html">Architecture</a></td><td>Clear boundaries between core runtime, Docker backend, runner tools, support routes, and SQLite.</td></tr>
         </table>
       </section>
 
@@ -57,7 +57,7 @@
 3. Start the HTTP server and scheduler loop.
 4. Send a user message to an agent.
 5. Scheduler starts one Docker turn for that agent.
-6. Runner executes the turn and calls ToolHost when needed.
+6. Runner executes the turn and model-facing tools.
 7. Suzumio records messages, tool calls, events, artifacts, and turn output.
 8. Idle agents remain quiet until new inbound messages arrive.</code></pre>
       </section>

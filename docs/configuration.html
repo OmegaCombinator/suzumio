@@ -106,7 +106,7 @@ tools:
   toolpacks:
     - core
     - artifacts
-    - inputs
+    - shell
     - web
 
 agents:
@@ -132,12 +132,11 @@ agents:
       - artifacts.publish
       - artifacts.list
       - artifacts.read
-      - inputs.list
-      - inputs.copy
+      - shell.exec
       - web.fetch</code></pre>
 
     <h2>Top-level Fields</h2>
-    <table><tr><th>Field</th><th>Required</th><th>Description</th></tr><tr><td><code>name</code></td><td>Yes</td><td>Project id and runtime directory name under <code>SUZUMIO_ROOT</code>.</td></tr><tr><td><code>task</code></td><td>Yes</td><td>Durable task statement rendered into every turn prompt.</td></tr><tr><td><code>agents</code></td><td>Yes</td><td>Map of agent ids to agent configs. At least one agent is required.</td></tr><tr><td><code>tools</code></td><td>No</td><td>Toolpacks registered for the project. Defaults to <code>core</code>, <code>artifacts</code>, <code>inputs</code>, and <code>web</code>.</td></tr><tr><td><code>extends</code></td><td>No</td><td>One profile object or a list of profile objects to merge before local fields.</td></tr><tr><td><code>scheduler</code></td><td>No</td><td>Scheduler kind and prompt-message batching. Defaults to <code>nonpreemptive-mailbox</code>.</td></tr><tr><td><code>backend</code></td><td>No</td><td>Docker runner image, ToolHost URL, Docker options, and model runner settings.</td></tr><tr><td><code>channels</code></td><td>No</td><td>Allowed channel names. Defaults include <code>#project</code> and <code>#blocked</code>.</td></tr><tr><td><code>observability</code></td><td>No</td><td>Documentation-level server defaults for HTTP/WebUI. The CLI flags still control the actual server bind address.</td></tr></table>
+    <table><tr><th>Field</th><th>Required</th><th>Description</th></tr><tr><td><code>name</code></td><td>Yes</td><td>Project id and runtime directory name under <code>SUZUMIO_ROOT</code>.</td></tr><tr><td><code>task</code></td><td>Yes</td><td>Durable task statement rendered into every turn prompt.</td></tr><tr><td><code>agents</code></td><td>Yes</td><td>Map of agent ids to agent configs. At least one agent is required.</td></tr><tr><td><code>tools</code></td><td>No</td><td>Toolpacks registered for the project. Defaults to <code>core</code>, <code>artifacts</code>, and <code>web</code>; add <code>shell</code> for container-local bash.</td></tr><tr><td><code>extends</code></td><td>No</td><td>One profile object or a list of profile objects to merge before local fields.</td></tr><tr><td><code>scheduler</code></td><td>No</td><td>Scheduler kind and prompt-message batching. Defaults to <code>nonpreemptive-mailbox</code>.</td></tr><tr><td><code>backend</code></td><td>No</td><td>Docker runner image, controller support URL, Docker options, and model runner settings.</td></tr><tr><td><code>channels</code></td><td>No</td><td>Allowed channel names. Defaults include <code>#project</code> and <code>#blocked</code>.</td></tr><tr><td><code>observability</code></td><td>No</td><td>Documentation-level server defaults for HTTP/WebUI. The CLI flags still control the actual server bind address.</td></tr></table>
 
     <h2>YAML Conventions</h2>
     <p>Suzumio uses ordinary YAML maps, arrays, scalars, and block strings. Keep long text in block strings or imported files so rendered prompts are readable.</p>
@@ -255,7 +254,7 @@ channels: ["#project", "#reviews"]</code></pre>
         description: Project reference material for agents.
   runner:
     mode: ai</code></pre>
-    <table><tr><th>Field</th><th>Description</th></tr><tr><td><code>kind</code></td><td>Backend implementation. The current backend is Docker-based.</td></tr><tr><td><code>image</code></td><td>Docker image used for each turn container.</td></tr><tr><td><code>controllerUrl</code></td><td>URL the container uses to call Suzumio ToolHost. For local Docker, use <code>host.docker.internal</code>.</td></tr><tr><td><code>docker.network</code></td><td>Optional Docker network mode.</td></tr><tr><td><code>docker.mounts</code></td><td>Explicit host files or directories mounted into every turn container. Sources are resolved relative to the top-level project config during render.</td></tr><tr><td><code>runner.mode</code></td><td>Only <code>ai</code> is supported.</td></tr></table>
+    <table><tr><th>Field</th><th>Description</th></tr><tr><td><code>kind</code></td><td>Backend implementation. The current backend is Docker-based.</td></tr><tr><td><code>image</code></td><td>Docker image used for each turn container.</td></tr><tr><td><code>controllerUrl</code></td><td>URL the container uses to call Suzumio support routes and submit turn output. For local Docker, use <code>host.docker.internal</code>.</td></tr><tr><td><code>docker.network</code></td><td>Optional Docker network mode.</td></tr><tr><td><code>docker.mounts</code></td><td>Explicit host files or directories mounted into every turn container. Sources are resolved relative to the top-level project config during render.</td></tr><tr><td><code>runner.mode</code></td><td>Only <code>ai</code> is supported.</td></tr></table>
 
     <h2>AI Runner Config</h2>
     <pre><code>backend:
@@ -292,10 +291,10 @@ channels: ["#project", "#reviews"]</code></pre>
   toolpacks:
     - core
     - artifacts
-    - inputs
+    - shell
     - web</code></pre>
-    <table><tr><th>Toolpack</th><th>Registered tools</th></tr><tr><td><code>core</code></td><td><code>messages.send</code>, <code>completion.submit</code></td></tr><tr><td><code>artifacts</code></td><td><code>artifacts.publish</code>, <code>artifacts.list</code>, <code>artifacts.read</code></td></tr><tr><td><code>inputs</code></td><td><code>inputs.list</code>, <code>inputs.copy</code></td></tr><tr><td><code>web</code></td><td><code>web.fetch</code></td></tr></table>
-    <p>Mounted inputs are host files or directories exposed at configured container paths. Suzumio renders those paths into the turn prompt. If the AI runner needs a writable copy, grant <code>inputs.copy</code> and copy the mounted path into <code>/workspace</code>.</p>
+    <table><tr><th>Toolpack</th><th>Registered tools</th><th>Runs in</th></tr><tr><td><code>core</code></td><td><code>messages.send</code>, <code>completion.submit</code></td><td>Runner wrapper with Suzumio support API</td></tr><tr><td><code>artifacts</code></td><td><code>artifacts.publish</code>, <code>artifacts.list</code>, <code>artifacts.read</code></td><td>Runner wrapper with Suzumio support API</td></tr><tr><td><code>shell</code></td><td><code>shell.exec</code></td><td>Docker runner container</td></tr><tr><td><code>web</code></td><td><code>web.fetch</code></td><td>Docker runner container</td></tr></table>
+    <p>Mounted inputs are host files or directories exposed at configured container paths. Suzumio renders those paths into the turn prompt. Agents with <code>shell.exec</code> can copy them into <code>/workspace</code>, compile code, run binaries, and publish resulting artifacts.</p>
 
     <h2>Agent Config</h2>
     <pre><code>agents:
@@ -312,8 +311,7 @@ channels: ["#project", "#reviews"]</code></pre>
       - artifacts.publish
       - artifacts.list
       - artifacts.read
-      - inputs.list
-      - inputs.copy
+      - shell.exec
       - web.fetch
     mounts:
       - source: ./worker-notes

@@ -1,6 +1,5 @@
-import { copyFile, cp, mkdir, readFile, readdir, stat } from "node:fs/promises";
-import path from "node:path";
-import type { AgentConfig, AgentRecord, DockerMountConfig, JsonObject, MessagePriority, ProjectConfig, ToolDefinition } from "./types.js";
+import { readFile, stat } from "node:fs/promises";
+import type { AgentRecord, JsonObject, MessagePriority, ToolDefinition } from "./types.js";
 import { ProjectStore } from "./store.js";
 
 export type ToolCallInput = {
@@ -48,6 +47,7 @@ export class ToolRegistry {
   async execute(context: ToolContext, tool: string, input: unknown): Promise<ToolCallOutput> {
     const plugin = this.tools.get(tool);
     if (!plugin) throw new Error(`Unknown tool: ${tool}`);
+    if (plugin.definition.execution !== "controller") throw new Error(`${tool} runs inside the Docker runner, not through the controller support route`);
     return plugin.execute(context, input);
   }
 }
@@ -55,11 +55,11 @@ export class ToolRegistry {
 export const TOOLPACKS: Record<string, () => ToolPlugin[]> = {
   core: () => [messagesSendTool(), completionSubmitTool()],
   artifacts: () => [artifactsPublishTool(), artifactsListTool(), artifactsReadTool()],
-  inputs: () => [inputsListTool(), inputsCopyTool()],
+  shell: () => [shellExecTool()],
   web: () => [webFetchTool()],
 };
 
-export const defaultToolRegistry = toolRegistryForToolpacks(["core", "artifacts", "inputs", "web"]);
+export const defaultToolRegistry = toolRegistryForToolpacks(["core", "artifacts", "web"]);
 
 export function toolRegistryForToolpacks(toolpacks: string[]): ToolRegistry {
   const plugins: ToolPlugin[] = [];
@@ -105,6 +105,7 @@ function messagesSendTool(): ToolPlugin {
   return {
     definition: {
       name: "messages.send",
+      execution: "controller",
       description: "Send a Markdown message to another agent, the user, or a configured project channel.",
       inputSchema: {
         type: "object",
@@ -134,6 +135,7 @@ function artifactsPublishTool(): ToolPlugin {
   return {
     definition: {
       name: "artifacts.publish",
+      execution: "controller",
       description: "Publish a file or directory from this agent workspace as a project artifact.",
       inputSchema: {
         type: "object",
@@ -158,6 +160,7 @@ function artifactsListTool(): ToolPlugin {
   return {
     definition: {
       name: "artifacts.list",
+      execution: "controller",
       description: "List project artifacts published so far.",
       inputSchema: { type: "object", properties: {}, additionalProperties: false },
     },
@@ -172,6 +175,7 @@ function artifactsReadTool(): ToolPlugin {
   return {
     definition: {
       name: "artifacts.read",
+      execution: "controller",
       description: "Read a text artifact by id or name.",
       inputSchema: {
         type: "object",
@@ -193,7 +197,7 @@ function artifactsReadTool(): ToolPlugin {
       const maxBytes = boundedNumber(args.maxBytes, 20_000, 100_000);
       const artifactPath = String(artifact.path);
       const info = await stat(artifactPath);
-      if (info.isDirectory()) throw new Error("artifacts.read only reads text file artifacts. Use mounted inputs for directory handoff.");
+      if (info.isDirectory()) throw new Error("artifacts.read only reads text file artifacts. Use mounted paths and shell.exec for directory handoff.");
       const text = await readFile(artifactPath, "utf8");
       const truncated = text.length > maxBytes;
       return {
@@ -209,6 +213,7 @@ function completionSubmitTool(): ToolPlugin {
   return {
     definition: {
       name: "completion.submit",
+      execution: "controller",
       description: "Submit the final Markdown project report for user approval.",
       inputSchema: {
         type: "object",
@@ -225,75 +230,26 @@ function completionSubmitTool(): ToolPlugin {
   };
 }
 
-function inputsListTool(): ToolPlugin {
+function shellExecTool(): ToolPlugin {
   return {
     definition: {
-      name: "inputs.list",
-      description: "List configured mounted input paths, or list files under one mounted input path.",
+      name: "shell.exec",
+      execution: "runner",
+      description: "Execute a bash command inside the Docker runner container. Runs in /workspace by default.",
       inputSchema: {
         type: "object",
         properties: {
-          path: { type: "string", description: "Optional mounted container path such as /mnt/reference." },
-          maxEntries: { type: "number", description: "Maximum entries to return, capped at 2000." },
+          command: { type: "string", description: "Bash command to run inside the runner container." },
+          cwd: { type: "string", description: "Working directory inside the container. Defaults to /workspace." },
+          timeoutMs: { type: "number", description: "Command timeout in milliseconds, capped at 300000." },
+          maxOutputBytes: { type: "number", description: "Maximum combined stdout/stderr bytes returned, capped at 200000." },
         },
+        required: ["command"],
         additionalProperties: false,
       },
     },
-    execute: async ({ store, agent }, input) => {
-      const args = objectInput(input);
-      const config = store.config();
-      const requested = optionalString(args.path);
-      if (!requested) {
-        const mounts = mountedInputs(config, agent);
-        const output = mounts.length ? mounts.map((mount) => `${mount.target} (${mount.readonly ? "read-only" : "read-write"})${mount.description ? `: ${mount.description}` : ""}`).join("\n") : "No mounted inputs configured.";
-        return { title: "mounted inputs", output, metadata: { count: mounts.length } };
-      }
-      const maxEntries = boundedNumber(args.maxEntries, 200, 2_000);
-      const resolved = await resolveMountedInputPath(config, agent, requested);
-      const info = await stat(resolved.hostPath);
-      if (info.isFile()) return { title: "mounted input", output: `${resolved.containerPath} (${info.size} bytes)`, metadata: { path: resolved.containerPath, type: "file", size: info.size } };
-      if (!info.isDirectory()) throw new Error(`Mounted input is neither file nor directory: ${resolved.containerPath}`);
-      const entries = await directoryEntries(resolved.hostPath, resolved.hostPath);
-      const selected = entries.slice(0, maxEntries);
-      const prefix = resolved.containerPath.endsWith("/") ? resolved.containerPath.slice(0, -1) : resolved.containerPath;
-      const output = selected.length ? selected.map((entry) => `${prefix}/${entry}`).join("\n") : "(empty directory)";
-      return { title: "mounted input listing", output: entries.length > selected.length ? `${output}\n\n[truncated]` : output, metadata: { path: resolved.containerPath, type: "directory", entries: entries.length, truncated: entries.length > selected.length } };
-    },
-  };
-}
-
-function inputsCopyTool(): ToolPlugin {
-  return {
-    definition: {
-      name: "inputs.copy",
-      description: "Copy a configured mounted input file or directory into this agent workspace.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          source: { type: "string", description: "Mounted container path such as /mnt/reference/file.txt." },
-          destination: { type: "string", description: "Workspace-relative destination path." },
-          overwrite: { type: "boolean", default: false },
-        },
-        required: ["source", "destination"],
-        additionalProperties: false,
-      },
-    },
-    execute: async ({ store, agent }, input) => {
-      const args = objectInput(input);
-      const config = store.config();
-      const source = await resolveMountedInputPath(config, agent, stringArg(args, "source"));
-      const destination = workspaceDestination(agent.workspacePath, stringArg(args, "destination"));
-      const overwrite = booleanArg(args.overwrite ?? false, "overwrite");
-      if (!overwrite && (await pathExists(destination))) throw new Error(`Destination already exists: ${path.relative(agent.workspacePath, destination)}`);
-      const info = await stat(source.hostPath);
-      if (info.isDirectory()) await cp(source.hostPath, destination, { recursive: true, force: overwrite, errorOnExist: !overwrite });
-      else if (info.isFile()) {
-        await mkdir(path.dirname(destination), { recursive: true });
-        await copyFile(source.hostPath, destination);
-      } else {
-        throw new Error(`Mounted input is neither file nor directory: ${source.containerPath}`);
-      }
-      return { title: "input copied", output: `Copied ${source.containerPath} to /workspace/${path.relative(agent.workspacePath, destination)}`, metadata: { source: source.containerPath, destination: path.relative(agent.workspacePath, destination), type: info.isDirectory() ? "directory" : "file" } };
+    execute: async () => {
+      throw new Error("shell.exec is a runner-local tool and cannot be executed by the controller support route");
     },
   };
 }
@@ -302,7 +258,8 @@ function webFetchTool(): ToolPlugin {
   return {
     definition: {
       name: "web.fetch",
-      description: "Fetch an HTTP(S) URL and return response text.",
+      execution: "runner",
+      description: "Fetch an HTTP(S) URL from inside the Docker runner container and return response text.",
       inputSchema: {
         type: "object",
         properties: {
@@ -315,24 +272,8 @@ function webFetchTool(): ToolPlugin {
         additionalProperties: false,
       },
     },
-    execute: async (_context, input) => {
-      const args = objectInput(input);
-      const url = new URL(stringArg(args, "url"));
-      if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error(`Unsupported URL protocol: ${url.protocol}`);
-      if (url.username || url.password) throw new Error("URL credentials are not allowed");
-      const timeoutMs = boundedNumber(args.timeoutMs, 30_000, 120_000);
-      const maxBytes = boundedNumber(args.maxBytes, 20_000, 100_000);
-      const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
-      const raw = await response.text();
-      const contentType = response.headers.get("content-type") ?? "";
-      const format = formatArg(args.format);
-      const text = format === "raw" ? raw : contentType.includes("html") ? htmlToText(raw) : raw;
-      const truncated = text.length > maxBytes;
-      return {
-        title: "web fetch",
-        output: truncated ? `${text.slice(0, maxBytes)}\n\n[truncated]` : text,
-        metadata: { url: url.toString(), status: response.status, contentType: contentType || undefined, format, truncated },
-      };
+    execute: async () => {
+      throw new Error("web.fetch is a runner-local tool and cannot be executed by the controller support route");
     },
   };
 }
@@ -365,97 +306,8 @@ function priorityArg(value: unknown): MessagePriority {
   throw new Error(`Invalid priority: ${String(value)}`);
 }
 
-function formatArg(value: unknown): "text" | "raw" {
-  if (value === undefined || value === "text" || value === "raw") return value ?? "text";
-  throw new Error(`Invalid format: ${String(value)}`);
-}
-
-function booleanArg(value: unknown, key: string): boolean {
-  if (typeof value === "boolean") return value;
-  throw new Error(`${key} must be a boolean`);
-}
-
 function boundedNumber(value: unknown, fallback: number, max: number): number {
   if (value === undefined) return fallback;
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) throw new Error("Expected a positive number");
   return Math.min(Math.floor(value), max);
-}
-
-function mountedInputs(config: ProjectConfig, agent: AgentRecord): DockerMountConfig[] {
-  const spec = agentSpec(config, agent);
-  return [...(config.backend.docker?.mounts ?? []), ...(spec?.mounts ?? [])];
-}
-
-function agentSpec(config: ProjectConfig, agent: AgentRecord): AgentConfig | undefined {
-  return config.agents[agent.id] ?? config.agents[agent.id.replace(/-\d+$/, "")];
-}
-
-async function resolveMountedInputPath(config: ProjectConfig, agent: AgentRecord, inputPath: string): Promise<{ containerPath: string; hostPath: string }> {
-  const containerPath = path.posix.normalize(inputPath);
-  if (!containerPath.startsWith("/")) throw new Error(`Mounted input path must be absolute: ${inputPath}`);
-  const mounts = mountedInputs(config, agent).sort((a, b) => b.target.length - a.target.length);
-  for (const mount of mounts) {
-    const target = path.posix.normalize(mount.target);
-    if (containerPath !== target && !containerPath.startsWith(`${target}/`)) continue;
-    const relative = containerPath === target ? "" : containerPath.slice(target.length + 1);
-    const sourceInfo = await stat(mount.source);
-    if (sourceInfo.isFile() && relative) throw new Error(`Mounted input is a file, not a directory: ${target}`);
-    const hostPath = sourceInfo.isFile() ? mount.source : path.resolve(mount.source, relative);
-    assertInsideHostPath(hostPath, mount.source);
-    return { containerPath, hostPath };
-  }
-  throw new Error(`Path is not under a configured mounted input: ${inputPath}`);
-}
-
-function workspaceDestination(workspacePath: string, destination: string): string {
-  if (path.isAbsolute(destination)) throw new Error("destination must be relative to /workspace");
-  const resolved = path.resolve(workspacePath, destination);
-  assertInsideHostPath(resolved, workspacePath);
-  return resolved;
-}
-
-function assertInsideHostPath(filePath: string, root: string): void {
-  const resolved = path.resolve(filePath);
-  const base = path.resolve(root);
-  if (resolved === base || resolved.startsWith(base + path.sep)) return;
-  throw new Error(`Path is outside allowed root: ${filePath}`);
-}
-
-async function pathExists(filePath: string): Promise<boolean> {
-  try {
-    await stat(filePath);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function directoryEntries(root: string, directory: string): Promise<string[]> {
-  const out: string[] = [];
-  for (const entry of await readdir(directory, { withFileTypes: true })) {
-    const absolute = `${directory}/${entry.name}`;
-    const relative = absolute.slice(root.length + 1);
-    if (entry.isDirectory()) {
-      out.push(`${relative}/`);
-      out.push(...(await directoryEntries(root, absolute)));
-    } else if (entry.isFile()) {
-      out.push(relative);
-    }
-  }
-  return out.sort((a, b) => a.localeCompare(b));
-}
-
-function htmlToText(html: string): string {
-  return html
-    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/\s+/g, " ")
-    .trim();
 }

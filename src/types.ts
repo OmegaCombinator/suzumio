@@ -162,6 +162,7 @@ export interface TurnRecord {
 
 export interface ToolDefinition {
   name: string;
+  execution: "controller" | "runner";
   description: string;
   inputSchema: JsonObject;
 }

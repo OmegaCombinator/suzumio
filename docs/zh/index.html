@@ -7,18 +7,18 @@
   <main class="content">
     <section class="hero"><p class="eyebrow">面向长时间运行智能体的 Docker-first 协调</p><h1>Suzumio</h1><p class="lead">Suzumio 用非抢占式 mailbox 调度、隔离的 Docker turn、可审计工具、artifact 跟踪、SQLite 状态、CLI、HTTP API 和轻量 WebUI 来协调多智能体项目。</p><div class="actions"><a class="button primary" href="quickstart.html">运行演示</a><a class="button" href="configuration.html">编写配置</a><a class="button blue" href="api.html">使用 API</a></div></section>
 
-    <section><h2>用途</h2><p>Suzumio 适合需要让智能体长时间专注工作的项目，例如形式化、代码工作、研究流程、评审流水线和 benchmark 实验。运行时把进展记录为持久的 turn、message、artifact 和 audit log。</p><p>Suzumio 将项目协调与智能体执行分离。核心运行时拥有项目状态和调度逻辑；Docker runner 只执行一个智能体 turn，按需调用 Suzumio ToolHost，写回结果，然后退出。</p></section>
+    <section><h2>用途</h2><p>Suzumio 适合需要让智能体长时间专注工作的项目，例如形式化、代码工作、研究流程、评审流水线和 benchmark 实验。运行时把进展记录为持久的 turn、message、artifact 和 audit log。</p><p>Suzumio 将项目协调与智能体执行分离。核心运行时拥有项目状态和调度逻辑；Docker runner 执行一个智能体 turn，向模型展示工具，只在需要 stateful support 时回调 Suzumio，写回结果，然后退出。</p></section>
 
-    <section class="grid"><div class="card"><h3>非抢占式调度</h3><p>正在运行的智能体不会被追加 prompt、催促或打断。新的 inbound message 留在 mailbox 中，等待当前 turn 完成。</p></div><div class="card"><h3>持久项目状态</h3><p>项目在 SQLite 中保存配置、智能体、消息、消息读取记录、turn、事件、工具调用和 artifact。</p></div><div class="card"><h3>Docker-first 执行</h3><p>每个 turn 在容器中运行，包含只读 turn input、agent workspace、ToolHost 访问能力和 HTTP 结果提交。</p></div><div class="card"><h3>可审计工具</h3><p>每个工具调用都根据智能体 allowlist 检查，并在执行前后记录。</p></div></section>
+    <section class="grid"><div class="card"><h3>非抢占式调度</h3><p>正在运行的智能体不会被追加 prompt、催促或打断。新的 inbound message 留在 mailbox 中，等待当前 turn 完成。</p></div><div class="card"><h3>持久项目状态</h3><p>项目在 SQLite 中保存配置、智能体、消息、消息读取记录、turn、事件、工具调用和 artifact。</p></div><div class="card"><h3>Docker-first 执行</h3><p>每个 turn 在容器中运行，包含只读 turn input、agent workspace、runner-local shell/web tools 和 HTTP 结果提交。</p></div><div class="card"><h3>Allowlisted tools</h3><p>项目 toolpacks 选择可用工具，每个 agent 只获得自己配置的 allowlist。</p></div></section>
 
-    <section><h2>今天可以做什么</h2><table><tr><th>任务</th><th>入口</th><th>结果</th></tr><tr><td>运行本地 AI smoke test</td><td><a href="quickstart.html">快速开始</a></td><td>一个 Docker-backed AI turn，验证调度、存储、ToolHost access 和 runner wiring。</td></tr><tr><td>定义项目</td><td><a href="configuration.html">配置</a></td><td>带 whole-field import、profile 组合、agent、tool 和 backend 的 YAML 配置。</td></tr><tr><td>从终端运维</td><td><a href="cli.html">CLI 参考</a></td><td>init、serve、start、send、inspect、approve、stop 等命令。</td></tr><tr><td>集成其他系统</td><td><a href="api.html">HTTP API</a></td><td>项目对象、用户动作、事件流和 ToolHost 调用。</td></tr><tr><td>理解运行时边界</td><td><a href="architecture.html">架构</a></td><td>核心运行时、Docker backend、runner、ToolHost 和 SQLite 的职责边界。</td></tr></table></section>
+    <section><h2>今天可以做什么</h2><table><tr><th>任务</th><th>入口</th><th>结果</th></tr><tr><td>运行本地 AI smoke test</td><td><a href="quickstart.html">快速开始</a></td><td>一个 Docker-backed AI turn，验证调度、存储、controller support routes 和 runner wiring。</td></tr><tr><td>定义项目</td><td><a href="configuration.html">配置</a></td><td>带 whole-field import、profile 组合、agent、tool 和 backend 的 YAML 配置。</td></tr><tr><td>从终端运维</td><td><a href="cli.html">CLI 参考</a></td><td>init、serve、start、send、inspect、approve、stop 等命令。</td></tr><tr><td>集成其他系统</td><td><a href="api.html">HTTP API</a></td><td>项目对象、用户动作、事件流和 controller support calls。</td></tr><tr><td>理解运行时边界</td><td><a href="architecture.html">架构</a></td><td>核心运行时、Docker backend、runner tools、support routes 和 SQLite 的职责边界。</td></tr></table></section>
 
     <section><h2>核心工作流</h2><pre><code>1. 渲染并验证项目配置。
 2. 在 SUZUMIO_ROOT 下初始化项目。
 3. 启动 HTTP server 和 scheduler loop。
 4. 向一个智能体发送用户消息。
 5. Scheduler 为该智能体启动一个 Docker turn。
-6. Runner 执行 turn，并在需要时调用 ToolHost。
+6. Runner 执行 turn 和模型可见工具。
 7. Suzumio 记录消息、工具调用、事件、artifact 和 turn result。
 8. 空闲智能体保持安静，直到收到新的 inbound message。</code></pre></section>
 
