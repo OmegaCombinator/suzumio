@@ -1,0 +1,104 @@
+name: e2e-formal-languages
+task: |
+  Research the current state of major formal proof languages and systems: HOL, Isabelle, Lean, Rocq/Coq, Metamath, Mizar, and Acorn.
+
+  Compare community activity, standard-library maturity, code/proof readability, proof engine characteristics, automation style, ecosystem tooling, and likely fit for AI-assisted formalization. Produce a balanced final report with citations or source URLs where possible.
+
+scheduler:
+  kind: nonpreemptive-signals
+  intervalMs: 2000
+  maxPromptMessages: 40
+
+backend:
+  kind: docker-chat
+  image: suzumio-runner:dev
+  controllerUrl: ${SUZUMIO_CONTROLLER_URL}
+  docker:
+    mounts: []
+  runner:
+    mode: ai
+    model: researcher-model
+    maxIterations: 80
+    maxToolCalls: 240
+    models:
+      providers:
+        gateway:
+          type: openai-compatible
+          apiKeyEnv: SUZUMIO_GATEWAY_API_KEY
+          baseURL: ${SUZUMIO_GATEWAY_BASE_URL}
+          timeoutMs: 300000
+      presets:
+        researcher-model:
+          provider: gateway
+          model: gpt-5.5
+          apiModel: gpt-5.5
+          maxOutputTokens: 32000
+          temperature: 0.35
+          toolChoice: auto
+        synthesis-model:
+          provider: gateway
+          model: gpt-5.5
+          apiModel: gpt-5.5
+          maxOutputTokens: 32000
+          temperature: 0.25
+          toolChoice: auto
+
+agents:
+  pm:
+    role: research-coordinator
+    displayName: Yuki
+    model: synthesis-model
+    prompt: |
+      Coordinate a web research report. Split systems among researchers:
+      - researcher-1: HOL family, Isabelle, and Mizar.
+      - researcher-2: Lean and Rocq/Coq.
+      - researcher-3: Metamath and Acorn, plus cross-system AI-formalization fit.
+
+      Require each researcher to include source URLs and to compare community activity, standard-library completeness, readability, proof engine, automation, and ecosystem. Ask factchecker to review the combined report before final submission. If waiting for future signals, use coordination.no_valuable_work.
+
+      Convergence rule: collect one substantive report from each researcher, ask factchecker once, then submit. Do at most one targeted follow-up if factchecker identifies a specific missing citation or correction.
+    tools:
+      - messages.send
+      - coordination.no_valuable_work
+      - completion.submit
+      - web.fetch
+  researcher:
+    role: web-researcher
+    names: [Akari, Ren, Sora]
+    count: 3
+    model: researcher-model
+    prompt: |
+      Research your assigned formal systems. Use web.fetch on official pages, GitHub repositories, docs, community pages, or release notes. Return an evidence-based report to pm with URLs and a confidence note for each claim. Avoid cheerleading; identify weaknesses and tradeoffs.
+
+      After one substantive report, call coordination.no_valuable_work unless PM asks a precise follow-up.
+    tools:
+      - messages.send
+      - coordination.no_valuable_work
+      - web.fetch
+  factchecker:
+    role: fact-checker
+    displayName: Mio
+    model: synthesis-model
+    prompt: |
+      Check the report for stale facts, uncited claims, and unfair comparisons. Send pm a corrected comparison matrix and list any claims that should be softened or removed.
+
+      Prefer a corrected publishable matrix over asking for open-ended more research.
+    tools:
+      - messages.send
+      - coordination.no_valuable_work
+      - web.fetch
+
+channels:
+  - "#project"
+  - "#blocked"
+tools:
+  toolpacks:
+    - core
+    - web
+observability:
+  http:
+    enabled: true
+    host: 127.0.0.1
+    port: 39400
+  webui:
+    enabled: true

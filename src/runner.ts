@@ -3,13 +3,14 @@ import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { jsonSchema, streamText, tool as aiTool, type ModelMessage } from "ai";
+import { jsonSchema, stepCountIs, streamText, tool as aiTool, type ModelMessage } from "ai";
 import { resolveRunnerModels, type ResolvedRunnerModel } from "./runner-model.js";
 import type { JsonObject, RunnerToolpackSpec, RunnerTurnInput, RunnerTurnOutput, ToolDefinition } from "./types.js";
 
 type ToolResult = { title?: string; output: string; metadata?: JsonObject };
 type RunnerToolHandler = (input: unknown) => Promise<ToolResult>;
 type RegisteredTool = { definition: ToolDefinition; toolpack: RunnerToolpackSpec; handler: RunnerToolHandler };
+type ToolCallLimiter = () => void;
 
 type RunnerToolContext = {
   project: string;
@@ -44,7 +45,11 @@ async function runAi(input: RunnerTurnInput): Promise<RunnerTurnOutput> {
 }
 
 async function runAiWithModel(input: RunnerTurnInput, resolved: ResolvedRunnerModel): Promise<RunnerTurnOutput> {
-  const tools = await toAiTools(input);
+  let toolCalls = 0;
+  const tools = await toAiTools(input, () => {
+    toolCalls += 1;
+    if (toolCalls > input.runner.maxToolCalls) throw new Error(`Exceeded maxToolCalls: ${input.runner.maxToolCalls}`);
+  });
   const messages: ModelMessage[] = [{ role: "user", content: input.turn.prompt }];
   let text = "";
   const result = streamText({
@@ -59,6 +64,7 @@ async function runAiWithModel(input: RunnerTurnInput, resolved: ResolvedRunnerMo
     maxOutputTokens: resolved.preset.maxOutputTokens,
     providerOptions: resolved.preset.providerOptions as never,
     headers: resolved.preset.headers,
+    stopWhen: stepCountIs(input.runner.maxIterations),
     maxRetries: 0,
   } as never) as any;
   for await (const event of result.fullStream as AsyncIterable<any>) {
@@ -77,7 +83,7 @@ async function submitTurnOutput(input: RunnerTurnInput, output: RunnerTurnOutput
   if (!response.ok) throw new Error((await response.text()) || `Turn output submit failed: ${response.status}`);
 }
 
-async function toAiTools(input: RunnerTurnInput): Promise<Record<string, unknown>> {
+async function toAiTools(input: RunnerTurnInput, limitToolCall: ToolCallLimiter): Promise<Record<string, unknown>> {
   const result: Record<string, unknown> = {};
   const tools = await loadRunnerTools(input);
   const seenSafeNames = new Map<string, string>();
@@ -89,7 +95,10 @@ async function toAiTools(input: RunnerTurnInput): Promise<Record<string, unknown
     result[safe] = aiTool({
       description: registered.definition.description,
       inputSchema: jsonSchema(registered.definition.inputSchema as never),
-      execute: async (args: unknown) => callTool(input, registered, args),
+      execute: async (args: unknown) => {
+        limitToolCall();
+        return callTool(input, registered, args);
+      },
     } as never);
   }
   return result;
@@ -146,7 +155,7 @@ async function callTool(input: RunnerTurnInput, registered: RegisteredTool, args
     await finishToolCall(input, toolCall.toolCallId, "completed", result.output);
     return result;
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = errorMessage(error);
     await finishToolCall(input, toolCall.toolCallId, "failed", undefined, message).catch(() => undefined);
     throw error;
   }
@@ -253,13 +262,25 @@ async function runWebFetch(rawArgs: unknown): Promise<ToolResult> {
   if (url.username || url.password) throw new Error("URL credentials are not allowed");
   const timeoutMs = boundedNumber(args.timeoutMs, 30_000, 120_000);
   const maxBytes = boundedNumber(args.maxBytes, 20_000, 100_000);
-  const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+  let response: Response;
+  try {
+    response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+  } catch (error) {
+    throw new Error(`web.fetch failed for ${url.toString()}: ${errorMessage(error)}`);
+  }
   const raw = await response.text();
   const contentType = response.headers.get("content-type") ?? "";
   const format = formatArg(args.format);
   const text = format === "raw" ? raw : contentType.includes("html") ? htmlToText(raw) : raw;
   const truncated = text.length > maxBytes;
   return { title: "web fetch", output: truncated ? `${text.slice(0, maxBytes)}\n\n[truncated]` : text, metadata: { url: url.toString(), status: response.status, contentType: contentType || undefined, format, truncated } };
+}
+
+function errorMessage(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+  const cause = error.cause instanceof Error ? `: ${error.cause.message}` : "";
+  const code = error.cause && typeof error.cause === "object" && "code" in error.cause ? ` [${String(error.cause.code)}]` : "";
+  return `${error.message}${cause}${code}`;
 }
 
 async function postJson<T = ToolResult>(url: URL, body: unknown): Promise<T> {

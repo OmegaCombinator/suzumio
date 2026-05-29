@@ -122,8 +122,8 @@ export class ToolSupportHost {
       if (!toolpack.tools.some((tool) => tool.name === input.tool)) throw new Error(`Tool ${input.tool} is not in toolpack ${toolpackId}`);
       if (!isAllowed(input.tool, agent.tools)) throw new Error(`Tool not allowed for ${agent.id}: ${input.tool}`);
       const context = controllerContext(store, agent, input.turnId);
-      if (toolpack.kind === "builtin") return builtinSupport(toolpack.id, input.tool, context, input.input);
-      return externalSupport(toolpack, input.tool, context, input.input);
+      if (toolpack.kind === "builtin") return await builtinSupport(toolpack.id, input.tool, context, input.input);
+      return await externalSupport(toolpack, input.tool, context, input.input);
     } finally {
       store.close();
     }

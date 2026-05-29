@@ -65,7 +65,7 @@ async function serveCommand(args: string[]): Promise<void> {
 }
 
 async function statusCommand(args: string[], status: ProjectStatus, tick: boolean): Promise<void> {
-  const project = args[0];
+  const project = positionalArgs(args)[0];
   if (!project) usage();
   const root = flag(args, "root");
   const store = new ProjectStore(project, root);
@@ -79,10 +79,11 @@ async function statusCommand(args: string[], status: ProjectStatus, tick: boolea
 }
 
 async function sendCommand(args: string[]): Promise<void> {
-  const project = args[0];
-  const recipient = args[1];
-  const priority = args[2];
-  const body = args.slice(3).join(" ");
+  const positionals = positionalArgs(args);
+  const project = positionals[0];
+  const recipient = positionals[1];
+  const priority = positionals[2];
+  const body = positionals.slice(3).join(" ");
   if (!project || !recipient || !priority || !body) usage();
   const root = flag(args, "root");
   const store = new ProjectStore(project, root);
@@ -97,7 +98,7 @@ async function sendCommand(args: string[]): Promise<void> {
 
 async function showStatus(args: string[]): Promise<void> {
   const root = flag(args, "root");
-  const project = args.find((arg) => !arg.startsWith("--"));
+  const project = positionalArgs(args)[0];
   if (!project) {
     for (const name of await ProjectStore.list(root)) await printProject(name, root);
     return;
@@ -159,14 +160,14 @@ async function showEvents(args: string[]): Promise<void> {
 }
 
 async function tickCommand(args: string[]): Promise<void> {
-  const project = args[0];
+  const project = positionalArgs(args)[0];
   const scheduler = new NonPreemptiveSignalScheduler(flag(args, "root"));
   if (project) await scheduler.tickProject(project);
   else await scheduler.tickAll();
 }
 
 function openProject(args: string[]): ProjectStore {
-  const project = args[0];
+  const project = positionalArgs(args)[0];
   if (!project) usage();
   return new ProjectStore(project, flag(args, "root"));
 }
@@ -178,6 +179,20 @@ function flag(args: string[], name: string): string | undefined {
 
 function hasFlag(args: string[], name: string): boolean {
   return args.includes(`--${name}`);
+}
+
+function positionalArgs(args: string[]): string[] {
+  const positionals: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const item = args[index];
+    if (!item) continue;
+    if (item.startsWith("--")) {
+      index += 1;
+      continue;
+    }
+    positionals.push(item);
+  }
+  return positionals;
 }
 
 function numberFlag(args: string[], name: string, fallback: number): number {

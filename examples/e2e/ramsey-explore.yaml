@@ -1,0 +1,109 @@
+name: e2e-ramsey-explore
+task: |
+  Explore Ramsey number bounds as a multi-agent collaboration exercise.
+
+  This demo is intentionally not a record-hunting benchmark. Pick a few approachable targets such as R(3,3), R(3,4), R(4,4), R(3,5), or another small pair if justified. The goal is to expose collaboration behavior: how agents divide routes, report partial derivations, critique claims, and converge to a conservative research note.
+
+  The final report should separate known or textbook facts, derivations reproduced by the team, speculative leads, failed attempts, and next experiments. Do not claim a new bound unless the proof or construction is actually included.
+
+scheduler:
+  kind: nonpreemptive-signals
+  intervalMs: 2000
+  maxPromptMessages: 40
+
+backend:
+  kind: docker-chat
+  image: suzumio-runner:dev
+  controllerUrl: ${SUZUMIO_CONTROLLER_URL}
+  docker:
+    mounts: []
+  runner:
+    mode: ai
+    model: explorer
+    maxIterations: 80
+    maxToolCalls: 240
+    models:
+      providers:
+        gateway:
+          type: openai-compatible
+          apiKeyEnv: SUZUMIO_GATEWAY_API_KEY
+          baseURL: ${SUZUMIO_GATEWAY_BASE_URL}
+          timeoutMs: 300000
+      presets:
+        explorer:
+          provider: gateway
+          model: gpt-5.5
+          apiModel: gpt-5.5
+          maxOutputTokens: 32000
+          temperature: 0.55
+          toolChoice: auto
+        critic:
+          provider: gateway
+          model: gpt-5.5
+          apiModel: gpt-5.5
+          maxOutputTokens: 32000
+          temperature: 0.2
+          toolChoice: auto
+
+agents:
+  pm:
+    role: research-coordinator
+    displayName: Yuki
+    model: explorer
+    prompt: |
+      Coordinate a lightweight Ramsey exploration. First ask three researchers to pick complementary small targets and methods:
+      - researcher-1: lower bounds via colorings or construction sketches.
+      - researcher-2: upper bounds via recursive inequalities or small-case arguments.
+      - researcher-3: synthesis, sanity checks, and comparison of target difficulty.
+
+      Keep a research-state ledger with target pair, current lower/upper bounds, evidence type, confidence, and open gap. Ask critic to review the combined findings before final submission.
+
+      Convergence rule: collect one substantive report from each researcher, ask critic once, then submit. Do at most one targeted follow-up if critic identifies a concrete factual or logical error.
+    tools:
+      - messages.send
+      - coordination.no_valuable_work
+      - completion.submit
+  researcher:
+    role: ramsey-researcher
+    names: [Akari, Ren, Sora]
+    count: 3
+    model: explorer
+    prompt: |
+      Explore Ramsey bounds in your assigned direction. This demo does not require web access or record-level facts. Prefer small examples where you can show a proof sketch, construction idea, or honest failure.
+
+      Your report must include:
+      1. Target pairs considered.
+      2. Lower/upper bounds you believe are safe.
+      3. Derivation or construction sketch.
+      4. Failed attempts and why they failed.
+      5. Confidence level and what should be checked by critic.
+
+      After one substantive report, call coordination.no_valuable_work unless PM asks a precise follow-up.
+    tools:
+      - messages.send
+      - coordination.no_valuable_work
+  critic:
+    role: research-critic
+    displayName: Mio
+    model: critic
+    prompt: |
+      Review Ramsey claims for hallucinated exact values, unsupported improvements, and invalid monotonicity or recursion use. Send pm an ACCEPT/REVISE verdict and a cleaned table of claims that are safe to include.
+
+      Prefer a conservative final table over asking for open-ended more research.
+    tools:
+      - messages.send
+      - coordination.no_valuable_work
+
+channels:
+  - "#project"
+  - "#blocked"
+tools:
+  toolpacks:
+    - core
+observability:
+  http:
+    enabled: true
+    host: 127.0.0.1
+    port: 39400
+  webui:
+    enabled: true
