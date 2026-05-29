@@ -71,14 +71,14 @@ Starts the HTTP API, controller support routes, embedded WebUI, SSE endpoint, an
 
     suzumio start demo
 
-Sets project status to `running` and immediately runs one scheduler pass. If agents already have unread inbound messages, turns may start immediately.
+Sets project status to `running` and immediately runs one scheduler pass. If agents already have pending signals, turns may start immediately.
 
 ## `suzumio send`
 
     suzumio send demo pm P1 "Start the project."
     suzumio send demo worker-1 P2 "Review artifact art_..."
 
-Creates a direct message from virtual sender `user` to the recipient and runs one scheduler pass. Priorities are `P0`, `P1`, `P2`, and `P3`. Priority is recorded and rendered into the turn prompt; it does not interrupt running agents.
+Creates a direct message from virtual sender `user` to the recipient, creates a pending `message.created` signal, and runs one scheduler pass. Priorities are `P0`, `P1`, `P2`, and `P3`. Priority is recorded and rendered into the turn prompt; it does not interrupt running agents.
 
 ## Inspection Commands
 

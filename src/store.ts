@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import YAML from "yaml";
 import { createId, nowIso, safeName } from "./id.js";
 import { agentPaths, ensureProjectDirs, projectPaths, suzumioRoot, type ProjectPaths } from "./paths.js";
-import type { AgentRecord, MessagePriority, MessageRecord, ProjectConfig, ProjectStatus, RunnerTurnOutput, TurnRecord } from "./types.js";
+import type { AgentRecord, JsonObject, MessagePriority, MessageRecord, ProjectConfig, ProjectStatus, RunnerTurnOutput, SignalRecord, TurnRecord } from "./types.js";
 
 export class ProjectStore {
   readonly paths: ProjectPaths;
@@ -86,47 +86,31 @@ export class ProjectStore {
     this.appendEvent("agent.status", { agentId, status, activeTurnId });
   }
 
-  sendMessage(input: { sender: string; recipient?: string; channel?: string; priority?: MessagePriority; body: string }): MessageRecord {
+  sendMessage(input: { sender: string; recipient?: string; channel?: string; priority?: MessagePriority; body: string; sourceAgent?: string; sourceTurn?: string }): MessageRecord {
     if (!input.recipient && !input.channel) throw new Error("Message needs recipient or channel");
     if (input.recipient && input.channel) throw new Error("Message cannot have both recipient and channel");
+    if (input.recipient && input.recipient !== "user") this.requireAgent(input.recipient);
     if (input.channel && !this.config().channels.includes(input.channel)) throw new Error(`Unknown channel: ${input.channel}`);
+    const priority = signalPriority(input.priority ?? "P2");
     const message: MessageRecord = {
       id: createId("msg"),
       project: this.project,
       sender: input.sender,
       recipient: input.recipient,
       channel: input.channel,
-      priority: input.priority ?? "P2",
+      priority,
       body: input.body,
       createdAt: nowIso(),
     };
     this.db.prepare("INSERT INTO messages (id, project, sender, recipient, channel, priority, body, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(message.id, message.project, message.sender, message.recipient ?? null, message.channel ?? null, message.priority, message.body, message.createdAt);
     this.appendEvent("message.created", message);
+    this.recordSignal({ kind: "message.created", sourceAgent: input.sourceAgent, sourceTurn: input.sourceTurn, targetAgent: signalAgent(input.recipient), targetChannel: input.channel, priority: message.priority, payload: message as unknown as JsonObject });
     return message;
   }
 
   listMessages(limit = 100): MessageRecord[] {
     const rows = this.db.prepare("SELECT * FROM messages WHERE project = ? ORDER BY created_at DESC LIMIT ?").all(this.project, limit) as DbMessage[];
     return rows.reverse().map(messageFromRow);
-  }
-
-  unreadMessages(agentId: string): MessageRecord[] {
-    const config = this.config();
-    const rows = this.db.prepare(
-      `SELECT m.* FROM messages m
-       LEFT JOIN message_reads r ON r.message_id = m.id AND r.agent_id = ?
-       WHERE m.project = ? AND r.message_id IS NULL
-         AND m.sender != ?
-         AND (m.recipient = ? OR (m.channel IS NOT NULL AND m.channel IN (${config.channels.map(() => "?").join(",")})))
-       ORDER BY m.created_at ASC`,
-    ).all(agentId, this.project, agentId, agentId, ...config.channels) as DbMessage[];
-    return rows.map(messageFromRow);
-  }
-
-  markRead(agentId: string, messages: MessageRecord[], turnId: string): void {
-    const stmt = this.db.prepare("INSERT OR IGNORE INTO message_reads (message_id, agent_id, turn_id, read_at) VALUES (?, ?, ?, ?)");
-    const now = nowIso();
-    for (const message of messages) stmt.run(message.id, agentId, turnId, now);
   }
 
   createTurn(agent: AgentRecord, prompt: string): TurnRecord {
@@ -152,7 +136,19 @@ export class ProjectStore {
     const emitted = this.countTurnMessages(turn.agentId, turn.startedAt);
     this.db.prepare("UPDATE turns SET status = ?, completed_at = ?, text = ?, usage_json = ?, emitted_messages = ? WHERE id = ? AND project = ?").run("completed", nowIso(), output.text, JSON.stringify(output.usage ?? {}), emitted, turnId, this.project);
     this.setAgentStatus(turn.agentId, "quiet", null);
-    this.appendEvent("turn.completed", { turnId, agentId: turn.agentId, emittedMessages: emitted });
+    const usefulEffects = this.countTurnUsefulEffects(turnId);
+    this.appendEvent("turn.completed", { turnId, agentId: turn.agentId, emittedMessages: emitted, usefulEffects });
+    if (usefulEffects === 0 && !this.turnWasNoEffectNudge(turnId)) {
+      this.recordSignal({
+        kind: "scheduler.no_effect_nudge",
+        targetAgent: turn.agentId,
+        priority: "P1",
+        payload: {
+          previousTurnId: turnId,
+          message: "Your previous turn produced no externally visible effect. Send a message, publish an artifact, submit completion, or report a blocker.",
+        },
+      });
+    }
   }
 
   failTurn(turnId: string, error: string): void {
@@ -186,8 +182,47 @@ export class ProjectStore {
     this.appendEvent(status === "completed" ? "tool.completed" : "tool.failed", { id, output, error });
   }
 
+  finishToolCallForTurn(id: string, agentId: string, turnId: string, status: "completed" | "failed", output?: string, error?: string): void {
+    const row = this.db.prepare("SELECT id FROM tool_calls WHERE id = ? AND project = ? AND agent_id = ? AND turn_id = ?").get(id, this.project, agentId, turnId) as { id: string } | undefined;
+    if (!row) throw new Error(`Unknown tool call for turn: ${id}`);
+    this.finishToolCall(id, status, output, error);
+  }
+
   listToolCalls(limit = 100): Record<string, unknown>[] {
     return this.db.prepare("SELECT * FROM tool_calls WHERE project = ? ORDER BY created_at DESC LIMIT ?").all(this.project, limit) as Record<string, unknown>[];
+  }
+
+  recordSignal(input: { kind: string; sourceAgent?: string; sourceTurn?: string; targetAgent?: string; targetChannel?: string; priority?: MessagePriority; payload?: JsonObject; status?: "pending" | "closed"; usefulEffect?: boolean }): SignalRecord[] {
+    const targets = this.signalTargets(input);
+    const signals: SignalRecord[] = [];
+    const createdAt = nowIso();
+    const priority = signalPriority(input.priority ?? "P2");
+    for (const target of targets) {
+      const id = createId("sig");
+      const status = signalStatus(input.status, target.targetAgent ? "pending" : "closed");
+      const usefulEffect = input.usefulEffect ?? defaultUsefulEffect(input.kind, status);
+      this.db.prepare("INSERT INTO signals (id, project, kind, source_agent, source_turn, target_agent, target_channel, priority, payload_json, status, useful_effect, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(id, this.project, input.kind, input.sourceAgent ?? null, input.sourceTurn ?? null, target.targetAgent ?? null, target.targetChannel ?? null, priority, JSON.stringify(input.payload ?? {}), status, usefulEffect ? 1 : 0, createdAt);
+      const signal = { id, project: this.project, kind: input.kind, sourceAgent: input.sourceAgent, sourceTurn: input.sourceTurn, targetAgent: target.targetAgent, targetChannel: target.targetChannel, priority, payload: input.payload ?? {}, status, usefulEffect, createdAt } satisfies SignalRecord;
+      signals.push(signal);
+      this.appendEvent("signal.created", signal);
+    }
+    return signals;
+  }
+
+  pendingSignals(agentId: string, limit = 20): SignalRecord[] {
+    const rows = this.db.prepare(
+      `SELECT * FROM signals
+       WHERE project = ? AND target_agent = ? AND status = 'pending'
+       ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END, created_at ASC
+       LIMIT ?`,
+    ).all(this.project, agentId, limit) as DbSignal[];
+    return rows.map(signalFromRow);
+  }
+
+  markSignalsDelivered(agentId: string, signals: SignalRecord[], turnId: string): void {
+    const stmt = this.db.prepare("UPDATE signals SET status = 'delivered', delivered_at = ?, delivered_turn_id = ? WHERE project = ? AND id = ? AND target_agent = ? AND status = 'pending'");
+    const now = nowIso();
+    for (const signal of signals) stmt.run(now, turnId, this.project, signal.id, agentId);
   }
 
   async publishArtifact(input: { creator: string; turnId: string; workspacePath: string; sourcePath: string; name?: string; description?: string }): Promise<Record<string, unknown>> {
@@ -205,6 +240,7 @@ export class ProjectStore {
     this.db.prepare("INSERT INTO artifacts (id, project, creator, turn_id, name, path, sha256, description, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(id, this.project, input.creator, input.turnId, name, destination, sha256, input.description ?? null, createdAt);
     const artifact = { id, project: this.project, creator: input.creator, turnId: input.turnId, name, path: destination, sha256, description: input.description, createdAt };
     this.appendEvent("artifact.published", artifact);
+    this.recordSignal({ kind: "artifact.published", sourceAgent: input.creator, sourceTurn: input.turnId, payload: artifact as JsonObject, status: "closed", usefulEffect: false });
     return artifact;
   }
 
@@ -212,11 +248,12 @@ export class ProjectStore {
     return this.db.prepare("SELECT * FROM artifacts WHERE project = ? ORDER BY created_at DESC LIMIT ?").all(this.project, limit) as Record<string, unknown>[];
   }
 
-  async submitProject(input: { agentId: string; report: string }): Promise<string> {
+  async submitProject(input: { agentId: string; report: string; turnId?: string }): Promise<string> {
     const reportPath = path.join(this.paths.root, "final-report.md");
     await writeFile(reportPath, input.report.trim() + "\n", "utf8");
     this.db.prepare("UPDATE projects SET status = ?, submitted_report = ?, updated_at = ? WHERE id = ?").run("submitted", reportPath, nowIso(), this.project);
     this.appendEvent("project.submitted", { agentId: input.agentId, reportPath });
+    this.recordSignal({ kind: "completion.submitted", sourceAgent: input.agentId, sourceTurn: input.turnId, payload: { reportPath }, status: "closed", usefulEffect: true });
     return reportPath;
   }
 
@@ -235,6 +272,28 @@ export class ProjectStore {
   private countTurnMessages(agentId: string, startedAt: string): number {
     const row = this.db.prepare("SELECT COUNT(*) AS count FROM messages WHERE project = ? AND sender = ? AND created_at >= ?").get(this.project, agentId, startedAt) as { count: number };
     return row.count;
+  }
+
+  private countTurnUsefulEffects(turnId: string): number {
+    const row = this.db.prepare("SELECT COUNT(*) AS count FROM signals WHERE project = ? AND source_turn = ? AND useful_effect != 0").get(this.project, turnId) as { count: number };
+    return row.count;
+  }
+
+  private turnWasNoEffectNudge(turnId: string): boolean {
+    const row = this.db.prepare("SELECT id FROM signals WHERE project = ? AND delivered_turn_id = ? AND kind = 'scheduler.no_effect_nudge' LIMIT 1").get(this.project, turnId) as { id: string } | undefined;
+    return row !== undefined;
+  }
+
+  private signalTargets(input: { sourceAgent?: string; targetAgent?: string; targetChannel?: string }): Array<{ targetAgent?: string; targetChannel?: string }> {
+    const targetAgent = signalAgent(input.targetAgent);
+    if (targetAgent) {
+      this.requireAgent(targetAgent);
+      return [{ targetAgent }];
+    }
+    if (!input.targetChannel) return [{}];
+    if (!this.config().channels.includes(input.targetChannel)) throw new Error(`Unknown channel: ${input.targetChannel}`);
+    const agents = this.listAgents().filter((agent) => agent.id !== input.sourceAgent).map((agent) => ({ targetAgent: agent.id, targetChannel: input.targetChannel }));
+    return agents.length ? agents : [{ targetChannel: input.targetChannel }];
   }
 
   private createSchema(): void {
@@ -341,6 +400,37 @@ function turnFromRow(row: DbTurn): TurnRecord {
   return { id: row.id, project: row.project, agentId: row.agent_id, status: row.status, prompt: row.prompt, inputPath: row.input_path, outputPath: row.output_path, containerName: row.container_name ?? undefined, startedAt: row.started_at, completedAt: row.completed_at ?? undefined, text: row.text ?? undefined, error: row.error ?? undefined, emittedMessages: row.emitted_messages, usageJson: row.usage_json ?? undefined };
 }
 
+type DbSignal = { id: string; project: string; kind: string; source_agent: string | null; source_turn: string | null; target_agent: string | null; target_channel: string | null; priority: MessagePriority; payload_json: string; status: SignalRecord["status"]; useful_effect: number; created_at: string; delivered_at: string | null; delivered_turn_id: string | null };
+
+function signalFromRow(row: DbSignal): SignalRecord {
+  return { id: row.id, project: row.project, kind: row.kind, sourceAgent: row.source_agent ?? undefined, sourceTurn: row.source_turn ?? undefined, targetAgent: row.target_agent ?? undefined, targetChannel: row.target_channel ?? undefined, priority: row.priority, payload: JSON.parse(row.payload_json) as JsonObject, status: row.status, usefulEffect: row.useful_effect !== 0, createdAt: row.created_at, deliveredAt: row.delivered_at ?? undefined, deliveredTurnId: row.delivered_turn_id ?? undefined };
+}
+
+function signalAgent(value: string | undefined): string | undefined {
+  return value === "user" ? undefined : value;
+}
+
+function signalPriority(value: unknown): MessagePriority {
+  if (value === "P0" || value === "P1" || value === "P2" || value === "P3") return value;
+  throw new Error(`Invalid priority: ${String(value)}`);
+}
+
+function signalStatus(value: unknown, fallback: SignalRecord["status"]): SignalRecord["status"] {
+  if (value === undefined) return fallback;
+  if (value === "closed") {
+    if (fallback === "pending") throw new Error("Targeted signals cannot be closed; omit the target or omit status");
+    return "closed";
+  }
+  if (value === "pending") return fallback === "closed" ? "closed" : "pending";
+  throw new Error(`Invalid signal status: ${String(value)}`);
+}
+
+function defaultUsefulEffect(kind: string, status: SignalRecord["status"]): boolean {
+  if (kind === "artifact.published" || kind === "scheduler.no_effect_nudge") return false;
+  if (status === "pending") return true;
+  return kind === "message.created" || kind === "completion.submitted" || kind === "coordination.no_valuable_work";
+}
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS projects (
   id TEXT PRIMARY KEY,
@@ -379,13 +469,6 @@ CREATE TABLE IF NOT EXISTS messages (
   body TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS message_reads (
-  message_id TEXT NOT NULL,
-  agent_id TEXT NOT NULL,
-  turn_id TEXT NOT NULL,
-  read_at TEXT NOT NULL,
-  PRIMARY KEY (message_id, agent_id)
-);
 CREATE TABLE IF NOT EXISTS turns (
   id TEXT PRIMARY KEY,
   project TEXT NOT NULL,
@@ -422,6 +505,22 @@ CREATE TABLE IF NOT EXISTS tool_calls (
   created_at TEXT NOT NULL,
   completed_at TEXT
 );
+CREATE TABLE IF NOT EXISTS signals (
+  id TEXT PRIMARY KEY,
+  project TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  source_agent TEXT,
+  source_turn TEXT,
+  target_agent TEXT,
+  target_channel TEXT,
+  priority TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  status TEXT NOT NULL,
+  useful_effect INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  delivered_at TEXT,
+  delivered_turn_id TEXT
+);
 CREATE TABLE IF NOT EXISTS artifacts (
   id TEXT PRIMARY KEY,
   project TEXT NOT NULL,
@@ -436,4 +535,6 @@ CREATE TABLE IF NOT EXISTS artifacts (
 CREATE INDEX IF NOT EXISTS idx_messages_project_created ON messages(project, created_at);
 CREATE INDEX IF NOT EXISTS idx_events_project_created ON events(project, created_at);
 CREATE INDEX IF NOT EXISTS idx_turns_project_started ON turns(project, started_at);
+CREATE INDEX IF NOT EXISTS idx_signals_project_target ON signals(project, target_agent, status, created_at);
+CREATE INDEX IF NOT EXISTS idx_signals_project_source ON signals(project, source_turn, useful_effect);
 `;

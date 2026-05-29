@@ -76,11 +76,21 @@ lead: "HTTP server 暴露项目观测、用户控制动作、SSE 事件流，以
     event: message.created
     data: { ...event row... }
 
-## Tool Support Routes
+## Runner Support Routes
 
-Docker runner 把工具展示给模型。需要 Suzumio 项目状态的工具使用 `POST /tool` 作为 controller support route；`shell.exec` 和 `web.fetch` 这类 runner-local tools 在 Docker 容器内执行，不调用该 route。`POST /turn-output` 用于提交最终 turn 文本。这些不是公共用户 API。
+Docker runner 把所有模型可见工具展示给模型。Controller 提供 support API，用于权限、状态、持久化、tool-call 审计记录和自定义 toolpack support。`shell.exec` 和 `web.fetch` 这类 runner-local tools 在 Docker 容器内执行。这些 route 不是公共用户 API。
 
-    POST /tool
+| 方法   | 路径                                  | 用途                                                                                  |
+|--------|---------------------------------------|---------------------------------------------------------------------------------------|
+| `POST` | `/runner/tool-calls/start`            | 鉴权 agent/turn，校验工具属于已配置 toolpack 且在 allowlist 中，并创建 running 记录。 |
+| `POST` | `/runner/tool-calls/finish`           | 校验 tool call 属于当前 agent turn，然后标记 completed 或 failed。                    |
+| `POST` | `/runner/signals`                     | 允许 runner-side 或 local toolpack 代码创建 pending signal 或 closed effect。         |
+| `POST` | `/toolpacks/:toolpackId/support`      | 分发 built-in 或 local toolpack 的 controller-side support。                          |
+| `POST` | `/turn-output`                        | 提交最终 turn 文本和 usage metadata。                                                 |
+
+Support 请求包含 `project`、`agentId`、`turnId` 和 agent private `token`。Toolpack support 还包含工具名和 input：
+
+    POST /toolpacks/core/support
     {
       "project": "demo",
       "agentId": "pm",
@@ -94,7 +104,57 @@ Docker runner 把工具展示给模型。需要 Suzumio 项目状态的工具使
       }
     }
 
-Controller support route 校验 token 与 agent 匹配，并确认 controller-supported tool 在 agent allowlist 中。执行前记录 `tool_calls`，成功或失败后更新。
+Support host 会在调用 controller support 前校验 token、turn ownership、toolpack membership 和 agent allowlist。
+
+### `POST /runner/signals`
+
+    {
+      "project": "demo",
+      "agentId": "worker-1",
+      "turnId": "turn_...",
+      "token": "agent-private-token",
+      "kind": "review.ready",
+      "targetAgent": "pm",
+      "priority": "P1",
+      "payload": { "artifactId": "art_..." }
+    }
+
+设置 `targetAgent` 或 `targetChannel` 会创建可调度工作。省略 target 并设置 `usefulEffect: true` 会记录 closed useful effect，不唤醒任何 agent。带目标的 signal 不能显式 closed。
+
+## 自定义 Toolpack Signals
+
+Local runner module 和 controller module 都会收到带 `recordSignal` 的 context。自定义工具为其他 agent 产生工作，或记录 useful effect 时应调用它。
+
+    export function createRunnerToolpack(context) {
+      return {
+        tools: {
+          "review.ready": async (input) => {
+            await context.recordSignal({
+              kind: "review.ready",
+              targetAgent: "pm",
+              priority: "P1",
+              payload: { summary: input.summary }
+            });
+            return { output: "PM notified." };
+          }
+        }
+      };
+    }
+
+    export function createControllerToolpack(context) {
+      return {
+        async support(tool, input) {
+          context.recordSignal({
+            kind: "review.cached",
+            payload: { cacheKey: input.cacheKey },
+            usefulEffect: true
+          });
+          return { output: "Cached review state." };
+        }
+      };
+    }
+
+第一个例子为 `pm` 创建 pending work。第二个例子记录 closed useful effect，不调度任何 agent。
 
 ### `POST /turn-output`
 
@@ -124,6 +184,18 @@ Backend 只有在收到这个已鉴权提交后才把 turn 标记为完成。`/t
 
 使用 `recipient` 或 `channel` 其一，channel 必须在配置中声明。
 
+发给 agent 的消息会创建 pending `message.created` signal。频道消息会 fan out 到其他 agent。发给 `recipient: "user"` 的消息创建 closed useful effect，不唤醒 agent。
+
+### `coordination.no_valuable_work`
+
+    {
+      "reason": "Waiting for worker-2's result.",
+      "pm": "pm",
+      "notifyPm": true
+    }
+
+声明调用者在未来 signal 到来前没有有价值的工作可做。非 PM agent 默认用 direct message 通知 `pm`。PM 调用时会记录 closed useful effect 并安静等待。
+
 ### `artifacts.publish`
 
     {
@@ -132,7 +204,7 @@ Backend 只有在收到这个已鉴权提交后才把 turn 标记为完成。`/t
       "description": "What this artifact contains"
     }
 
-Path 相对 agent workspace。Suzumio 会复制文件或目录到 artifact registry 并记录 SHA-256 hash。
+Path 相对 agent workspace。Suzumio 会复制文件或目录到 artifact registry 并记录 SHA-256 hash。单独发布 artifact 不算 useful effect；artifact 准备好给别人使用时，agent 还应该发送消息或提交 completion。
 
 ### `artifacts.list`
 

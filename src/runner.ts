@@ -2,9 +2,24 @@
 import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { jsonSchema, streamText, tool as aiTool, type ModelMessage } from "ai";
 import { resolveRunnerModels, type ResolvedRunnerModel } from "./runner-model.js";
-import type { JsonObject, RunnerTurnInput, RunnerTurnOutput, ToolDefinition } from "./types.js";
+import type { JsonObject, RunnerToolpackSpec, RunnerTurnInput, RunnerTurnOutput, ToolDefinition } from "./types.js";
+
+type ToolResult = { title?: string; output: string; metadata?: JsonObject };
+type RunnerToolHandler = (input: unknown) => Promise<ToolResult>;
+type RegisteredTool = { definition: ToolDefinition; toolpack: RunnerToolpackSpec; handler: RunnerToolHandler };
+
+type RunnerToolContext = {
+  project: string;
+  agentId: string;
+  turnId: string;
+  workspace: string;
+  toolpackId: string;
+  callSupport: (tool: string, input: unknown) => Promise<ToolResult>;
+  recordSignal: (input: { kind: string; targetAgent?: string; targetChannel?: string; priority?: string; payload?: JsonObject; usefulEffect?: boolean }) => Promise<void>;
+};
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
@@ -29,7 +44,7 @@ async function runAi(input: RunnerTurnInput): Promise<RunnerTurnOutput> {
 }
 
 async function runAiWithModel(input: RunnerTurnInput, resolved: ResolvedRunnerModel): Promise<RunnerTurnOutput> {
-  const tools = toAiTools(input);
+  const tools = await toAiTools(input);
   const messages: ModelMessage[] = [{ role: "user", content: input.turn.prompt }];
   let text = "";
   const result = streamText({
@@ -62,53 +77,140 @@ async function submitTurnOutput(input: RunnerTurnInput, output: RunnerTurnOutput
   if (!response.ok) throw new Error((await response.text()) || `Turn output submit failed: ${response.status}`);
 }
 
-function toAiTools(input: RunnerTurnInput): Record<string, unknown> {
+async function toAiTools(input: RunnerTurnInput): Promise<Record<string, unknown>> {
   const result: Record<string, unknown> = {};
-  for (const definition of input.tools) {
-    const safe = safeToolName(definition.name);
+  const tools = await loadRunnerTools(input);
+  const seenSafeNames = new Map<string, string>();
+  for (const registered of tools) {
+    const safe = safeToolName(registered.definition.name);
+    const previous = seenSafeNames.get(safe);
+    if (previous) throw new Error(`Tool names ${previous} and ${registered.definition.name} both map to ${safe}`);
+    seenSafeNames.set(safe, registered.definition.name);
     result[safe] = aiTool({
-      description: definition.description,
-      inputSchema: jsonSchema(definition.inputSchema as never),
-      execute: async (args: unknown) => callTool(input, definition, args),
+      description: registered.definition.description,
+      inputSchema: jsonSchema(registered.definition.inputSchema as never),
+      execute: async (args: unknown) => callTool(input, registered, args),
     } as never);
   }
   return result;
 }
 
-async function callTool(input: RunnerTurnInput, definition: ToolDefinition, args: unknown): Promise<Record<string, unknown>> {
-  if (definition.execution === "runner") return runRunnerTool(input, definition, args) as Promise<Record<string, unknown>>;
-  const response = await fetch(new URL("/tool", input.controllerUrl), {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      project: input.project,
-      agentId: input.agent.id,
-      turnId: input.turn.id,
-      token: input.token,
-      tool: definition.name,
-      input: args ?? {},
-    }),
-  });
-  const text = await response.text();
-  if (!response.ok) throw new Error(text || `Tool call failed: ${response.status}`);
-  return JSON.parse(text) as Record<string, unknown>;
+async function loadRunnerTools(input: RunnerTurnInput): Promise<RegisteredTool[]> {
+  const registered: RegisteredTool[] = [];
+  const seen = new Set<string>();
+  for (const toolpack of input.toolpacks) {
+    const context = runnerToolContext(input, toolpack);
+    const handlers = toolpack.runnerModule.startsWith("builtin:") ? builtinRunnerHandlers(toolpack.id, context) : await externalRunnerHandlers(toolpack, context);
+    for (const definition of toolpack.tools) {
+      const handler = handlers[definition.name];
+      if (typeof handler !== "function") throw new Error(`Runner module for ${toolpack.id} did not register ${definition.name}`);
+      if (seen.has(definition.name)) throw new Error(`Duplicate runner tool: ${definition.name}`);
+      seen.add(definition.name);
+      registered.push({ definition, toolpack, handler });
+    }
+  }
+  return registered;
 }
 
-async function runRunnerTool(input: RunnerTurnInput, definition: ToolDefinition, args: unknown): Promise<{ title: string; output: string; metadata: JsonObject }> {
-  switch (definition.name) {
-    case "shell.exec":
-      return runShellExec(input, args);
-    case "web.fetch":
-      return runWebFetch(args);
-    default:
-      throw new Error(`Unknown runner-local tool: ${definition.name}`);
+function runnerToolContext(input: RunnerTurnInput, toolpack: RunnerToolpackSpec): RunnerToolContext {
+  return {
+    project: input.project,
+    agentId: input.agent.id,
+    turnId: input.turn.id,
+    workspace: input.workspace,
+    toolpackId: toolpack.id,
+    callSupport: (tool, toolInput) => callSupport(input, toolpack, tool, toolInput),
+    recordSignal: async (signal) => {
+      await postJson(new URL("/runner/signals", input.controllerUrl), {
+        project: input.project,
+        agentId: input.agent.id,
+        turnId: input.turn.id,
+        token: input.token,
+        ...signal,
+      });
+    },
+  };
+}
+
+async function callTool(input: RunnerTurnInput, registered: RegisteredTool, args: unknown): Promise<ToolResult> {
+  const toolCall = await postJson<{ toolCallId: string }>(new URL("/runner/tool-calls/start", input.controllerUrl), {
+    project: input.project,
+    agentId: input.agent.id,
+    turnId: input.turn.id,
+    token: input.token,
+    tool: registered.definition.name,
+    input: args ?? {},
+  });
+  try {
+    const result = await registered.handler(args ?? {});
+    await finishToolCall(input, toolCall.toolCallId, "completed", result.output);
+    return result;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await finishToolCall(input, toolCall.toolCallId, "failed", undefined, message).catch(() => undefined);
+    throw error;
   }
 }
 
-async function runShellExec(input: RunnerTurnInput, rawArgs: unknown): Promise<{ title: string; output: string; metadata: JsonObject }> {
+async function finishToolCall(input: RunnerTurnInput, toolCallId: string, status: "completed" | "failed", output?: string, error?: string): Promise<void> {
+  await postJson(new URL("/runner/tool-calls/finish", input.controllerUrl), {
+    project: input.project,
+    agentId: input.agent.id,
+    turnId: input.turn.id,
+    token: input.token,
+    toolCallId,
+    status,
+    output,
+    error,
+  });
+}
+
+async function callSupport(input: RunnerTurnInput, toolpack: RunnerToolpackSpec, tool: string, toolInput: unknown): Promise<ToolResult> {
+  return postJson(new URL(toolpack.supportPath, input.controllerUrl), {
+    project: input.project,
+    agentId: input.agent.id,
+    turnId: input.turn.id,
+    token: input.token,
+    tool,
+    input: toolInput ?? {},
+  });
+}
+
+function builtinRunnerHandlers(toolpackId: string, context: RunnerToolContext): Record<string, RunnerToolHandler> {
+  switch (toolpackId) {
+    case "core":
+      return {
+        "messages.send": (input) => context.callSupport("messages.send", input),
+        "coordination.no_valuable_work": (input) => context.callSupport("coordination.no_valuable_work", input),
+        "completion.submit": (input) => context.callSupport("completion.submit", input),
+      };
+    case "artifacts":
+      return {
+        "artifacts.publish": (input) => context.callSupport("artifacts.publish", input),
+        "artifacts.list": (input) => context.callSupport("artifacts.list", input),
+        "artifacts.read": (input) => context.callSupport("artifacts.read", input),
+      };
+    case "shell":
+      return { "shell.exec": (input) => runShellExec(context.workspace, input) };
+    case "web":
+      return { "web.fetch": runWebFetch };
+    default:
+      throw new Error(`Unknown built-in runner toolpack: ${toolpackId}`);
+  }
+}
+
+async function externalRunnerHandlers(toolpack: RunnerToolpackSpec, context: RunnerToolContext): Promise<Record<string, RunnerToolHandler>> {
+  const module = await import(pathToFileURL(toolpack.runnerModule).href);
+  const factory = module.createRunnerToolpack ?? module.default;
+  if (typeof factory !== "function") throw new Error(`Runner module for ${toolpack.id} must export createRunnerToolpack`);
+  const instance = await factory(context);
+  return instance?.tools ?? instance;
+}
+
+async function runShellExec(workspace: string, rawArgs: unknown): Promise<ToolResult> {
   const args = objectInput(rawArgs);
   const command = stringArg(args, "command");
-  const cwd = shellCwd(input.workspace, optionalString(args.cwd));
+  const cwd = shellCwd(workspace, optionalString(args.cwd));
   const timeoutMs = boundedNumber(args.timeoutMs, 60_000, 300_000);
   const maxOutputBytes = boundedNumber(args.maxOutputBytes, 40_000, 200_000);
   return new Promise((resolve, reject) => {
@@ -144,7 +246,7 @@ async function runShellExec(input: RunnerTurnInput, rawArgs: unknown): Promise<{
   });
 }
 
-async function runWebFetch(rawArgs: unknown): Promise<{ title: string; output: string; metadata: JsonObject }> {
+async function runWebFetch(rawArgs: unknown): Promise<ToolResult> {
   const args = objectInput(rawArgs);
   const url = new URL(stringArg(args, "url"));
   if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error(`Unsupported URL protocol: ${url.protocol}`);
@@ -157,11 +259,14 @@ async function runWebFetch(rawArgs: unknown): Promise<{ title: string; output: s
   const format = formatArg(args.format);
   const text = format === "raw" ? raw : contentType.includes("html") ? htmlToText(raw) : raw;
   const truncated = text.length > maxBytes;
-  return {
-    title: "web fetch",
-    output: truncated ? `${text.slice(0, maxBytes)}\n\n[truncated]` : text,
-    metadata: { url: url.toString(), status: response.status, contentType: contentType || undefined, format, truncated },
-  };
+  return { title: "web fetch", output: truncated ? `${text.slice(0, maxBytes)}\n\n[truncated]` : text, metadata: { url: url.toString(), status: response.status, contentType: contentType || undefined, format, truncated } };
+}
+
+async function postJson<T = ToolResult>(url: URL, body: unknown): Promise<T> {
+  const response = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const text = await response.text();
+  if (!response.ok) throw new Error(text || `Request failed: ${response.status}`);
+  return (text.trim() ? JSON.parse(text) : {}) as T;
 }
 
 function safeToolName(value: string): string {

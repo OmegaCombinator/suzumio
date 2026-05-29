@@ -3,7 +3,7 @@ task: |
   Demonstrate that Suzumio can deliver a user message to an isolated Docker AI runner and record the completed turn.
 
 scheduler:
-  kind: nonpreemptive-mailbox
+  kind: nonpreemptive-signals
   intervalMs: 2000
   maxPromptMessages: 20
 
@@ -61,6 +61,7 @@ agents:
       You coordinate the project. When you receive a user request, handle it in one non-preemptive turn.
     tools:
       - messages.send
+      - coordination.no_valuable_work
       - completion.submit
 
   worker:
@@ -74,6 +75,7 @@ agents:
       Work uninterrupted. Report only when you have a result, useful artifact, blocker, or question.
     tools:
       - messages.send
+      - coordination.no_valuable_work
       - artifacts.publish
       - artifacts.list
       - artifacts.read

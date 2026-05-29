@@ -69,7 +69,7 @@ Open another terminal with the same `SUZUMIO_ROOT`.
     suzumio start demo
     suzumio send demo pm P1 "Send one short status update to the user."
 
-The scheduler will see an unread message for `pm`, create one turn, and start one Docker container.
+The message creates a pending `message.created` signal for `pm`. The scheduler will deliver that signal into one turn and start one Docker container.
 
 ## 9. Inspect Results
 
@@ -81,7 +81,7 @@ A successful run shows a completed turn, plus any messages, artifacts, or submis
 
 ## 10. Verify Non-preemptive Behavior
 
-If an agent is already `running`, sending another message does not interrupt the current turn. The new message remains unread until the current turn completes. This is the expected default behavior.
+If an agent is already `running`, sending another message does not interrupt the current turn. The new message creates a pending signal that waits until the current turn completes. This is the expected default behavior.
 
 ## Optional Alternate AI Config
 
@@ -104,7 +104,7 @@ Do not commit real API keys, private gateway URLs, or private provider names. Ke
 |------------------------------------------|--------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------|
 | Turn fails before submitting a result.   | Runner image not built, wrong image name, container startup failure, or controller support connection issue. | Run `docker build -t suzumio-runner:dev .` and inspect `docker logs <container>`. |
 | Support tool connection refused.         | Container cannot reach Suzumio server for stateful tools or turn output.                                     | Run server with `--host 0.0.0.0` and use `http://host.docker.internal:39400`.     |
-| Agent does not start.                    | Project is not `running` or agent has no unread inbound message.                                             | Run `suzumio start project` and send a direct message to the agent.               |
+| Agent does not start.                    | Project is not `running` or agent has no pending signal.                                                     | Run `suzumio start project` and send a direct message to the agent.               |
 | GitHub Pages custom domain is HTTP only. | Certificate is still provisioning.                                                                           | Wait for GitHub Pages certificate issuance, then enable HTTPS enforcement.        |
 
 <div class="footer">Next: <a href="concepts.html">Core Concepts</a>.</div>

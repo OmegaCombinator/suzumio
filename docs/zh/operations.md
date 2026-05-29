@@ -36,7 +36,7 @@ lead: "Suzumio 的运行状态是透明的。每个关键对象都有 CLI 视图
 | Config    | Import 可解析，且没有提交 secret。             | `suzumio config render file.yaml`         |
 | Store     | 项目初始化在预期 root 下。                     | `suzumio status project`                  |
 | Server    | HTTP 和 controller support routes 可访问。     | `curl http://127.0.0.1:39400/health`      |
-| Scheduler | 项目为 running，idle agent 有 unread message。 | `suzumio messages project`                |
+| Scheduler | 项目为 running，idle agent 有 pending signal。 | `suzumio messages project` 和 events      |
 | Turn      | 容器完成，turn 文本已通过 HTTP 提交。          | `suzumio turns project`                   |
 
 ## 检查 Turn
@@ -53,9 +53,15 @@ Input 包含渲染后的 prompt、agent identity、controller URL、runner confi
 | 现象                  | 可能原因                                   | 处理                                                |
 |-----------------------|--------------------------------------------|-----------------------------------------------------|
 | 项目从不启动 turn。   | 项目不是 `running`。                       | `suzumio start project`                             |
-| Agent 保持 quiet。    | 没有给该 agent 的 unread inbound message。 | `suzumio send project agent P1 "..."`               |
-| 有消息但没有新 turn。 | Agent 已经 `running`。                     | 等待完成。Suzumio 默认就是非抢占式。                |
+| Agent 保持 quiet。    | 没有给该 agent 的 pending signal。         | `suzumio send project agent P1 "..."`               |
+| 有消息但没有新 turn。 | Agent 已经 `running`、项目 stopped，或消息目标是 `user`。 | 等待完成，或向 agent 发送直接消息。                 |
 | Turn 立即失败。       | 镜像、mount 或 Docker daemon 问题。        | 检查 `suzumio turns`、turn input 和 `docker logs`。 |
+
+## 避免协调循环
+
+Agent 不应该向共享频道发送“没事做”消息。请使用 `coordination.no_valuable_work`。Worker agent 默认会用 direct message 通知 `pm`，PM 可以记录一个明确的等待状态，而不会唤醒自己。
+
+如果 agent 发布了 artifact，它还应该在 artifact 可供他人使用时发送消息或提交 completion。Artifact 发布本身会被审计记录，但不算有用的协调工作。
 
 ## 清理 Debug Containers
 

@@ -2,9 +2,9 @@ import { mkdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import Docker from "dockerode";
 import { safeName } from "./id.js";
-import type { AgentConfig, AgentRecord, DockerMountConfig, ProjectConfig, RunnerTurnInput, TurnRecord } from "./types.js";
+import type { AgentConfig, AgentRecord, DockerMountConfig, ProjectConfig, RunnerToolpackSpec, RunnerTurnInput, TurnRecord } from "./types.js";
 import { ProjectStore } from "./store.js";
-import { toolDefinitions } from "./tools.js";
+import { isAllowed, resolveToolpacks, type ResolvedToolpack } from "./tools.js";
 
 export class DockerChatBackend {
   private readonly docker = new Docker();
@@ -13,6 +13,8 @@ export class DockerChatBackend {
 
   async startTurn(store: ProjectStore, agent: AgentRecord, turn: TurnRecord, prompt: string): Promise<void> {
     const config = store.config();
+    const toolpacks = await resolveToolpacks(config.tools.toolpacks);
+    const runnerToolpacks = runnerToolpackSpecs(toolpacks, agent);
     const turnDir = path.dirname(turn.inputPath);
     await mkdir(turnDir, { recursive: true });
     const input: RunnerTurnInput = {
@@ -23,11 +25,12 @@ export class DockerChatBackend {
       controllerUrl: config.backend.controllerUrl,
       token: agent.token,
       runner: config.backend.runner,
-      tools: toolDefinitions(agent, config.tools.toolpacks),
+      tools: runnerToolpacks.flatMap((toolpack) => toolpack.tools),
+      toolpacks: runnerToolpacks,
     };
     await writeFile(turn.inputPath, JSON.stringify(input, null, 2) + "\n", "utf8");
     const containerName = safeName(`suzumio_${store.project}_${agent.id}_${turn.id}`);
-    const container = await this.createContainer(config, agent, turn, containerName);
+    const container = await this.createContainer(config, agent, turn, containerName, toolpacks);
     store.setTurnContainer(turn.id, containerName);
     await container.start();
     void this.monitor(store.project, turn.id, container.id).catch((error) => {
@@ -40,7 +43,7 @@ export class DockerChatBackend {
     });
   }
 
-  private async createContainer(config: ProjectConfig, agent: AgentRecord, turn: TurnRecord, containerName: string): Promise<Docker.Container> {
+  private async createContainer(config: ProjectConfig, agent: AgentRecord, turn: TurnRecord, containerName: string, toolpacks: ResolvedToolpack[]): Promise<Docker.Container> {
     const spec = agentSpec(config, agent);
     const env = [
       `SUZUMIO_PROJECT=${turn.project}`,
@@ -54,6 +57,7 @@ export class DockerChatBackend {
       `${turn.inputPath}:/turn/input.json:ro`,
       `${agent.workspacePath}:/workspace:rw`,
       ...(await mountBinds([...(config.backend.docker?.mounts ?? []), ...(spec?.mounts ?? [])])),
+      ...toolpackBinds(toolpacks),
     ];
     return this.docker.createContainer({
       name: containerName,
@@ -91,6 +95,31 @@ export class DockerChatBackend {
 
 function agentSpec(config: ProjectConfig, agent: AgentRecord): AgentConfig | undefined {
   return config.agents[agent.id] ?? config.agents[agent.id.replace(/-\d+$/, "")];
+}
+
+function runnerToolpackSpecs(toolpacks: ResolvedToolpack[], agent: AgentRecord): RunnerToolpackSpec[] {
+  const specs: RunnerToolpackSpec[] = [];
+  for (const toolpack of toolpacks) {
+    const tools = toolpack.tools.filter((tool) => isAllowed(tool.name, agent.tools));
+    if (tools.length === 0) continue;
+    const runnerModule = toolpack.kind === "builtin" ? toolpack.runnerModule : localRunnerModule(toolpack);
+    specs.push({ id: toolpack.id, tools, runnerModule, supportPath: `/toolpacks/${encodeURIComponent(toolpack.id)}/support` });
+  }
+  return specs;
+}
+
+function localRunnerModule(toolpack: ResolvedToolpack): string {
+  if (!toolpack.root) throw new Error(`Local toolpack ${toolpack.id} is missing root`);
+  const relative = path.relative(toolpack.root, toolpack.runnerModule).split(path.sep).join("/");
+  return path.posix.join(toolpackTarget(toolpack), relative);
+}
+
+function toolpackBinds(toolpacks: ResolvedToolpack[]): string[] {
+  return toolpacks.filter((toolpack) => toolpack.kind === "local" && toolpack.root).map((toolpack) => `${toolpack.root}:${toolpackTarget(toolpack)}:ro`);
+}
+
+function toolpackTarget(toolpack: ResolvedToolpack): string {
+  return `/toolpacks/${safeName(toolpack.id)}`;
 }
 
 async function mountBinds(mounts: DockerMountConfig[]): Promise<string[]> {

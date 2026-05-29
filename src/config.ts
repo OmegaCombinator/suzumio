@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import YAML from "yaml";
 import { z } from "zod";
@@ -8,11 +8,11 @@ const JsonObjectSchema = z.record(z.string(), z.unknown());
 
 const SchedulerSchema = z
   .object({
-    kind: z.literal("nonpreemptive-mailbox").default("nonpreemptive-mailbox"),
+    kind: z.enum(["nonpreemptive-mailbox", "nonpreemptive-signals"]).default("nonpreemptive-signals"),
     intervalMs: z.number().int().positive().default(2_000),
     maxPromptMessages: z.number().int().positive().default(20),
   })
-  .default({ kind: "nonpreemptive-mailbox", intervalMs: 2_000, maxPromptMessages: 20 });
+  .default({ kind: "nonpreemptive-signals", intervalMs: 2_000, maxPromptMessages: 20 });
 
 const ProviderSchema = z.object({
   type: z.enum(["openai", "anthropic", "google", "openai-compatible"]),
@@ -64,7 +64,17 @@ const ModelsSchema = z.object({
 
 const ToolsSchema = z
   .object({
-    toolpacks: z.array(z.enum(["core", "artifacts", "shell", "web"])).default(["core", "artifacts", "web"]),
+    toolpacks: z
+      .array(
+        z.union([
+          z.string().min(1),
+          z.object({
+            id: z.string().min(1).optional(),
+            path: z.string().min(1),
+          }),
+        ]),
+      )
+      .default(["core", "artifacts", "web"]),
   })
   .default({ toolpacks: ["core", "artifacts", "web"] });
 
@@ -155,6 +165,7 @@ export async function loadProjectConfig(filePath: string): Promise<LoadedProject
   const resolved = resolveExtends(imported);
   const config = ProjectConfigSchema.parse(resolved) as ProjectConfig;
   normalizeMountSources(config, path.dirname(sourcePath));
+  await normalizeToolpacks(config, path.dirname(sourcePath));
   validateRunnerModels(config);
   if (Object.keys(config.agents).length === 0) throw new Error("Project config needs at least one agent");
   return { config, sourcePath, resolved: externalizeConfig(config) };
@@ -251,6 +262,21 @@ function normalizeMountSources(config: ProjectConfig, baseDir: string): void {
       throw new Error(`Docker mount target is reserved: ${mount.target}`);
     }
     mount.target = target;
+  }
+}
+
+async function normalizeToolpacks(config: ProjectConfig, baseDir: string): Promise<void> {
+  const builtins = new Set(["core", "artifacts", "shell", "web"]);
+  for (const entry of config.tools.toolpacks) {
+    if (typeof entry === "string") {
+      if (!builtins.has(entry)) throw new Error(`Unknown built-in toolpack: ${entry}. Use { path: ... } for local toolpacks.`);
+      continue;
+    }
+    if (/^https?:\/\//i.test(entry.path)) throw new Error("HTTP(S) toolpack paths are disabled for reproducibility");
+    if (!path.isAbsolute(entry.path)) entry.path = path.resolve(baseDir, entry.path);
+    const info = await stat(entry.path);
+    if (!info.isDirectory()) throw new Error(`Local toolpack path must be a directory: ${entry.path}`);
+    await stat(path.join(entry.path, "suzumio.toolpack.json"));
   }
 }
 

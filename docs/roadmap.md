@@ -2,7 +2,7 @@
 title: "Suzumio Roadmap"
 eyebrow: "Roadmap"
 heroTitle: "Make the quiet runtime stronger"
-lead: "The first version proves the shape: Docker-first turns, SQLite project truth, mailbox scheduling, audited support routes, and WebUI observability. The next work should harden those boundaries."
+lead: "The first version proves the shape: Docker-first turns, SQLite project truth, signal scheduling, audited support routes, and WebUI observability. The next work should harden those boundaries."
 ---
 
 ## Near Term
@@ -28,7 +28,7 @@ lead: "The first version proves the shape: Docker-first turns, SQLite project tr
 
 ## Tools
 
-- Add third-party toolpack loading beyond the built-in `core`, `artifacts`, `shell`, and `web` packs.
+- Harden third-party toolpack loading beyond the first local `.mjs` support.
 - Add approval-required modes for high-risk shell actions.
 - Add domain-specific profiles such as verification, code review, research, and benchmark execution.
 - Add artifact download routes and hash verification commands.
@@ -59,7 +59,7 @@ The default scheduler should remain non-preemptive. Future schedulers can be add
 ## Non-goals For Now
 
 - No Kubernetes runtime until Docker-first semantics are stable.
-- No complicated workflow DSL before mailbox turns and toolpacks are reliable.
+- No complicated workflow DSL before signal turns and toolpacks are reliable.
 - No default in-process runner path; isolation remains the baseline.
 - No automatic project-manager chatter, progress nagging, or heartbeat prompts.
 

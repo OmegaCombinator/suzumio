@@ -63,7 +63,7 @@ Suzumio 把配置当作 source material，而不是可变运行时状态。运�
     task: @import(tasks/main.md)
 
     scheduler:
-      kind: nonpreemptive-mailbox
+      kind: nonpreemptive-signals
       intervalMs: 2000
       maxPromptMessages: 20
 
@@ -122,6 +122,7 @@ Suzumio 把配置当作 source material，而不是可变运行时状态。运�
         tools:
           - messages.send
           - artifacts.list
+          - coordination.no_valuable_work
           - completion.submit
       worker:
         role: worker
@@ -148,7 +149,7 @@ Suzumio 把配置当作 source material，而不是可变运行时状态。运�
 | `agents`        | 是       | Agent id 到 agent config 的映射。至少需要一个 agent。                                         |
 | `tools`         | 否       | 项目注册的 toolpacks。默认包含 `core`、`artifacts` 和 `web`；需要容器内 bash 时添加 `shell`。 |
 | `extends`       | 否       | 一个 profile object 或 profile object 列表，在本地字段之前合并。                              |
-| `scheduler`     | 否       | Scheduler 类型和 prompt message batching。默认是 `nonpreemptive-mailbox`。                    |
+| `scheduler`     | 否       | Scheduler 类型和 prompt signal batching。默认是 `nonpreemptive-signals`。                     |
 | `backend`       | 否       | Docker runner image、controller support URL、Docker options 和 model runner 设置。            |
 | `channels`      | 否       | 允许的频道名。默认包含 `#project` 和 `#blocked`。                                             |
 | `observability` | 否       | 文档层面的 HTTP/WebUI 默认值。实际 server bind 地址仍由 CLI flags 控制。                      |
@@ -288,15 +289,15 @@ Suzumio 会拒绝循环 import 和过深的 import 链，避免项目意外无�
 ## Scheduler Config
 
     scheduler:
-      kind: nonpreemptive-mailbox
+      kind: nonpreemptive-signals
       intervalMs: 2000
       maxPromptMessages: 20
 
 | 字段                | 说明                                                                |
 |---------------------|---------------------------------------------------------------------|
-| `kind`              | 第一版只有 `nonpreemptive-mailbox`。                                |
+| `kind`              | 默认是 `nonpreemptive-signals`。`nonpreemptive-mailbox` 作为兼容 alias 接受。 |
 | `intervalMs`        | 预期 scheduler loop 间隔。当前 server 使用与默认值一致的固定 loop。 |
-| `maxPromptMessages` | 一个 turn prompt 中最多渲染多少条 unread inbound messages。         |
+| `maxPromptMessages` | 一个 turn prompt 中最多渲染多少条 pending signals。                 |
 
 ## Backend Config
 
@@ -371,12 +372,41 @@ Model 选择是显式的。可以在 `backend.runner.model` 设置项目级选�
 
 | Toolpack    | 注册工具                                                | 运行位置                             |
 |-------------|---------------------------------------------------------|--------------------------------------|
-| `core`      | `messages.send`, `completion.submit`                    | Runner wrapper + Suzumio support API |
+| `core`      | `messages.send`, `coordination.no_valuable_work`, `completion.submit` | Runner wrapper + Suzumio support API |
 | `artifacts` | `artifacts.publish`, `artifacts.list`, `artifacts.read` | Runner wrapper + Suzumio support API |
 | `shell`     | `shell.exec`                                            | Docker runner container              |
 | `web`       | `web.fetch`                                             | Docker runner container              |
 
 Mounted inputs 是通过配置挂载到容器路径的 host 文件或目录。Suzumio 会把这些路径渲染进 turn prompt。拥有 `shell.exec` 的 agent 可以把它们复制到 `/workspace`、编译代码、运行二进制，并发布生成的 artifact。
+
+### Local toolpacks
+
+Local toolpack 从 controller host 上的目录加载，并只读挂载进 runner container。
+
+    tools:
+      toolpacks:
+        - core
+        - path: ./toolpacks/review
+          id: review-tools
+
+每个 local 目录必须包含 `suzumio.toolpack.json` 和 ESM `.mjs` 模块：
+
+    {
+      "id": "review-tools",
+      "runner": "runner.mjs",
+      "controller": "controller.mjs",
+      "tools": [
+        {
+          "name": "review.summarize",
+          "description": "Summarize review findings.",
+          "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
+        }
+      ]
+    }
+
+id 只能包含字母、数字、`.`、`_` 和 `-`。HTTP(S) toolpack path 会被拒绝。当前不提供 TypeScript runtime transpilation；请发布 JavaScript `.mjs` 文件。
+
+Runner module 在容器内实现模型可见工具。Controller module 为需要项目状态的工具提供 support。两侧 context 都有 `recordSignal`；设置 `targetAgent` 会创建 pending signal，省略 target 并设置 `usefulEffect: true` 会创建 closed useful effect。
 
 ## Agent Config
 

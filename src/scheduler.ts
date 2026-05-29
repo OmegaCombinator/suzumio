@@ -1,8 +1,8 @@
-import type { AgentConfig, AgentRecord, DockerMountConfig, MessageRecord, ProjectConfig } from "./types.js";
+import type { AgentConfig, AgentRecord, DockerMountConfig, ProjectConfig, SignalRecord } from "./types.js";
 import { DockerChatBackend } from "./backend.js";
 import { ProjectStore } from "./store.js";
 
-export class NonPreemptiveMailboxScheduler {
+export class NonPreemptiveSignalScheduler {
   private readonly backend: DockerChatBackend;
 
   constructor(private readonly root?: string) {
@@ -26,33 +26,54 @@ export class NonPreemptiveMailboxScheduler {
 
   private async tickAgent(store: ProjectStore, agent: AgentRecord): Promise<void> {
     if (agent.status === "running" || agent.status === "stopped") return;
-    const unread = store.unreadMessages(agent.id);
-    if (unread.length === 0) {
+    const config = store.config();
+    const signals = store.pendingSignals(agent.id, config.scheduler.maxPromptMessages);
+    if (signals.length === 0) {
       if (agent.status !== "quiet" && agent.status !== "failed") store.setAgentStatus(agent.id, "quiet", null);
       return;
     }
-    const config = store.config();
-    const selected = unread.slice(0, config.scheduler.maxPromptMessages);
-    const prompt = renderTurnPrompt(config, agent, selected);
+    const prompt = renderTurnPrompt(config, agent, signals);
     const turn = store.createTurn(agent, prompt);
-    store.markRead(agent.id, selected, turn.id);
+    store.markSignalsDelivered(agent.id, signals, turn.id);
     await this.backend.startTurn(store, agent, turn, prompt);
   }
 }
 
-function renderTurnPrompt(config: ProjectConfig, agent: AgentRecord, messages: MessageRecord[]): string {
+export class NonPreemptiveMailboxScheduler extends NonPreemptiveSignalScheduler {}
+
+function renderTurnPrompt(config: ProjectConfig, agent: AgentRecord, signals: SignalRecord[]): string {
   const mountedInputs = renderMountedInputs(config, agent);
   return [
     `# Project Task\n\n${config.task.trim()}`,
     `# Agent Identity\n\nID: ${agent.id}\nName: ${agent.displayName}\nRole: ${agent.role}`,
     agent.prompt.trim() ? `# Agent Instructions\n\n${agent.prompt.trim()}` : undefined,
     mountedInputs,
-    "# New Inbound Messages",
-    ...messages.map((message) => [`## ${message.id}`, `From: ${message.sender}`, message.recipient ? `To: ${message.recipient}` : `Channel: ${message.channel}`, `Priority: ${message.priority}`, `Time: ${message.createdAt}`, "", message.body.trim()].join("\n")),
-    "# Turn Rule\n\nWork until you have a useful result, blocker, artifact, message to send, or final submission. Do not poll for more messages; new messages will be delivered in a later turn.",
+    "# New Signals",
+    ...signals.map(renderSignal),
+    "# Turn Rule\n\nWork until you have a useful result, blocker, message to send, no-valuable-work declaration, or final submission. If you publish an artifact, also notify the relevant agent or user. Do not poll for more work; new signals will be delivered in a later turn.",
   ]
     .filter(Boolean)
     .join("\n\n");
+}
+
+function renderSignal(signal: SignalRecord): string {
+  if (signal.kind === "message.created") {
+    const message = signal.payload as Record<string, unknown>;
+    return [
+      `## ${signal.id} message.created`,
+      `Message: ${String(message.id ?? signal.id)}`,
+      `From: ${String(message.sender ?? "unknown")}`,
+      typeof message.recipient === "string" ? `To: ${message.recipient}` : `Channel: ${String(message.channel ?? signal.targetChannel ?? "")}`,
+      `Priority: ${String(message.priority ?? signal.priority)}`,
+      `Time: ${String(message.createdAt ?? signal.createdAt)}`,
+      "",
+      String(message.body ?? "").trim(),
+    ].join("\n");
+  }
+  if (signal.kind === "scheduler.no_effect_nudge") {
+    return [`## ${signal.id} scheduler.no_effect_nudge`, `Priority: ${signal.priority}`, "", String(signal.payload.message ?? "Your previous turn produced no externally visible effect.")].join("\n");
+  }
+  return [`## ${signal.id} ${signal.kind}`, `Priority: ${signal.priority}`, `Time: ${signal.createdAt}`, "", JSON.stringify(signal.payload, null, 2)].join("\n");
 }
 
 function renderMountedInputs(config: ProjectConfig, agent: AgentRecord): string | undefined {

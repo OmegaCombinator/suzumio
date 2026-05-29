@@ -21,11 +21,18 @@ export interface ProjectConfig {
 }
 
 export interface ToolpackConfig {
-  toolpacks: string[];
+  toolpacks: ToolpackConfigEntry[];
+}
+
+export type ToolpackConfigEntry = string | LocalToolpackConfig;
+
+export interface LocalToolpackConfig {
+  id?: string;
+  path: string;
 }
 
 export interface SchedulerConfig {
-  kind: "nonpreemptive-mailbox";
+  kind: "nonpreemptive-mailbox" | "nonpreemptive-signals";
   intervalMs: number;
   maxPromptMessages: number;
 }
@@ -160,11 +167,34 @@ export interface TurnRecord {
   usageJson?: string;
 }
 
+export interface SignalRecord {
+  id: string;
+  project: string;
+  kind: string;
+  sourceAgent?: string;
+  sourceTurn?: string;
+  targetAgent?: string;
+  targetChannel?: string;
+  priority: MessagePriority;
+  payload: JsonObject;
+  status: "pending" | "delivered" | "closed";
+  usefulEffect: boolean;
+  createdAt: string;
+  deliveredAt?: string;
+  deliveredTurnId?: string;
+}
+
 export interface ToolDefinition {
   name: string;
-  execution: "controller" | "runner";
   description: string;
   inputSchema: JsonObject;
+}
+
+export interface RunnerToolpackSpec {
+  id: string;
+  tools: ToolDefinition[];
+  runnerModule: string;
+  supportPath: string;
 }
 
 export interface RunnerTurnInput {
@@ -185,6 +215,7 @@ export interface RunnerTurnInput {
   token: string;
   runner: RunnerConfig;
   tools: ToolDefinition[];
+  toolpacks: RunnerToolpackSpec[];
 }
 
 export interface RunnerTurnOutput {

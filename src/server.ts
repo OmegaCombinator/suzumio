@@ -1,8 +1,8 @@
 import http from "node:http";
 import { readFile } from "node:fs/promises";
 import { ProjectStore } from "./store.js";
-import { ToolHost } from "./tools.js";
-import { NonPreemptiveMailboxScheduler } from "./scheduler.js";
+import { ToolSupportHost } from "./tools.js";
+import { NonPreemptiveSignalScheduler } from "./scheduler.js";
 import type { AgentRecord, MessagePriority, RunnerTurnOutput } from "./types.js";
 
 export type ServeOptions = {
@@ -13,10 +13,10 @@ export type ServeOptions = {
 };
 
 export async function serveSuzumio(options: ServeOptions): Promise<http.Server> {
-  const scheduler = new NonPreemptiveMailboxScheduler(options.root);
-  const toolHost = new ToolHost(options.root);
+  const scheduler = new NonPreemptiveSignalScheduler(options.root);
+  const toolSupport = new ToolSupportHost(options.root);
   const server = http.createServer((request, response) => {
-    void handleRequest(request, response, { root: options.root, schedulerEngine: scheduler, toolHost }).catch((error) => {
+    void handleRequest(request, response, { root: options.root, schedulerEngine: scheduler, toolSupport }).catch((error) => {
       text(response, error instanceof Error ? error.message : String(error), 500);
     });
   });
@@ -32,14 +32,17 @@ export async function serveSuzumio(options: ServeOptions): Promise<http.Server> 
 async function handleRequest(
   request: http.IncomingMessage,
   response: http.ServerResponse,
-  ctx: { root?: string; schedulerEngine: NonPreemptiveMailboxScheduler; toolHost: ToolHost },
+  ctx: { root?: string; schedulerEngine: NonPreemptiveSignalScheduler; toolSupport: ToolSupportHost },
 ): Promise<void> {
   const url = new URL(request.url ?? "/", "http://localhost");
   const parts = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
 
   if (request.method === "GET" && url.pathname === "/health") return json(response, { healthy: true });
   if (request.method === "GET" && url.pathname === "/") return html(response, WEBUI_HTML);
-  if (request.method === "POST" && url.pathname === "/tool") return json(response, await ctx.toolHost.call(await readBody(request)));
+  if (request.method === "POST" && url.pathname === "/runner/tool-calls/start") return json(response, await ctx.toolSupport.startToolCall(await readBody(request)));
+  if (request.method === "POST" && url.pathname === "/runner/tool-calls/finish") return json(response, await ctx.toolSupport.finishToolCall(await readBody(request)));
+  if (request.method === "POST" && url.pathname === "/runner/signals") return json(response, await ctx.toolSupport.recordRunnerSignal(await readBody(request)));
+  if (request.method === "POST" && parts[0] === "toolpacks" && parts[2] === "support") return json(response, await ctx.toolSupport.support(parts[1]!, await readBody(request)));
   if (request.method === "POST" && url.pathname === "/turn-output") return json(response, await submitTurnOutput(await readBody(request), ctx.root));
 
   if (request.method === "GET" && url.pathname === "/api/projects") return json(response, await listProjects(ctx.root));

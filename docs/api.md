@@ -76,11 +76,21 @@ The event stream sends SQLite events as Server-Sent Events. It emits existing re
     event: message.created
     data: { ...event row... }
 
-## Tool Support Routes
+## Runner Support Routes
 
-The Docker runner presents tools to the model. Tools that need Suzumio project state use `POST /tool` as a controller support route. Runner-local tools such as `shell.exec` and `web.fetch` run inside the Docker container and do not call this route. `POST /turn-output` submits final turn text. These routes are not public user APIs.
+The Docker runner presents all model-facing tools. The controller provides support APIs for permissions, state, persistence, tool-call audit records, and custom toolpack support. Runner-local tools such as `shell.exec` and `web.fetch` execute inside the Docker container. These routes are not public user APIs.
 
-    POST /tool
+| Method | Path                                  | Purpose                                                            |
+|--------|---------------------------------------|--------------------------------------------------------------------|
+| `POST` | `/runner/tool-calls/start`            | Authenticate agent/turn, verify tool membership and allowlist, and create a running `tool_calls` row. |
+| `POST` | `/runner/tool-calls/finish`           | Mark a tool call completed or failed after verifying it belongs to this agent turn.                  |
+| `POST` | `/runner/signals`                     | Let runner-side or local toolpack code create a pending signal or closed effect.                     |
+| `POST` | `/toolpacks/:toolpackId/support`      | Dispatch controller-side support for built-in or local toolpacks.                                    |
+| `POST` | `/turn-output`                        | Submit final turn text and usage metadata.                                                              |
+
+Support requests include `project`, `agentId`, `turnId`, and the agent private `token`. Toolpack support also includes the tool name and input:
+
+    POST /toolpacks/core/support
     {
       "project": "demo",
       "agentId": "pm",
@@ -94,7 +104,57 @@ The Docker runner presents tools to the model. Tools that need Suzumio project s
       }
     }
 
-The controller support route verifies that the token matches the agent and that the requested controller-supported tool is in the agent allowlist. It records a `tool_calls` row before execution and updates it after success or failure.
+The support host verifies token, turn ownership, toolpack membership, and agent allowlist before invoking controller support.
+
+### `POST /runner/signals`
+
+    {
+      "project": "demo",
+      "agentId": "worker-1",
+      "turnId": "turn_...",
+      "token": "agent-private-token",
+      "kind": "review.ready",
+      "targetAgent": "pm",
+      "priority": "P1",
+      "payload": { "artifactId": "art_..." }
+    }
+
+Set `targetAgent` or `targetChannel` to create schedulable work. Omit the target and set `usefulEffect: true` to record a closed useful effect without waking any agent. Targeted signals cannot be explicitly closed.
+
+## Custom Toolpack Signals
+
+Local runner modules and controller modules receive a context with `recordSignal`. Use it when a custom tool produces work for another agent or records a useful effect.
+
+    export function createRunnerToolpack(context) {
+      return {
+        tools: {
+          "review.ready": async (input) => {
+            await context.recordSignal({
+              kind: "review.ready",
+              targetAgent: "pm",
+              priority: "P1",
+              payload: { summary: input.summary }
+            });
+            return { output: "PM notified." };
+          }
+        }
+      };
+    }
+
+    export function createControllerToolpack(context) {
+      return {
+        async support(tool, input) {
+          context.recordSignal({
+            kind: "review.cached",
+            payload: { cacheKey: input.cacheKey },
+            usefulEffect: true
+          });
+          return { output: "Cached review state." };
+        }
+      };
+    }
+
+The first example creates pending work for `pm`. The second records a closed useful effect without scheduling anyone.
 
 ### `POST /turn-output`
 
@@ -124,6 +184,18 @@ The backend marks the turn complete only after this authenticated submission. `/
 
 Use either `recipient` or `channel`, not both. Channels must be declared in project config.
 
+Messages to agents create pending `message.created` signals. Channel messages fan out to other agents. Messages to `recipient: "user"` create closed useful effects and do not wake an agent.
+
+### `coordination.no_valuable_work`
+
+    {
+      "reason": "Waiting for worker-2's result.",
+      "pm": "pm",
+      "notifyPm": true
+    }
+
+Declares that the caller has no valuable work to do until future signals arrive. Non-PM agents notify `pm` by direct message by default. PM calls record a closed useful effect and wait quietly.
+
 ### `artifacts.publish`
 
     {
@@ -132,7 +204,7 @@ Use either `recipient` or `channel`, not both. Channels must be declared in proj
       "description": "What this artifact contains"
     }
 
-The path is relative to the agent workspace. Suzumio copies the file or directory into the project artifact registry and records a SHA-256 hash.
+The path is relative to the agent workspace. Suzumio copies the file or directory into the project artifact registry and records a SHA-256 hash. Publishing alone is not a useful effect; agents should also send a message or submit completion when the artifact is ready for someone else.
 
 ### `artifacts.list`
 

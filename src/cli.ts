@@ -2,7 +2,7 @@
 import { loadProjectConfig, renderProjectConfig } from "./config.js";
 import { sourceAndResolvedText, ProjectStore } from "./store.js";
 import { serveSuzumio } from "./server.js";
-import { NonPreemptiveMailboxScheduler } from "./scheduler.js";
+import { NonPreemptiveSignalScheduler } from "./scheduler.js";
 import type { MessagePriority, ProjectStatus } from "./types.js";
 
 async function main(): Promise<void> {
@@ -75,7 +75,7 @@ async function statusCommand(args: string[], status: ProjectStatus, tick: boolea
   } finally {
     store.close();
   }
-  if (tick) await new NonPreemptiveMailboxScheduler(root).tickProject(project);
+  if (tick) await new NonPreemptiveSignalScheduler(root).tickProject(project);
 }
 
 async function sendCommand(args: string[]): Promise<void> {
@@ -92,7 +92,7 @@ async function sendCommand(args: string[]): Promise<void> {
   } finally {
     store.close();
   }
-  await new NonPreemptiveMailboxScheduler(root).tickProject(project);
+  await new NonPreemptiveSignalScheduler(root).tickProject(project);
 }
 
 async function showStatus(args: string[]): Promise<void> {
@@ -160,7 +160,7 @@ async function showEvents(args: string[]): Promise<void> {
 
 async function tickCommand(args: string[]): Promise<void> {
   const project = args[0];
-  const scheduler = new NonPreemptiveMailboxScheduler(flag(args, "root"));
+  const scheduler = new NonPreemptiveSignalScheduler(flag(args, "root"));
   if (project) await scheduler.tickProject(project);
   else await scheduler.tickAll();
 }

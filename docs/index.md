@@ -3,7 +3,7 @@ title: "Suzumio Documentation"
 description: "Suzumio is a Docker-first, non-preemptive multi-agent coordination runtime."
 eyebrow: "Docker-first coordination for long-running agents"
 heroTitle: "Suzumio"
-lead: "Suzumio coordinates multi-agent projects with a non-preemptive mailbox scheduler, isolated Docker turns, audited tools, artifact tracking, SQLite state, a CLI, an HTTP API, and a lightweight WebUI."
+lead: "Suzumio coordinates multi-agent projects with a signal-driven non-preemptive scheduler, isolated Docker turns, runner-side toolpacks, controller support APIs, SQLite state, a CLI, an HTTP API, and a lightweight WebUI."
 actions:
   - text: "Run the demo"
     link: "quickstart.html"
@@ -23,13 +23,13 @@ Suzumio separates project coordination from agent execution. The core runtime ow
 
 <div class="grid">
 
-<div class="card"><h3>Non-preemptive scheduling</h3><p>Running agents are not prompted, nudged, or interrupted. New inbound messages wait in the mailbox until the current turn finishes.</p></div>
+<div class="card"><h3>Signal scheduling</h3><p>Running agents are not prompted, nudged, or interrupted. New messages and coordination events become pending signals for later turns.</p></div>
 
-<div class="card"><h3>Durable project state</h3><p>Projects store resolved configuration, agents, messages, message reads, turns, events, tool calls, and artifacts in SQLite.</p></div>
+<div class="card"><h3>Durable project state</h3><p>Projects store resolved configuration, agents, messages, signals, turns, events, tool calls, and artifacts in SQLite.</p></div>
 
 <div class="card"><h3>Docker-first execution</h3><p>Each turn runs in a container with a read-only turn input file, an agent workspace, runner-local shell and web tools, and HTTP result submission.</p></div>
 
-<div class="card"><h3>Allowlisted tools</h3><p>Project toolpacks choose available tools, and each agent receives only its configured allowlist.</p></div>
+<div class="card"><h3>Runner-side tools</h3><p>Project toolpacks choose available model-facing tools. Controller support APIs provide state, permissions, and persistence when needed.</p></div>
 
 </div>
 
@@ -41,18 +41,18 @@ Suzumio separates project coordination from agent execution. The core runtime ow
 | Define a project                    | [Configuration](configuration.html) | YAML config with whole-field imports, profile composition, agents, tools, and backend settings.          |
 | Operate projects from terminal      | [CLI Reference](cli.html)           | Commands for init, serve, start, send, inspect, approve, and stop.                                       |
 | Integrate with other systems        | [HTTP API](api.html)                | Project objects, user actions, event streams, and controller support calls.                              |
-| Deploy docs or inspect architecture | [Architecture](architecture.html)   | Clear boundaries between core runtime, Docker backend, runner tools, support routes, and SQLite.         |
+| Deploy docs or inspect architecture | [Architecture](architecture.html)   | Clear boundaries between core runtime, Docker backend, runner toolpacks, support routes, and SQLite.     |
 
 ## Core Workflow
 
     1. Render and validate project config.
     2. Initialize a project under SUZUMIO_ROOT.
     3. Start the HTTP server and scheduler loop.
-    4. Send a user message to an agent.
-    5. Scheduler starts one Docker turn for that agent.
+    4. Send a user message or create another pending signal for an agent.
+    5. Scheduler starts one Docker turn for that signal target.
     6. Runner executes the turn and model-facing tools.
-    7. Suzumio records messages, tool calls, events, artifacts, and turn output.
-    8. Idle agents remain quiet until new inbound messages arrive.
+    7. Suzumio records messages, signals, tool calls, events, artifacts, and turn output.
+    8. Idle agents remain quiet until new pending signals arrive.
 
 ## Project Layout
 

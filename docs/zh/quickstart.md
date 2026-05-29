@@ -69,7 +69,7 @@ lead: "本指南在 Docker 中运行一个 AI-backed agent turn，并验证 conf
     suzumio start demo
     suzumio send demo pm P1 "Send one short status update to the user."
 
-Scheduler 会发现 `pm` 有 unread message，创建一个 turn，并启动一个 Docker 容器。
+这条消息会为 `pm` 创建 pending `message.created` signal。Scheduler 会把该 signal 投递进一个 turn，并启动一个 Docker 容器。
 
 ## 9. 检查结果
 
@@ -81,7 +81,7 @@ Scheduler 会发现 `pm` 有 unread message，创建一个 turn，并启动一�
 
 ## 10. 验证非抢占行为
 
-如果智能体已经处于 `running`，发送新消息不会打断当前 turn。消息会保持 unread，直到当前 turn 完成。
+如果智能体已经处于 `running`，发送新消息不会打断当前 turn。新消息会创建 pending signal，等待当前 turn 完成后再投递。
 
 ## 可选备用 AI 配置
 
@@ -104,7 +104,7 @@ Scheduler 会发现 `pm` 有 unread message，创建一个 turn，并启动一�
 |-----------------------------------|------------------------------------------------------------------------|--------------------------------------------------------------------------------|
 | Turn 提交结果前失败。             | 镜像未构建、镜像名错误、容器启动失败或 controller support 连接问题。   | 运行 `docker build -t suzumio-runner:dev .` 并检查 `docker logs <container>`。 |
 | Support tool connection refused。 | 容器无法访问 Suzumio server 来使用 stateful tools 或提交 turn output。 | 用 `--host 0.0.0.0` 启动 server，并使用 `http://host.docker.internal:39400`。  |
-| Agent 不启动。                    | 项目不是 `running`，或 agent 没有 unread inbound message。             | 运行 `suzumio start project` 并向该 agent 发送直接消息。                       |
+| Agent 不启动。                    | 项目不是 `running`，或 agent 没有 pending signal。                     | 运行 `suzumio start project` 并向该 agent 发送直接消息。                       |
 | 自定义域名只有 HTTP。             | GitHub Pages 证书仍在签发。                                            | 等待证书完成后再启用 HTTPS enforcement。                                       |
 
 <div class="footer">下一步：<a href="concepts.html">核心概念</a>。</div>

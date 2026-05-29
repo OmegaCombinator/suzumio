@@ -8,10 +8,10 @@ Core principles:
 
 - Agents run in isolated Docker turns managed by the backend.
 - The scheduler never interrupts a running agent.
-- Agents are only woken by inbound mailbox messages or explicit user/system control.
-- Suzumio owns project state, messages, artifacts, tool audit logs, and observability.
-- The Docker runner executes one agent turn and presents the model-facing tools.
-- Stateful tools call Suzumio support APIs for messages, artifacts, permissions, and final submission.
+- Agents are only woken by pending signals or explicit user/system control.
+- Suzumio owns project state, messages, signals, artifacts, tool audit logs, and observability.
+- The Docker runner executes one agent turn and presents runner-side model-facing tools.
+- Stateful tools call Suzumio support APIs for messages, signals, artifacts, permissions, and final submission.
 
 This repository is an early build. The first implementation includes:
 
@@ -19,8 +19,8 @@ This repository is an early build. The first implementation includes:
 - SQLite project storage using Node's built-in SQLite module.
 - A Docker-first chat backend and container runner.
 - Configured toolpacks for `core`, `artifacts`, `shell`, and `web` tools.
-- Runner-local `shell.exec` and `web.fetch`, plus controller-supported message, artifact, and completion tools.
-- A non-preemptive mailbox scheduler.
+- Runner-local `shell.exec` and `web.fetch`, plus support-backed message, artifact, coordination, and completion tools.
+- A signal-driven non-preemptive scheduler.
 - CLI, HTTP API, SSE stream, and a minimal flat WebUI.
 
 The documentation site is committed under `docs/` and deployed to GitHub Pages by `.github/workflows/pages.yml`.
@@ -57,13 +57,14 @@ Arrays are replaced, not concatenated. HTTP imports are disabled for reproducibi
 
 ## Scheduler Semantics
 
-The first scheduler is `nonpreemptive-mailbox`:
+The default scheduler is `nonpreemptive-signals`. `nonpreemptive-mailbox` remains as a compatibility alias:
 
 - Running agents are never interrupted or prompted again.
-- Inbound messages are queued until the current turn finishes.
-- Idle agents with unread inbound messages are started for exactly one turn.
-- Idle agents without unread inbound messages remain quiet.
-- There are no heartbeat nudges or automatic "still waiting" prompts.
+- Messages and coordination events become pending signals.
+- Idle agents with pending signals are started for exactly one turn.
+- Idle agents without pending signals remain quiet.
+- Turns with no useful effect receive one no-effect nudge unless they were already nudge-driven.
+- Use `coordination.no_valuable_work` when an agent intentionally has to wait for future signals.
 
 ## Secrets
 

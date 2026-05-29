@@ -36,7 +36,7 @@ Then, from another terminal:
 | Config    | Imports resolve and secrets are not committed.             | `suzumio config render file.yaml`         |
 | Store     | Project was initialized under the expected root.           | `suzumio status project`                  |
 | Server    | HTTP and controller support routes are reachable.          | `curl http://127.0.0.1:39400/health`      |
-| Scheduler | Project is running and idle agents have unread messages.   | `suzumio messages project`                |
+| Scheduler | Project is running and idle agents have pending signals.    | `suzumio messages project` and events     |
 | Turn      | Container completed and turn text was submitted over HTTP. | `suzumio turns project`                   |
 
 ## Inspecting a Turn
@@ -53,9 +53,15 @@ The input includes the rendered prompt, agent identity, controller URL, runner c
 | Symptom                                | Likely cause                               | Action                                                        |
 |----------------------------------------|--------------------------------------------|---------------------------------------------------------------|
 | Project never starts a turn.           | Project is not `running`.                  | `suzumio start project`                                       |
-| Agent stays quiet.                     | No unread inbound messages for that agent. | `suzumio send project agent P1 "..."`                         |
-| Message exists but no new turn starts. | Agent is already `running`.                | Wait for completion. Suzumio is intentionally non-preemptive. |
+| Agent stays quiet.                     | No pending signals for that agent.         | `suzumio send project agent P1 "..."`                         |
+| Message exists but no new turn starts. | Agent is already `running`, project is stopped, or message targeted `user`. | Wait for completion or send a direct message to an agent. |
 | Turn fails immediately.                | Image, mount, or Docker daemon issue.      | Inspect `suzumio turns`, turn input, and `docker logs`.       |
+
+## Avoiding Coordination Loops
+
+Agents should not post "nothing to do" messages to a shared channel. Use `coordination.no_valuable_work` instead. Worker agents notify `pm` by direct message by default, and PM can record an intentional wait state without waking itself.
+
+If an agent publishes an artifact, it should also send a message or submit completion when the artifact is ready for someone else. Artifact publication alone is stored for audit, but it does not count as useful coordination work.
 
 ## Cleaning Debug Containers
 

@@ -2,7 +2,7 @@
 title: "Suzumio 路线图"
 eyebrow: "路线图"
 heroTitle: "让安静运行时更可靠"
-lead: "第一版验证了核心形状：Docker-first turns、SQLite project truth、mailbox scheduling、audited support routes 和 WebUI observability。下一步应强化这些边界。"
+lead: "第一版验证了核心形状：Docker-first turns、SQLite project truth、signal scheduling、audited support routes 和 WebUI observability。下一步应强化这些边界。"
 ---
 
 ## 近期工作
@@ -28,7 +28,7 @@ lead: "第一版验证了核心形状：Docker-first turns、SQLite project trut
 
 ## Tools
 
-- 在内置 `core`、`artifacts`、`shell`、`web` 之外加入第三方 toolpack loading。
+- 在第一版 local `.mjs` support 基础上强化第三方 toolpack loading。
 - 为高风险 shell action 加入 approval-required 模式。
 - 增加 verification、code review、research、benchmark execution 等领域 profile。
 - 加入 artifact download routes 和 hash verification commands。
@@ -59,7 +59,7 @@ lead: "第一版验证了核心形状：Docker-first turns、SQLite project trut
 ## 当前非目标
 
 - Docker-first 语义稳定前不做 Kubernetes runtime。
-- Mailbox turns 和 toolpacks 可靠前不引入复杂 workflow DSL。
+- Signal turns 和 toolpacks 可靠前不引入复杂 workflow DSL。
 - 默认不提供 in-process runner path；隔离仍是 baseline。
 - 不做自动 PM chatter、progress nagging 或 heartbeat prompts。
 

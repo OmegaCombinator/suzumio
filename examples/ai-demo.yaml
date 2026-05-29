@@ -3,7 +3,7 @@ task: |
   Demonstrate one AI-backed Suzumio turn. The agent should send a short status message to the user.
 
 scheduler:
-  kind: nonpreemptive-mailbox
+  kind: nonpreemptive-signals
 
 backend:
   kind: docker-chat
@@ -50,6 +50,7 @@ agents:
       You are a concise project manager. Send one short status update to the user using messages.send.
     tools:
       - messages.send
+      - coordination.no_valuable_work
 
 channels:
   - "#project"

@@ -13,7 +13,7 @@ lead: "Suzumio 将 orchestration 与 execution 分离。核心进程拥有项目
     Suzumio Core
       Config loader
       SQLite store
-      Message router
+      Signal router
       Artifact registry
       Tool support routes
       Non-preemptive scheduler
@@ -39,9 +39,9 @@ lead: "Suzumio 将 orchestration 与 execution 分离。核心进程拥有项目
 | 模块           | 职责                                                                                                                   |
 |----------------|------------------------------------------------------------------------------------------------------------------------|
 | `config.ts`    | 加载 YAML、解析 import、应用 `extends`、验证配置并渲染最终 YAML。                                                      |
-| `store.ts`     | 创建和查询 projects、agents、messages、reads、turns、events、controller-supported tool_calls、artifacts 等 SQLite 表。 |
-| `scheduler.ts` | 实现 `nonpreemptive-mailbox` 调度规则。                                                                                |
-| `tools.ts`     | 定义工具 metadata，并对 controller-supported tool call 做 token 和 allowlist 检查。                                    |
+| `store.ts`     | 创建和查询 projects、agents、messages、signals、turns、events、tool_calls、artifacts 等 SQLite 表。                    |
+| `scheduler.ts` | 实现 signal-driven 非抢占式调度规则。                                                                                  |
+| `tools.ts`     | 解析 built-in 和 local toolpacks，并通过 token 与 allowlist 校验提供 controller support。                              |
 | `server.ts`    | HTTP API、SSE stream、controller support route、turn result route 和内嵌 WebUI。                                       |
 | `backend.ts`   | Docker 容器创建、配置的 bind mounts、runner input 和 turn completion monitoring。                                      |
 | `runner.ts`    | 模型驱动 turn 的容器入口，并执行 runner-local tools。                                                                  |
@@ -59,6 +59,7 @@ Runner 通过一个只读 input 文件接收全部上下文，并通过 HTTP 回
       token: string
       runner: RunnerConfig
       tools: ToolDefinition[]
+      toolpacks: RunnerToolpackSpec[]
     }
 
     type RunnerTurnOutput = {
@@ -82,15 +83,22 @@ Runner 通过一个只读 input 文件接收全部上下文，并通过 HTTP 回
 
     Model asks for tool
       runner converts model tool call
-      if the tool is runner-local:
-        runner executes it inside the Docker container
+      runner POSTs /runner/tool-calls/start
+      runner executes the runner-side tool handler
       if the tool needs project state:
-        runner POSTs /tool to Suzumio
-        controller verifies token and tool allowlist
-        controller updates SQLite, messages, artifacts, or submission state
+        runner POSTs /toolpacks/:toolpackId/support
+        controller verifies token, turn ownership, toolpack membership, and allowlist
+        controller updates SQLite, messages, signals, artifacts, or submission state
+      runner POSTs /runner/tool-calls/finish
       runner returns tool output to model
 
-模型默认不会获得任意 host tools。工具按 agent 配置。`shell.exec` 和 `web.fetch` 在 Docker runner 内执行；消息、artifact 和 completion 工具使用 Suzumio support API。
+模型默认不会获得任意 host tools。工具按 agent 配置。`shell.exec` 和 `web.fetch` 在 Docker runner 内执行；消息、artifact、completion 和 coordination 工具使用 Suzumio support API。
+
+## Signal Delivery
+
+Agent 不 poll 工作。Suzumio 把 pending signal 渲染进下一个 turn prompt，并记录哪个 turn 收到了哪些 signal。这样既避免 polling loop，也让调度决策可审计。
+
+Message 会创建 `message.created` signal。Artifact 会创建审计 signal。自定义 toolpack 可以调用 `recordSignal` 创建 pending 协调任务或 closed useful effect。
 
 ## SQLite 是项目事实
 
@@ -101,7 +109,7 @@ Runner 通过一个只读 input 文件接收全部上下文，并通过 HTTP 回
 | `projects`      | 项目状态、任务、resolved config JSON、submitted report path。 |
 | `agents`        | Agent roster、prompt、tool allowlist、token、active turn。    |
 | `messages`      | 直接消息和频道消息。                                          |
-| `message_reads` | 哪个 turn 消费了哪个 inbound message。                        |
+| `signals`       | Scheduler 输入、已投递 signal 记录和 useful effects。         |
 | `turns`         | Turn 执行记录和 output text。                                 |
 | `events`        | Append-style event timeline。                                 |
 | `tool_calls`    | Controller-supported tool call 记录。                         |

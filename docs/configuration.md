@@ -63,7 +63,7 @@ The example below shows the main fields in one file. Most projects should split 
     task: @import(tasks/main.md)
 
     scheduler:
-      kind: nonpreemptive-mailbox
+      kind: nonpreemptive-signals
       intervalMs: 2000
       maxPromptMessages: 20
 
@@ -122,6 +122,7 @@ The example below shows the main fields in one file. Most projects should split 
         tools:
           - messages.send
           - artifacts.list
+          - coordination.no_valuable_work
           - completion.submit
       worker:
         role: worker
@@ -148,7 +149,7 @@ The example below shows the main fields in one file. Most projects should split 
 | `agents`        | Yes      | Map of agent ids to agent configs. At least one agent is required.                                                      |
 | `tools`         | No       | Toolpacks registered for the project. Defaults to `core`, `artifacts`, and `web`; add `shell` for container-local bash. |
 | `extends`       | No       | One profile object or a list of profile objects to merge before local fields.                                           |
-| `scheduler`     | No       | Scheduler kind and prompt-message batching. Defaults to `nonpreemptive-mailbox`.                                        |
+| `scheduler`     | No       | Scheduler kind and prompt-signal batching. Defaults to `nonpreemptive-signals`.                                         |
 | `backend`       | No       | Docker runner image, controller support URL, Docker options, and model runner settings.                                 |
 | `channels`      | No       | Allowed channel names. Defaults include `#project` and `#blocked`.                                                      |
 | `observability` | No       | Documentation-level server defaults for HTTP/WebUI. The CLI flags still control the actual server bind address.         |
@@ -288,15 +289,15 @@ The backend object deep-merges, so `backend.image` remains from the profile whil
 ## Scheduler Config
 
     scheduler:
-      kind: nonpreemptive-mailbox
+      kind: nonpreemptive-signals
       intervalMs: 2000
       maxPromptMessages: 20
 
 | Field               | Description                                                                                       |
 |---------------------|---------------------------------------------------------------------------------------------------|
-| `kind`              | Only `nonpreemptive-mailbox` exists in the first version.                                         |
+| `kind`              | `nonpreemptive-signals` is the default. `nonpreemptive-mailbox` is accepted as a compatibility alias. |
 | `intervalMs`        | Intended scheduler loop interval. The current server uses a fixed loop aligned with this default. |
-| `maxPromptMessages` | Maximum unread inbound messages rendered into one turn prompt.                                    |
+| `maxPromptMessages` | Maximum pending signals rendered into one turn prompt.                                            |
 
 ## Backend Config
 
@@ -371,12 +372,41 @@ Committed examples must stay sanitized. Put real provider endpoints and keys in 
 
 | Toolpack    | Registered tools                                        | Runs in                                 |
 |-------------|---------------------------------------------------------|-----------------------------------------|
-| `core`      | `messages.send`, `completion.submit`                    | Runner wrapper with Suzumio support API |
+| `core`      | `messages.send`, `coordination.no_valuable_work`, `completion.submit` | Runner wrapper with Suzumio support API |
 | `artifacts` | `artifacts.publish`, `artifacts.list`, `artifacts.read` | Runner wrapper with Suzumio support API |
 | `shell`     | `shell.exec`                                            | Docker runner container                 |
 | `web`       | `web.fetch`                                             | Docker runner container                 |
 
 Mounted inputs are host files or directories exposed at configured container paths. Suzumio renders those paths into the turn prompt. Agents with `shell.exec` can copy them into `/workspace`, compile code, run binaries, and publish resulting artifacts.
+
+### Local toolpacks
+
+Local toolpacks are loaded from directories on the controller host and mounted read-only into runner containers.
+
+    tools:
+      toolpacks:
+        - core
+        - path: ./toolpacks/review
+          id: review-tools
+
+Each local directory must contain `suzumio.toolpack.json` and ESM `.mjs` modules:
+
+    {
+      "id": "review-tools",
+      "runner": "runner.mjs",
+      "controller": "controller.mjs",
+      "tools": [
+        {
+          "name": "review.summarize",
+          "description": "Summarize review findings.",
+          "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
+        }
+      ]
+    }
+
+The id must contain only letters, digits, `.`, `_`, and `-`. HTTP(S) toolpack paths are rejected. TypeScript runtime transpilation is not provided; publish JavaScript `.mjs` files.
+
+Runner modules implement model-facing tools in the container. Controller modules implement support for tools that need project state. Both sides receive a context with `recordSignal`; create a pending signal by setting `targetAgent`, or create a closed useful effect by omitting the target and setting `usefulEffect: true`.
 
 ## Agent Config
 
