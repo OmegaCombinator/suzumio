@@ -40,7 +40,6 @@ Suzumio 把配置当作 source material，而不是可变运行时状态。运�
             main:
               provider: gateway
               model: gpt-5.5
-              apiModel: gpt-5.5
 
     tools:
       toolpacks:
@@ -271,7 +270,7 @@ agents:
       - coordination.wait_for_signal
 ```
 
-这会创建 `solver-1`、`solver-2` 和 `solver-3`。Activation prompt 会包含 roster，所以 PM 可以给具体生成的 id 发消息。
+这会创建 `solver-1`、`solver-2` 和 `solver-3`。第一次 activation prompt 会包含这些生成 id，方便团队用精确 recipient 发送 direct message。
 
 ## 完整结构
 
@@ -279,11 +278,6 @@ agents:
 
     name: research-demo
     task: @import(tasks/main.md)
-
-    scheduler:
-      kind: nonpreemptive-signals
-      intervalMs: 2000
-      maxPromptMessages: 20
 
     channels:
       - "#project"
@@ -310,13 +304,11 @@ agents:
             worker-main:
               provider: gateway
               model: gpt-5.5
-              apiModel: gpt-5.5
               toolChoice: auto
               maxOutputTokens: 2000
             pm-main:
               provider: gateway
               model: gpt-5.5
-              apiModel: gpt-5.5
               toolChoice: auto
               maxOutputTokens: 2000
             worker-with-fallback:
@@ -362,7 +354,7 @@ agents:
 | `agents`        | 是       | Agent id 到 agent config 的映射。至少需要一个 agent。                                         |
 | `tools`         | 否       | 项目注册的 toolpacks。默认包含 `core` 和 `web`；需要容器内 bash 和共享 artifact 文件时添加 `shell`。 |
 | `extends`       | 否       | 一个 profile object 或 profile object 列表，在本地字段之前合并。                              |
-| `scheduler`     | 否       | Scheduler 类型和 prompt signal batching。默认是 `nonpreemptive-signals`。                     |
+| `scheduler`     | 否       | 高级 scheduler 选项。多数项目应省略它并使用默认值。                                           |
 | `backend`       | 否       | Docker runner image、controller support URL、Docker options 和 model runner 设置。            |
 | `channels`      | 否       | 允许的频道名。默认包含 `#project` 和 `#blocked`。                                             |
 | `observability` | 否       | 文档层面的 HTTP/WebUI 默认值。实际 server bind 地址仍由 CLI flags 控制。                      |
@@ -499,18 +491,9 @@ Suzumio 会拒绝循环 import 和过深的 import 链，避免项目意外无�
 
 `backend` 是 object，所以会 deep-merge：profile 中的 `backend.image` 保留，本地 `backend.runner.mode` 覆盖。`channels` 是 array，所以整体替换，不会自动 append。
 
-## Scheduler Config
+## Scheduler Defaults
 
-    scheduler:
-      kind: nonpreemptive-signals
-      intervalMs: 2000
-      maxPromptMessages: 20
-
-| 字段                | 说明                                                                |
-|---------------------|---------------------------------------------------------------------|
-| `kind`              | 默认是 `nonpreemptive-signals`。`nonpreemptive-mailbox` 作为兼容 alias 接受。 |
-| `intervalMs`        | 预期 scheduler loop 间隔。当前 server 使用与默认值一致的固定 loop。 |
-| `maxPromptMessages` | 一个 activation prompt 中最多渲染多少条 pending signals。           |
+多数项目应省略 `scheduler`。默认行为是 signal-driven 且非抢占：idle agent 会因 pending signal 醒来，running agent 不会被打断。高级项目可以设置 `scheduler.kind` 或 `scheduler.maxSignalsPerActivation`；默认每次 activation 最多投递 20 个 pending signals。
 
 ## Backend Config
 
@@ -563,19 +546,18 @@ Suzumio 会拒绝循环 import 和过深的 import 链，避免项目意外无�
             worker-main:
               provider: gateway
               model: gpt-5.5
-              apiModel: gpt-5.5
+              reasoningEffort: high
               toolChoice: auto
               maxOutputTokens: 2000
             pm-main:
               provider: gateway
               model: gpt-5.5
-              apiModel: gpt-5.5
             worker-with-fallback:
               model-list:
                 - worker-main
                 - pm-main
 
-Model 选择是显式的。可以在 `backend.runner.model` 设置项目级选择，或在 `agents.*.model` 为每个 agent 设置。带 `model-list` 的 preset 会展开成有序 fallback 列表；runner 会按顺序尝试其中的 concrete preset。
+Model 选择是显式的。可以在 `backend.runner.model` 设置项目级选择，或在 `agents.*.model` 为每个 agent 设置。带 `model-list` 的 preset 会展开成有序 fallback 列表；runner 会按顺序尝试其中的 concrete preset。多数配置里，`model` 同时也是 provider-facing model id。只有当本地 preset 名称需要和 provider API 模型名不同时，才使用 `apiModel`。
 
 <div class="notice danger">
 

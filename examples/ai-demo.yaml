@@ -2,9 +2,6 @@ name: ai-demo
 task: |
   Demonstrate one AI-backed Suzumio activation. The agent should send a short status message to the user.
 
-scheduler:
-  kind: nonpreemptive-signals
-
 backend:
   kind: docker-chat
   image: suzumio-runner:dev
@@ -23,16 +20,10 @@ backend:
         main:
           provider: gateway
           model: gpt-5.5
-          apiModel: gpt-5.5
+          reasoningEffort: low
           maxOutputTokens: 2000
           contextLimit: 260000
           toolChoice: auto
-          providerOptions:
-            reasoningEffort: low
-            textVerbosity: low
-            reasoningSummary: auto
-            include:
-              - reasoning.encrypted_content
         main-with-fallback:
           model-list:
             - main

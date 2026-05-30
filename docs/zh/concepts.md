@@ -116,7 +116,7 @@ Activation 是一个连续 agent 的一次隔离执行。Suzumio 创建 activati
 
 ## Shared Artifacts 和 Event
 
-每个 activation 都会挂载 `/artifacts/<agent-id>`。当前 agent 的目录可写，其他 agent 的目录只读。这就是轻量 artifact 工作流：拥有 `shell.exec` 的 agent 可以直接把脚本、输出、笔记和数据写进自己的共享目录，然后发消息告诉其他 agent 路径。Event 是项目时间线，用于 WebUI、debug、审计和未来 replay 工具。
+每个 activation 都会挂载 `/artifacts/<agent-id>`。当前 agent 的目录可写，其他 agent 的目录只读。第一次 activation prompt 会列出 artifact path；后续 activation 依赖 agent 的连续上下文。这就是轻量 artifact 工作流：拥有 `shell.exec` 的 agent 可以直接把脚本、输出、笔记和数据写进自己的共享目录，然后发消息告诉其他 agent 路径。Event 是项目时间线，用于 WebUI、debug、审计和未来 replay 工具。
 
     project.initialized
     message.created

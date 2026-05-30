@@ -49,7 +49,7 @@ The core process is the authority for project-level records. If data should be v
 
 ## Runner Contract
 
-The runner receives all context through one read-only input file and reports completion back over HTTP. This keeps execution replaceable without letting a model-editable file become the output authority.
+The runner receives context through one read-only input file and reports completion back over HTTP. This keeps execution replaceable without letting a model-editable file become the output authority.
 
     type RunnerActivationInput = {
       project: string

@@ -6,13 +6,21 @@ import type { ProjectConfig } from "./types.js";
 
 const JsonObjectSchema = z.record(z.string(), z.unknown());
 
-const SchedulerSchema = z
-  .object({
-    kind: z.enum(["nonpreemptive-mailbox", "nonpreemptive-signals"]).default("nonpreemptive-signals"),
-    intervalMs: z.number().int().positive().default(2_000),
-    maxPromptMessages: z.number().int().positive().default(20),
-  })
-  .default({ kind: "nonpreemptive-signals", intervalMs: 2_000, maxPromptMessages: 20 });
+const SchedulerSchema = z.preprocess(
+  (value) => {
+    if (!isPlainObject(value)) return value;
+    const out = { ...value };
+    if (out.maxSignalsPerActivation === undefined && out.maxPromptMessages !== undefined) out.maxSignalsPerActivation = out.maxPromptMessages;
+    delete out.maxPromptMessages;
+    return out;
+  },
+  z
+    .object({
+      kind: z.enum(["nonpreemptive-mailbox", "nonpreemptive-signals"]).default("nonpreemptive-signals"),
+      maxSignalsPerActivation: z.number().int().positive().default(20),
+    })
+    .default({ kind: "nonpreemptive-signals", maxSignalsPerActivation: 20 }),
+);
 
 const ProviderSchema = z.object({
   type: z.enum(["openai", "anthropic", "google", "openai-compatible"]),
@@ -39,6 +47,7 @@ const ModelPresetSchema = z.preprocess(
       model: z.string().optional(),
       modelList: z.array(z.string()).optional(),
       apiModel: z.string().optional(),
+      reasoningEffort: z.string().optional(),
       temperature: z.number().optional(),
       topP: z.number().optional(),
       topK: z.number().optional(),
@@ -82,12 +91,12 @@ const RunnerSchema = z
   .object({
     mode: z.literal("ai").default("ai"),
     model: z.string().optional(),
-    maxIterations: z.number().int().positive().default(8),
-    maxToolCalls: z.number().int().positive().default(20),
+    maxIterations: z.number().int().positive().optional(),
+    maxToolCalls: z.number().int().positive().optional(),
     finalPrompt: z.string().optional(),
     models: ModelsSchema.optional(),
   })
-  .default({ mode: "ai", maxIterations: 8, maxToolCalls: 20 });
+  .default({ mode: "ai" });
 
 const MountSchema = z.object({
   source: z.string().min(1),
@@ -125,7 +134,7 @@ const BackendSchema = z
       .default({ mounts: [], proxy: { inheritEnv: true, rewriteLocalhost: true } }),
     runner: RunnerSchema,
   })
-  .default({ kind: "docker-chat", image: "suzumio-runner:dev", controllerUrl: "http://host.docker.internal:39400", docker: { mounts: [], proxy: { inheritEnv: true, rewriteLocalhost: true } }, runner: { mode: "ai", maxIterations: 8, maxToolCalls: 20 } });
+  .default({ kind: "docker-chat", image: "suzumio-runner:dev", controllerUrl: "http://host.docker.internal:39400", docker: { mounts: [], proxy: { inheritEnv: true, rewriteLocalhost: true } }, runner: { mode: "ai" } });
 
 const AgentSchema = z.object({
   role: z.string().optional(),
@@ -182,7 +191,7 @@ export async function loadProjectConfig(filePath: string): Promise<LoadedProject
   await normalizeToolpacks(config, path.dirname(sourcePath));
   validateRunnerModels(config);
   if (Object.keys(config.agents).length === 0) throw new Error("Project config needs at least one agent");
-  return { config, sourcePath, resolved: externalizeConfig(config) };
+  return { config, sourcePath, resolved: externalizeProjectConfig(config) };
 }
 
 export async function renderProjectConfig(filePath: string): Promise<string> {
@@ -300,6 +309,17 @@ function externalizeConfig(value: unknown): unknown {
   const out: Record<string, unknown> = {};
   for (const [key, item] of Object.entries(value)) {
     out[key === "modelList" ? "model-list" : key] = externalizeConfig(item);
+  }
+  return out;
+}
+
+function externalizeProjectConfig(config: ProjectConfig): unknown {
+  const out = externalizeConfig(config) as Record<string, unknown>;
+  const scheduler = out.scheduler;
+  if (isPlainObject(scheduler)) {
+    if (scheduler.kind === "nonpreemptive-signals") delete scheduler.kind;
+    if (scheduler.maxSignalsPerActivation === 20) delete scheduler.maxSignalsPerActivation;
+    if (Object.keys(scheduler).length === 0) delete out.scheduler;
   }
   return out;
 }

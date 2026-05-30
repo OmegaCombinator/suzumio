@@ -8,11 +8,6 @@ task: |
 
   Suggested route to investigate carefully: for L < 2 + sqrt(2)/2, set d = L - 2 and choose epsilon > 0 with e = d/2 + epsilon < 1/(2 sqrt(2)). In coordinates centered at the large square, consider the four points (+/-e, +/-e), equivalently near (1,1), (L-1,1), (1,L-1), (L-1,L-1) but epsilon-shifted so that interior containment may hold. Determine whether every unit square contained in the large square must contain one of these four points in its interior. If this exact epsilon-shifted piercing lemma is true, the pigeonhole principle proves the lower bound. If it is false, give a concrete counterexample to the exact shifted statement, not merely to the unshifted boundary-anchor version.
 
-scheduler:
-  kind: nonpreemptive-signals
-  intervalMs: 2000
-  maxPromptMessages: 30
-
 backend:
   kind: docker-chat
   image: suzumio-runner:dev
@@ -22,8 +17,6 @@ backend:
   runner:
     mode: ai
     model: main
-    maxIterations: 80
-    maxToolCalls: 240
     models:
       providers:
         gateway:
@@ -35,14 +28,12 @@ backend:
         main:
           provider: gateway
           model: gpt-5.5
-          apiModel: gpt-5.5
           maxOutputTokens: 32000
           temperature: 0.2
           toolChoice: auto
         checker-model:
           provider: gateway
           model: gpt-5.5
-          apiModel: gpt-5.5
           maxOutputTokens: 32000
           temperature: 0.1
           toolChoice: auto

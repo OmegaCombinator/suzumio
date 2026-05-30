@@ -40,7 +40,6 @@ Use `suzumio config render path/to/project.yaml` before review or initialization
             main:
               provider: gateway
               model: gpt-5.5
-              apiModel: gpt-5.5
 
     tools:
       toolpacks:
@@ -271,7 +270,7 @@ agents:
       - coordination.wait_for_signal
 ```
 
-This creates `solver-1`, `solver-2`, and `solver-3`. The activation prompt includes a roster, so PM can message the exact generated ids.
+This creates `solver-1`, `solver-2`, and `solver-3`. The first activation prompt includes these generated ids so the team can send direct messages with exact recipients.
 
 ## Complete Shape
 
@@ -279,11 +278,6 @@ The example below shows the main fields in one file. Most projects should split 
 
     name: research-demo
     task: @import(tasks/main.md)
-
-    scheduler:
-      kind: nonpreemptive-signals
-      intervalMs: 2000
-      maxPromptMessages: 20
 
     channels:
       - "#project"
@@ -310,13 +304,11 @@ The example below shows the main fields in one file. Most projects should split 
             worker-main:
               provider: gateway
               model: gpt-5.5
-              apiModel: gpt-5.5
               toolChoice: auto
               maxOutputTokens: 2000
             pm-main:
               provider: gateway
               model: gpt-5.5
-              apiModel: gpt-5.5
               toolChoice: auto
               maxOutputTokens: 2000
             worker-with-fallback:
@@ -362,7 +354,7 @@ The example below shows the main fields in one file. Most projects should split 
 | `agents`        | Yes      | Map of agent ids to agent configs. At least one agent is required.                                                      |
 | `tools`         | No       | Toolpacks registered for the project. Defaults to `core` and `web`; add `shell` for container-local bash and shared artifact files. |
 | `extends`       | No       | One profile object or a list of profile objects to merge before local fields.                                           |
-| `scheduler`     | No       | Scheduler kind and prompt-signal batching. Defaults to `nonpreemptive-signals`.                                         |
+| `scheduler`     | No       | Advanced scheduler options. Most projects should omit it and use the defaults.                                          |
 | `backend`       | No       | Docker runner image, controller support URL, Docker options, and model runner settings.                                 |
 | `channels`      | No       | Allowed channel names. Defaults include `#project` and `#blocked`.                                                      |
 | `observability` | No       | Documentation-level server defaults for HTTP/WebUI. The CLI flags still control the actual server bind address.         |
@@ -499,18 +491,9 @@ Import loops and excessive import depth are rejected so a project cannot acciden
 
 The backend object deep-merges, so `backend.image` remains from the profile while `backend.runner.mode` is overridden locally. The channels array is replaced, not appended.
 
-## Scheduler Config
+## Scheduler Defaults
 
-    scheduler:
-      kind: nonpreemptive-signals
-      intervalMs: 2000
-      maxPromptMessages: 20
-
-| Field               | Description                                                                                       |
-|---------------------|---------------------------------------------------------------------------------------------------|
-| `kind`              | `nonpreemptive-signals` is the default. `nonpreemptive-mailbox` is accepted as a compatibility alias. |
-| `intervalMs`        | Intended scheduler loop interval. The current server uses a fixed loop aligned with this default. |
-| `maxPromptMessages` | Maximum pending signals rendered into one activation prompt.                                      |
+Most projects should omit `scheduler`. The default is signal-driven and non-preemptive: idle agents wake for pending signals, and running agents are not interrupted. Advanced projects may set `scheduler.kind` or `scheduler.maxSignalsPerActivation`; the default signal batch size is 20.
 
 ## Backend Config
 
@@ -563,19 +546,18 @@ The backend object deep-merges, so `backend.image` remains from the profile whil
             worker-main:
               provider: gateway
               model: gpt-5.5
-              apiModel: gpt-5.5
+              reasoningEffort: high
               toolChoice: auto
               maxOutputTokens: 2000
             pm-main:
               provider: gateway
               model: gpt-5.5
-              apiModel: gpt-5.5
             worker-with-fallback:
               model-list:
                 - worker-main
                 - pm-main
 
-Model selection is explicit. Set `backend.runner.model` for a project-level selection, or set `agents.*.model` per agent. Presets with `model-list` expand to an ordered fallback list; the runner tries each concrete preset in order.
+Model selection is explicit. Set `backend.runner.model` for a project-level selection, or set `agents.*.model` per agent. Presets with `model-list` expand to an ordered fallback list; the runner tries each concrete preset in order. In most configs, `model` is also the provider model id. Use `apiModel` only when you want the local preset name to differ from the provider-facing model id.
 
 <div class="notice danger">
 

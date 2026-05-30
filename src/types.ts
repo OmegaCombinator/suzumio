@@ -33,8 +33,8 @@ export interface LocalToolpackConfig {
 
 export interface SchedulerConfig {
   kind: "nonpreemptive-mailbox" | "nonpreemptive-signals";
-  intervalMs: number;
-  maxPromptMessages: number;
+  maxSignalsPerActivation: number;
+  maxPromptMessages?: number;
 }
 
 export interface BackendConfig {
@@ -63,8 +63,8 @@ export interface DockerProxyConfig {
 export interface RunnerConfig {
   mode: "ai";
   model?: string;
-  maxIterations: number;
-  maxToolCalls: number;
+  maxIterations?: number;
+  maxToolCalls?: number;
   finalPrompt?: string;
   models?: ModelRegistryConfig;
 }
@@ -90,6 +90,7 @@ export interface ModelPresetConfig {
   model?: string;
   modelList?: string[];
   apiModel?: string;
+  reasoningEffort?: string;
   temperature?: number;
   topP?: number;
   topK?: number;

@@ -49,7 +49,7 @@ lead: "Suzumio 将 orchestration 与 execution 分离。核心进程拥有项目
 
 ## Runner Contract
 
-Runner 通过一个只读 input 文件接收全部上下文，并通过 HTTP 回传完成结果。这样执行层仍可替换，同时不会让模型可写文件成为 output authority。
+Runner 通过一个只读 input 文件接收上下文，并通过 HTTP 回传完成结果。这样执行层仍可替换，同时不会让模型可写文件成为 output authority。
 
     type RunnerActivationInput = {
       project: string
@@ -93,13 +93,13 @@ Runner 通过一个只读 input 文件接收全部上下文，并通过 HTTP 回
       runner POSTs /runner/tool-calls/finish
       runner returns tool output to model
 
-模型默认不会获得任意 host tools。工具按 agent 配置。`shell.exec` 和 `web.fetch` 在 Docker runner 内执行；消息、artifact、completion 和 coordination 工具使用 Suzumio support API。
+模型默认不会获得任意 host tools。工具按 agent 配置。`shell.exec` 和 `web.fetch` 在 Docker runner 内执行；消息、completion 和 coordination 工具使用 Suzumio support API。
 
 ## Signal Delivery
 
 Agent 不 poll 工作。Suzumio 把 pending signal 渲染进下一个 activation prompt，并记录哪个 activation 收到了哪些 signal。这样既避免 polling loop，也让调度决策可审计。
 
-Message 会创建 `message.created` signal。Artifact 会创建审计 signal。自定义 toolpack 可以调用 `recordSignal` 创建 pending 协调任务或 closed useful effect。
+Message 会创建 `message.created` signal。Shared artifact 文件是普通持久文件，本身不会唤醒 agent。自定义 toolpack 可以调用 `recordSignal` 创建 pending 协调任务或 closed useful effect。
 
 ## SQLite 是项目事实
 

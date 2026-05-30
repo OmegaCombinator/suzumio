@@ -15,6 +15,7 @@ export class DockerChatBackend {
   async startActivation(store: ProjectStore, agent: AgentRecord, activation: ActivationRecord, prompt: string): Promise<void> {
     const config = store.config();
     const toolpacks = await resolveToolpacks(config.tools.toolpacks);
+    const agents = store.listAgents();
     const runnerToolpacks = runnerToolpackSpecs(toolpacks, agent);
     const activationDir = path.dirname(activation.inputPath);
     await mkdir(activationDir, { recursive: true });
@@ -31,7 +32,6 @@ export class DockerChatBackend {
     };
     await writeFile(activation.inputPath, JSON.stringify(input, null, 2) + "\n", "utf8");
     const containerName = safeName(`suzumio_${store.project}_${agent.id}_${activation.id}`);
-    const agents = store.listAgents();
     await ensureArtifactDirs(store.paths.artifacts, agents);
     const container = await this.createContainer(config, agent, agents, activation, containerName, toolpacks, store.paths.artifacts);
     store.setActivationContainer(activation.id, containerName);

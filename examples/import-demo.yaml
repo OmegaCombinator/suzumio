@@ -19,7 +19,6 @@ backend:
         main:
           provider: gateway
           model: gpt-5.5
-          apiModel: gpt-5.5
           maxOutputTokens: 2000
           toolChoice: auto
         main-with-fallback:

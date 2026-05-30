@@ -6,11 +6,6 @@ task: |
 
   The final report should separate known or textbook facts, derivations reproduced by the team, speculative leads, failed attempts, and next experiments. Do not claim a new bound unless the proof or construction is actually included.
 
-scheduler:
-  kind: nonpreemptive-signals
-  intervalMs: 2000
-  maxPromptMessages: 40
-
 backend:
   kind: docker-chat
   image: suzumio-runner:dev
@@ -28,8 +23,6 @@ backend:
   runner:
     mode: ai
     model: explorer
-    maxIterations: 80
-    maxToolCalls: 240
     models:
       providers:
         gateway:
@@ -41,14 +34,12 @@ backend:
         explorer:
           provider: gateway
           model: gpt-5.5
-          apiModel: gpt-5.5
           maxOutputTokens: 32000
           temperature: 0.55
           toolChoice: auto
         critic:
           provider: gateway
           model: gpt-5.5
-          apiModel: gpt-5.5
           maxOutputTokens: 32000
           temperature: 0.2
           toolChoice: auto

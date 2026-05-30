@@ -28,7 +28,7 @@ export class NonPreemptiveSignalScheduler {
   private async tickAgent(store: ProjectStore, agent: AgentRecord, agents: AgentRecord[]): Promise<void> {
     if (agent.status === "running" || agent.status === "stopped" || agent.activeActivationId) return;
     const config = store.config();
-    const signals = store.pendingSignals(agent.id, config.scheduler.maxPromptMessages);
+    const signals = store.pendingSignals(agent.id, signalsPerActivation(config));
     if (signals.length === 0) {
       if (agent.status !== "quiet" && agent.status !== "failed") store.setAgentStatus(agent.id, "quiet", null);
       return;
@@ -49,13 +49,13 @@ function renderActivationPrompt(config: ProjectConfig, agent: AgentRecord, agent
   const mountedInputs = renderMountedInputs(config, agent);
   return [
     isFirstActivation ? renderBootstrapContext(config, agent, mountedInputs) : renderContinueContext(),
-    renderAgentRoster(agents),
-    renderSharedArtifacts(agent, agents),
+    isFirstActivation ? renderAgentRoster(agents) : undefined,
+    isFirstActivation ? renderSharedArtifacts(agent, agents) : undefined,
     renderConversationHistory(messages),
     renderActivationHistory(activations),
     "# New Signals",
     ...signals.map(renderSignal),
-    "# Activation Rule\n\nTreat the conversation history and your previous activation outputs as your continuous working context. New Signals are the current wake-up triggers, not the whole context. Work until you have a useful result, blocker, message to send, wait-for-signal declaration, or final submission. If you are waiting for replies you requested, call coordination.wait_for_signal rather than continuing by assumption. Use the Project Agents roster as current status: an agent that is running on work you requested has not necessarily finished, so wait unless that work is explicitly irrelevant or superseded. Calling coordination.wait_for_signal or completion.submit ends this activation. If you write a shared artifact, also notify the relevant agent or user. Do not poll for more work; new signals will be delivered in a later activation.",
+    "# Activation Rule\n\nTreat the conversation history and your previous activation outputs as your continuous working context. New Signals are the current wake-up triggers, not the whole context. Work until you have a useful result, blocker, message to send, wait-for-signal declaration, or final submission. If you are waiting for replies you requested, call coordination.wait_for_signal rather than continuing by assumption. Calling coordination.wait_for_signal or completion.submit ends this activation. If you write a shared artifact, also notify the relevant agent or user. Do not poll for more work; new signals will be delivered in a later activation.",
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -65,7 +65,7 @@ function renderAgentRoster(agents: AgentRecord[]): string {
   return [
     "# Project Agents",
     "Use the ID exactly when sending a direct message to an agent.",
-    ...agents.map((agent) => [`## ${agent.id}`, `Name: ${agent.displayName}`, `Role: ${agent.role}`, `Status: ${agent.status}`].join("\n")),
+    ...agents.map((agent) => [`## ${agent.id}`, `Name: ${agent.displayName}`, `Role: ${agent.role}`].join("\n")),
   ].join("\n\n");
 }
 
@@ -153,4 +153,8 @@ function mountLine(mount: DockerMountConfig): string {
 
 function agentSpec(config: ProjectConfig, agent: AgentRecord): AgentConfig | undefined {
   return config.agents[agent.id] ?? config.agents[agent.id.replace(/-\d+$/, "")];
+}
+
+function signalsPerActivation(config: ProjectConfig): number {
+  return config.scheduler.maxSignalsPerActivation ?? config.scheduler.maxPromptMessages ?? 20;
 }

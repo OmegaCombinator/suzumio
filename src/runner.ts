@@ -59,7 +59,7 @@ async function runAiWithModel(input: RunnerActivationInput, resolved: ResolvedRu
   let endActivationOutput: string | undefined;
   const tools = await toAiTools(input, () => {
     toolCalls += 1;
-    if (toolCalls > input.runner.maxToolCalls) throw new Error(`Exceeded maxToolCalls: ${input.runner.maxToolCalls}`);
+    if (input.runner.maxToolCalls !== undefined && toolCalls > input.runner.maxToolCalls) throw new Error(`Exceeded maxToolCalls: ${input.runner.maxToolCalls}`);
   }, (output) => {
     activationEnded = true;
     endActivationOutput = output;
@@ -67,7 +67,7 @@ async function runAiWithModel(input: RunnerActivationInput, resolved: ResolvedRu
   }, () => activationEnded);
   const messages: ModelMessage[] = [{ role: "user", content: input.activation.prompt }];
   let text = "";
-  const result = streamText({
+  const request = {
     model: resolved.languageModel as never,
     messages,
     tools: Object.keys(tools).length ? (tools as never) : undefined,
@@ -77,12 +77,13 @@ async function runAiWithModel(input: RunnerActivationInput, resolved: ResolvedRu
     topP: resolved.preset.topP,
     topK: resolved.preset.topK,
     maxOutputTokens: resolved.preset.maxOutputTokens,
-    providerOptions: resolved.preset.providerOptions as never,
+    providerOptions: providerOptionsFor(resolved) as never,
     headers: resolved.preset.headers,
     abortSignal: abortController.signal,
-    stopWhen: stepCountIs(input.runner.maxIterations),
     maxRetries: 0,
-  } as never) as any;
+  } as Record<string, unknown>;
+  if (input.runner.maxIterations !== undefined) request.stopWhen = stepCountIs(input.runner.maxIterations);
+  const result = streamText(request as never) as any;
   const output = (toolOutput?: string): RunnerActivationOutput => ({ text: text.trim() || toolOutput || "(model returned no text)", usage: { selectedModel: resolved.selectedPresetId, model: resolved.presetId, apiModel: resolved.apiModel } });
   try {
     for await (const event of result.fullStream as AsyncIterable<any>) {
@@ -98,6 +99,26 @@ async function runAiWithModel(input: RunnerActivationInput, resolved: ResolvedRu
     throw error;
   }
   return output();
+}
+
+function providerOptionsFor(resolved: ResolvedRunnerModel): JsonObject {
+  const options: JsonObject = { ...(resolved.preset.providerOptions ?? {}) };
+  if (!resolved.preset.reasoningEffort) return options;
+  for (const key of reasoningEffortProviderKeys(resolved)) {
+    const current = isJsonObject(options[key]) ? options[key] : {};
+    options[key] = { ...current, reasoningEffort: resolved.preset.reasoningEffort };
+  }
+  return options;
+}
+
+function reasoningEffortProviderKeys(resolved: ResolvedRunnerModel): string[] {
+  if (resolved.provider.type === "openai") return ["openai"];
+  if (resolved.provider.type === "openai-compatible") return ["openaiCompatible", resolved.providerId];
+  return [resolved.providerId];
+}
+
+function isJsonObject(value: unknown): value is JsonObject {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 async function submitActivationOutput(input: RunnerActivationInput, output: RunnerActivationOutput): Promise<void> {

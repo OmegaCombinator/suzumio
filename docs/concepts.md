@@ -118,7 +118,7 @@ Tools are presented to the model by the Docker runner. Stateful tools call back 
 
 ## Shared Artifacts
 
-Every activation gets `/artifacts/<agent-id>` mounts. The current agent's directory is read-write, and other agents' directories are read-only. This is the lightweight artifact workflow: agents with `shell.exec` can write scripts, outputs, notes, and data directly to their own shared directory, then send a message pointing other agents at the path.
+Every activation gets `/artifacts/<agent-id>` mounts. The current agent's directory is read-write, and other agents' directories are read-only. The first activation prompt lists the artifact paths; later activations rely on the agent's continuing context. This is the lightweight artifact workflow: agents with `shell.exec` can write scripts, outputs, notes, and data directly to their own shared directory, then send a message pointing other agents at the path.
 
 ## Event
 

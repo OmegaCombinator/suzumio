@@ -317,7 +317,7 @@ async function waitForSignalSupport({ store, agent, activationId }: ControllerCo
 function completionSubmitDefinition(): ToolDefinition {
   return {
     name: "completion.submit",
-    description: "Submit the final Markdown project report for user approval. Use this only when you have incorporated the relevant current information and are no longer waiting for substantive replies you requested. If the roster shows an agent still running on work you requested, wait unless that work is explicitly irrelevant or superseded.",
+    description: "Submit the final Markdown project report for user approval. Use this only when you have incorporated the relevant current information and are no longer waiting for substantive replies you requested.",
     inputSchema: { type: "object", properties: { report: { type: "string" } }, required: ["report"], additionalProperties: false },
   };
 }

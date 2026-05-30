@@ -4,11 +4,6 @@ task: |
 
   Compare community activity, standard-library maturity, code/proof readability, proof engine characteristics, automation style, ecosystem tooling, and likely fit for AI-assisted formalization. Produce a balanced final report with citations or source URLs where possible.
 
-scheduler:
-  kind: nonpreemptive-signals
-  intervalMs: 2000
-  maxPromptMessages: 40
-
 backend:
   kind: docker-chat
   image: suzumio-runner:dev
@@ -18,8 +13,6 @@ backend:
   runner:
     mode: ai
     model: researcher-model
-    maxIterations: 80
-    maxToolCalls: 240
     models:
       providers:
         gateway:
@@ -31,14 +24,12 @@ backend:
         researcher-model:
           provider: gateway
           model: gpt-5.5
-          apiModel: gpt-5.5
           maxOutputTokens: 32000
           temperature: 0.35
           toolChoice: auto
         synthesis-model:
           provider: gateway
           model: gpt-5.5
-          apiModel: gpt-5.5
           maxOutputTokens: 32000
           temperature: 0.25
           toolChoice: auto

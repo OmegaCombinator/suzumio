@@ -46,11 +46,6 @@ task: |
   The worker should run a tiny Python check and save the script/output
   under /artifacts/researcher. The PM should summarize the result.
 
-scheduler:
-  kind: nonpreemptive-signals
-  intervalMs: 2000
-  maxPromptMessages: 20
-
 backend:
   kind: docker-chat
   image: suzumio-runner:dev
@@ -58,8 +53,6 @@ backend:
   runner:
     mode: ai
     model: main
-    maxIterations: 30
-    maxToolCalls: 80
     models:
       providers:
         gateway:
@@ -71,7 +64,6 @@ backend:
         main:
           provider: gateway
           model: gpt-5.5
-          apiModel: gpt-5.5
           maxOutputTokens: 8000
           temperature: 0.2
           toolChoice: auto

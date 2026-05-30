@@ -2,11 +2,6 @@ name: demo
 task: |
   Demonstrate that Suzumio can deliver a user message to an isolated Docker AI runner and record the completed activation.
 
-scheduler:
-  kind: nonpreemptive-signals
-  intervalMs: 2000
-  maxPromptMessages: 20
-
 backend:
   kind: docker-chat
   image: suzumio-runner:dev
@@ -31,13 +26,11 @@ backend:
         worker-main:
           provider: gateway
           model: gpt-5.5
-          apiModel: gpt-5.5
           maxOutputTokens: 2000
           toolChoice: auto
         pm-main:
           provider: gateway
           model: gpt-5.5
-          apiModel: gpt-5.5
           maxOutputTokens: 2000
           toolChoice: auto
         worker-with-fallback:
