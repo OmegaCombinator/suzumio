@@ -48,7 +48,7 @@ lead: "CLI 是初始化项目、渲染配置、发送任务、查看运行状态
     suzumio serve --host 0.0.0.0 --port 39400
     suzumio serve --host 127.0.0.1 --port 39400 --no-scheduler
 
-启动 HTTP API、controller support routes、WebUI、SSE endpoint 和 scheduler loop。使用 `--no-scheduler` 可以只启动 API，再用 `suzumio tick` 手动驱动调度。
+启动 HTTP API、controller support routes、WebUI static assets、SSE endpoint 和 scheduler loop。使用 `--no-scheduler` 可以只启动 API，再用 `suzumio tick` 手动驱动调度。
 
 | Flag             | 说明                                                    |
 |------------------|---------------------------------------------------------|

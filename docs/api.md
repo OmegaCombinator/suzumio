@@ -227,6 +227,6 @@ Fetches an HTTP(S) URL from inside the Docker runner container. `format: "text"`
 
 ## WebUI
 
-The root path `/` serves the embedded WebUI. It calls the API routes above and refreshes periodically. The first version is intentionally simple: project selector, message form, agents, messages, activations, and events.
+The root path `/` serves the Preact-based WebUI built from `webui/`. It calls the API routes above and refreshes periodically. The control room includes project selection, status actions, message composition, agent roster, messages, activations, tool calls, event timeline, resolved YAML, and submitted report views.
 
 <div class="footer">Next: <a href="roadmap.html">Roadmap</a>.</div>

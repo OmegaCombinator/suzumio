@@ -57,7 +57,7 @@ Initialization fails if a project with the same name already exists in the selec
     suzumio serve --host 0.0.0.0 --port 39400
     suzumio serve --host 127.0.0.1 --port 39400 --no-scheduler
 
-Starts the HTTP API, controller support routes, embedded WebUI, SSE endpoint, and scheduler loop. Use `--no-scheduler` if you want to drive scheduling manually with `suzumio tick`.
+Starts the HTTP API, controller support routes, WebUI static assets, SSE endpoint, and scheduler loop. Use `--no-scheduler` if you want to drive scheduling manually with `suzumio tick`.
 
 | Flag             | Description                                                             |
 |------------------|-------------------------------------------------------------------------|

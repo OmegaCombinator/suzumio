@@ -15,7 +15,7 @@ lead: "The first version proves the shape: Docker-first activations, SQLite proj
 
 <div class="card"><h3>Safer Docker runtime</h3><p>Add CPU, memory, network, user, read-only mount, and capability controls to backend config.</p></div>
 
-<div class="card"><h3>Better WebUI</h3><p>Add filtering, artifact previews, resolved config view, activation input and result views, and live SSE updates.</p></div>
+<div class="card"><h3>Better WebUI</h3><p>Extend the Preact control room with filtering, artifact previews, activation input/result drill-downs, and live SSE updates.</p></div>
 
 </div>
 

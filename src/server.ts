@@ -1,4 +1,6 @@
 import http from "node:http";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { readFile } from "node:fs/promises";
 import { ProjectStore } from "./store.js";
 import { ToolSupportHost } from "./tools.js";
@@ -29,6 +31,8 @@ export async function serveSuzumio(options: ServeOptions): Promise<http.Server> 
   return server;
 }
 
+const WEBUI_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "webui");
+
 async function handleRequest(
   request: http.IncomingMessage,
   response: http.ServerResponse,
@@ -38,7 +42,7 @@ async function handleRequest(
   const parts = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
 
   if (request.method === "GET" && url.pathname === "/health") return json(response, { healthy: true });
-  if (request.method === "GET" && url.pathname === "/") return html(response, WEBUI_HTML);
+  if (request.method === "GET" && (url.pathname === "/" || url.pathname.startsWith("/assets/"))) return serveWebui(response, url.pathname);
   if (request.method === "POST" && url.pathname === "/runner/tool-calls/start") return json(response, await ctx.toolSupport.startToolCall(await readBody(request)));
   if (request.method === "POST" && url.pathname === "/runner/tool-calls/finish") return json(response, await ctx.toolSupport.finishToolCall(await readBody(request)));
   if (request.method === "POST" && url.pathname === "/runner/signals") return json(response, await ctx.toolSupport.recordRunnerSignal(await readBody(request)));
@@ -211,57 +215,25 @@ function text(response: http.ServerResponse, value: string, status = 200): void 
   response.end(value.endsWith("\n") ? value : value + "\n");
 }
 
-function html(response: http.ServerResponse, value: string): void {
-  response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-  response.end(value);
+async function serveWebui(response: http.ServerResponse, pathname: string): Promise<void> {
+  const relative = pathname === "/" ? "index.html" : pathname.slice(1);
+  const filePath = path.resolve(WEBUI_DIR, relative);
+  if (!filePath.startsWith(WEBUI_DIR + path.sep) && filePath !== path.join(WEBUI_DIR, "index.html")) return json(response, { error: "not found" }, 404);
+  try {
+    const body = await readFile(filePath);
+    response.writeHead(200, { "content-type": contentType(filePath) });
+    response.end(body);
+  } catch {
+    json(response, { error: "webui asset not found. Run npm run build:webui." }, 404);
+  }
 }
 
-const WEBUI_HTML = String.raw`<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Suzumio</title>
-  <style>
-    :root { color-scheme: light dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
-    body { margin: 0; background: #101114; color: #eceff4; }
-    header { display: flex; gap: 16px; align-items: center; padding: 16px 20px; border-bottom: 1px solid #2a2d35; }
-    h1 { margin: 0; font-size: 18px; letter-spacing: .04em; }
-    main { display: grid; grid-template-columns: 320px 1fr; min-height: calc(100vh - 58px); }
-    aside { border-right: 1px solid #2a2d35; padding: 16px; }
-    section { padding: 16px; }
-    button, select, input, textarea { background: #181b22; color: #eceff4; border: 1px solid #3a3f4b; border-radius: 8px; padding: 8px; }
-    button { cursor: pointer; }
-    .card { background: #151820; border: 1px solid #2a2d35; border-radius: 12px; padding: 12px; margin-bottom: 12px; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
-    .muted { color: #a7adba; }
-    pre { white-space: pre-wrap; overflow-wrap: anywhere; background: #0b0c10; padding: 10px; border-radius: 8px; }
-    textarea { width: 100%; min-height: 90px; box-sizing: border-box; }
-    .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; background: #263247; color: #b7cdfb; }
-  </style>
-</head>
-<body>
-  <header><h1>Suzumio</h1><select id="project"></select><button onclick="refresh()">Refresh</button></header>
-  <main>
-    <aside>
-      <div class="card"><strong>Send Message</strong><p><input id="recipient" placeholder="recipient agent id" value="pm" /></p><textarea id="body" placeholder="message"></textarea><p><button onclick="sendMessage()">Send</button></p></div>
-      <div id="projects"></div>
-    </aside>
-    <section>
-      <div id="summary" class="card"></div>
-      <div class="card"><h3>Agents</h3><div id="agents"></div></div>
-      <div class="grid"><div class="card"><h3>Messages</h3><div id="messages"></div></div><div class="card"><h3>Activations</h3><div id="activations"></div></div></div>
-      <div class="card"><h3>Events</h3><div id="events"></div></div>
-    </section>
-  </main>
-  <script>
-    async function api(path, options) { const r = await fetch(path, options); if (!r.ok) throw new Error(await r.text()); return r.json(); }
-    async function loadProjects() { const projects = await api('/api/projects'); const sel = document.getElementById('project'); sel.innerHTML = projects.map(p => '<option>'+p.id+'</option>').join(''); document.getElementById('projects').innerHTML = projects.map(p => '<div class="card"><b>'+p.id+'</b><br><span class="pill">'+p.status+'</span></div>').join(''); if (projects[0]) await loadProject(sel.value || projects[0].id); }
-    async function loadProject(name) { if (!name) return; const [p, events] = await Promise.all([api('/api/projects/'+name), api('/api/projects/'+name+'/events?limit=40')]); document.getElementById('summary').innerHTML = '<b>'+p.id+'</b> <span class="pill">'+p.status+'</span><p class="muted">'+p.task+'</p>'; document.getElementById('agents').innerHTML = p.agents.map(a => '<p><b>'+a.id+'</b> <span class="pill">'+a.status+'</span><br><span class="muted">'+a.role+'</span></p>').join(''); document.getElementById('messages').innerHTML = p.recentMessages.map(m => '<pre><b>'+m.sender+'</b> -> '+(m.recipient || m.channel)+' ['+m.priority+']\n'+m.body+'</pre>').join(''); document.getElementById('activations').innerHTML = p.recentActivations.map(a => '<pre><b>'+a.agentId+'</b> '+a.status+'\n'+(a.text || a.error || '').slice(0, 600)+'</pre>').join(''); document.getElementById('events').innerHTML = events.reverse().map(e => '<pre>'+e.type+' '+e.created_at+'\n'+e.data_json+'</pre>').join(''); }
-    async function refresh() { const name = document.getElementById('project').value; if (name) await loadProject(name); else await loadProjects(); }
-    async function sendMessage() { const name = document.getElementById('project').value; await api('/api/projects/'+name+'/messages', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ recipient: document.getElementById('recipient').value, body: document.getElementById('body').value }) }); document.getElementById('body').value=''; await refresh(); }
-    document.getElementById('project').addEventListener('change', e => loadProject(e.target.value));
-    loadProjects().catch(e => document.body.innerHTML = '<pre>'+e.stack+'</pre>'); setInterval(refresh, 5000);
-  </script>
-</body>
-</html>`;
+function contentType(filePath: string): string {
+  const ext = path.extname(filePath);
+  if (ext === ".html") return "text/html; charset=utf-8";
+  if (ext === ".js") return "text/javascript; charset=utf-8";
+  if (ext === ".css") return "text/css; charset=utf-8";
+  if (ext === ".svg") return "image/svg+xml";
+  if (ext === ".json") return "application/json; charset=utf-8";
+  return "application/octet-stream";
+}

@@ -8,8 +8,10 @@
     "suzumio-runner": "dist/runner.js"
   },
   "scripts": {
-    "build": "tsc",
-    "typecheck": "tsc --noEmit",
+    "build": "npm run build:server && npm run build:webui",
+    "build:server": "tsc",
+    "build:webui": "vite build --config webui/vite.config.ts",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p webui/tsconfig.json",
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
     "docs:preview": "vitepress preview docs"
@@ -21,14 +23,17 @@
     "@ai-sdk/openai-compatible": "latest",
     "ai": "latest",
     "dockerode": "latest",
+    "preact": "^10.29.2",
     "undici": "latest",
     "yaml": "latest",
     "zod": "latest"
   },
   "devDependencies": {
+    "@preact/preset-vite": "^2.10.5",
     "@types/dockerode": "latest",
     "@types/node": "latest",
     "typescript": "latest",
+    "vite": "^5.4.21",
     "vitepress": "^1.6.4"
   }
 }

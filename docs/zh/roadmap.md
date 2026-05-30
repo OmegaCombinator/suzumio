@@ -15,7 +15,7 @@ lead: "第一版验证了核心形状：Docker-first activations、SQLite projec
 
 <div class="card"><h3>更安全的 Docker runtime</h3><p>在 backend config 中加入 CPU、memory、network、user、read-only mount 和 capability 控制。</p></div>
 
-<div class="card"><h3>更好的 WebUI</h3><p>加入过滤、artifact preview、resolved config view、activation input 和 result view，以及 live SSE updates。</p></div>
+<div class="card"><h3>更好的 WebUI</h3><p>继续扩展 Preact control room，加入过滤、artifact preview、activation input/result drill-down 和 live SSE updates。</p></div>
 
 </div>
 

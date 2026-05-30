@@ -22,7 +22,7 @@ This repository is an early build. The first implementation includes:
 - Configured toolpacks for `core`, `shell`, and `web` tools.
 - Runner-local `shell.exec` and `web.fetch`, plus support-backed message, coordination, and completion tools.
 - A signal-driven non-preemptive scheduler.
-- CLI, HTTP API, SSE stream, and a minimal flat WebUI.
+- CLI, HTTP API, SSE stream, and a Preact-based WebUI control room.
 
 The documentation site is committed under `docs/` and deployed to GitHub Pages by `.github/workflows/pages.yml`.
 

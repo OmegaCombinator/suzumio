@@ -42,7 +42,8 @@ The core process is the authority for project-level records. If data should be v
 | `store.ts`     | Creates and queries SQLite tables for projects, agents, messages, signals, activations, events, and tool calls.                         |
 | `scheduler.ts` | Implements the signal-driven non-preemptive scheduling rule.                                                                            |
 | `tools.ts`     | Resolves built-in and local toolpacks and serves controller support with token and allowlist checks.                                    |
-| `server.ts`    | HTTP API, SSE stream, controller support route, activation result route, and embedded WebUI.                                            |
+| `server.ts`    | HTTP API, SSE stream, controller support route, activation result route, and static WebUI asset serving.                                 |
+| `webui/`       | Preact + Vite project for the browser control room served at `/`.                                                                        |
 | `backend.ts`   | Docker container creation, configured bind mounts, runner input, and activation completion monitoring.                                  |
 | `runner.ts`    | Container entrypoint for model-backed activations and runner-local tool execution.                                                      |
 

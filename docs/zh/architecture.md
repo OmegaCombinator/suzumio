@@ -42,7 +42,8 @@ lead: "Suzumio 将 orchestration 与 execution 分离。核心进程拥有项目
 | `store.ts`     | 创建和查询 projects、agents、messages、signals、activations、events、tool_calls 等 SQLite 表。                       |
 | `scheduler.ts` | 实现 signal-driven 非抢占式调度规则。                                                                                  |
 | `tools.ts`     | 解析 built-in 和 local toolpacks，并通过 token 与 allowlist 校验提供 controller support。                              |
-| `server.ts`    | HTTP API、SSE stream、controller support route、activation result route 和内嵌 WebUI。                                 |
+| `server.ts`    | HTTP API、SSE stream、controller support route、activation result route 和静态 WebUI asset serving。                   |
+| `webui/`       | Preact + Vite 浏览器 control room，构建后由 `/` 提供。                                                               |
 | `backend.ts`   | Docker 容器创建、配置的 bind mounts、runner input 和 activation completion monitoring。                                |
 | `runner.ts`    | 模型驱动 activation 的容器入口，并执行 runner-local tools。                                                            |
 

@@ -227,6 +227,6 @@ Backend 只有在收到这个已鉴权提交后才把 activation 标记为完成
 
 ## WebUI
 
-根路径 `/` 提供内嵌 WebUI。第一版保持简单：项目选择器、消息表单、agents、messages、activations 和 events。
+根路径 `/` 提供由 `webui/` 构建的 Preact WebUI。它调用上面的 API routes 并定期刷新。Control room 包含项目选择、状态操作、消息编辑、agent roster、messages、activations、tool calls、event timeline、resolved YAML 和 submitted report 视图。
 
 <div class="footer">下一步：<a href="roadmap.html">路线图</a>。</div>

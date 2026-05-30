@@ -6,6 +6,7 @@ COPY package.json package-lock.json* ./
 RUN npm install
 COPY tsconfig.json ./
 COPY src ./src
+COPY webui ./webui
 RUN npm run build
 
 ENV NODE_ENV=production
