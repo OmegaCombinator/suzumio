@@ -1,8 +1,8 @@
 ---
-title: "Suzumio 配置"
-eyebrow: "配置"
-heroTitle: "项目 YAML 参考"
-lead: "Suzumio 项目用 YAML 声明，解析成一个 canonical config 后随项目保存。配置描述 task、agents、message channels、Docker backend、scheduler 和模型 preset。"
+title: "Suzumio YAML 配置"
+eyebrow: "YAML 配置"
+heroTitle: "用 YAML 编写多 agent 行为"
+lead: "Suzumio 项目就是 YAML 文件。好的 YAML 会定义任务、分配 agent 职责、谨慎授予工具，并告诉团队什么时候等待、汇报、审查和提交。"
 ---
 
 ## 解析流程
@@ -54,6 +54,224 @@ Suzumio 把配置当作 source material，而不是可变运行时状态。运�
           Handle the user request and stay concise.
         tools:
           - messages.send
+
+这个项目只有一个 agent，适合 smoke test，但不是真正的协作。实际的 multi-agent YAML 通常从一个 coordinator 和至少一个 specialist 开始。
+
+## 如何设计 Multi-Agent YAML
+
+可以把 YAML 想成团队的小型作业流程。好的文件会回答五个问题。
+
+| 问题 | YAML 位置 | 好答案 |
+|------|-----------|--------|
+| 什么算成功？ | `task` | 写清最终报告应包含什么，以及哪些结论不能假装已经证明。 |
+| 谁负责协调？ | `agents.pm` 或类似 agent | 只给一个 agent `completion.submit`，让它负责等待和整合。 |
+| 谁做实际工作？ | worker agents | 给 worker 狭窄 prompt，并且只给它需要的工具。 |
+| 谁检查质量？ | critic/checker agent | 给它审查指令，并要求 ACCEPT/REVISE 这类明确 verdict。 |
+| 证据如何共享？ | `shell.exec` 和 `/artifacts/<agent-id>` | 告诉会用工具的 agent 把脚本、日志、笔记、输出写到自己的 artifact 目录，再用 message 告知路径。 |
+
+### 通常有效的 Prompt 规则
+
+- 把持久项目要求放在 `task`，不要只放进某个 agent 的 prompt。
+- 每个 agent 都写 role-specific prompt，不要把整个流程脚本塞给所有人。
+- 告诉 PM：发出的请求在收到回复或明确作废前都算 outstanding。
+- 告诉 worker：先发送有用结果；如果已经汇报完、只是等待下一步，就调用 `coordination.wait_for_signal` 并设置 `notifyPm:false`。
+- 只把 `completion.submit` 给最终负责判断是否完成的 agent。
+- 只把 `shell.exec` 给需要运行代码或写文件的 agent。
+
+## 模式 1：PM + 两个 Worker + Critic
+
+适合证明、研究摘要、设计评审，或者任何需要比较独立尝试的任务。
+
+```yaml
+name: reviewed-research
+task: |
+  Produce a conservative research note. Separate checked facts,
+  plausible ideas, failed attempts, and remaining gaps.
+
+tools:
+  toolpacks: [core, shell, web]
+
+agents:
+  pm:
+    role: research-coordinator
+    prompt: |
+      Delegate substantive work to the workers. Track outstanding requests.
+      Send candidate conclusions to critic before submitting. If waiting for
+      requested replies, call coordination.wait_for_signal.
+    tools:
+      - messages.send
+      - coordination.wait_for_signal
+      - completion.submit
+
+  worker:
+    role: researcher
+    count: 2
+    names: [Akari, Ren]
+    prompt: |
+      Work independently on the request you receive. Send pm your best result,
+      including assumptions, uncertainty, and artifact paths. If you already
+      reported and are waiting, call coordination.wait_for_signal with notifyPm:false.
+    tools:
+      - messages.send
+      - coordination.wait_for_signal
+      - shell.exec
+      - web.fetch
+
+  critic:
+    role: reviewer
+    displayName: Mio
+    prompt: |
+      Review claims for unsupported leaps. Send pm ACCEPT, ACCEPT-with-edits,
+      or REVISE, with the smallest concrete issue to fix.
+    tools:
+      - messages.send
+      - coordination.wait_for_signal
+```
+
+这个模式有效的原因：
+
+- `pm` 负责提交和协调。
+- worker 可以使用工具和共享文件，但不能提交最终答案。
+- critic 默认不需要 shell；它审查文本和 artifact path。
+
+## 模式 2：Python 实验团队
+
+适合希望 agent 实际运行小实验，而不只是互相聊天的任务。
+
+```yaml
+tools:
+  toolpacks: [core, shell]
+
+agents:
+  pm:
+    role: experiment-lead
+    prompt: |
+      Ask the experimenter for a reproducible script and output. Do not submit
+      until the artifact path and conclusion are both in conversation history.
+    tools:
+      - messages.send
+      - coordination.wait_for_signal
+      - completion.submit
+
+  experimenter:
+    role: python-experimenter
+    prompt: |
+      Use shell.exec to write scripts and outputs under /artifacts/experimenter.
+      Prefer small, auditable scripts. Send pm the path, command, output summary,
+      and limitations. Then wait with notifyPm:false.
+    tools:
+      - shell.exec
+      - messages.send
+      - coordination.wait_for_signal
+```
+
+好的 worker message 应该包含：
+
+```text
+Wrote /artifacts/experimenter/search.py and /artifacts/experimenter/run.log.
+Command: python3 /artifacts/experimenter/search.py
+Result: no counterexample found up to n=8.
+Limitations: brute force only, no proof beyond n=8.
+```
+
+## 模式 3：Web Research + 保守 Summarizer
+
+适合需要 worker 抓取来源，但最终答案必须避免过度断言的任务。
+
+```yaml
+tools:
+  toolpacks: [core, web]
+
+agents:
+  pm:
+    role: summary-editor
+    prompt: |
+      Ask researcher for source-backed notes. Keep claims conservative and cite
+      which statements came from fetched sources versus model memory.
+    tools:
+      - messages.send
+      - coordination.wait_for_signal
+      - completion.submit
+
+  researcher:
+    role: source-checker
+    prompt: |
+      Use web.fetch for lightweight source checks. Quote only short relevant
+      snippets and include URLs. If a source cannot be fetched, say so.
+    tools:
+      - web.fetch
+      - messages.send
+      - coordination.wait_for_signal
+```
+
+如果网络需要 proxy，可以在 YAML 中声明，或者继承运行 Suzumio 进程的环境变量：
+
+```yaml
+backend:
+  docker:
+    network: host
+    proxy:
+      inheritEnv: true
+      rewriteLocalhost: false
+      http: ${HTTP_PROXY}
+      https: ${HTTPS_PROXY}
+```
+
+## 模式 4：Review Pipeline
+
+适合 code review、写作或设计任务：作者不应该自己批准自己的输出。
+
+```yaml
+agents:
+  author:
+    role: draft-author
+    prompt: |
+      Produce the draft requested by pm. Write longer files under /artifacts/author
+      if useful, then message pm with the path.
+    tools:
+      - messages.send
+      - coordination.wait_for_signal
+      - shell.exec
+
+  reviewer:
+    role: reviewer
+    prompt: |
+      Review the draft. Prioritize concrete bugs, missing evidence, and unclear
+      claims. Send pm a verdict and minimal required edits.
+    tools:
+      - messages.send
+      - coordination.wait_for_signal
+
+  pm:
+    role: editor
+    prompt: |
+      Route the request to author, send the draft to reviewer, and submit only
+      after review is incorporated or explicitly rejected with reason.
+    tools:
+      - messages.send
+      - coordination.wait_for_signal
+      - completion.submit
+```
+
+## 模式 5：Counted Agents
+
+多个 agent 共享同一个角色、但应该独立工作时，使用 `count`。
+
+```yaml
+agents:
+  solver:
+    role: proof-worker
+    count: 3
+    names: [Akari, Ren, Sora]
+    prompt: |
+      Try an independent route. Do not coordinate with other solvers unless pm asks.
+      Report your route, exact assumptions, and smallest gap.
+    tools:
+      - messages.send
+      - coordination.wait_for_signal
+```
+
+这会创建 `solver-1`、`solver-2` 和 `solver-3`。Activation prompt 会包含 roster，所以 PM 可以给具体生成的 id 发消息。
 
 ## 完整结构
 

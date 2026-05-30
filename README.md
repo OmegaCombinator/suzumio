@@ -1,21 +1,22 @@
 # Suzumio
 
-Suzumio is a Docker-first, non-preemptive multi-agent coordination runtime.
+Suzumio is a YAML-based multi-agent system that runs non-preemptive agent activations in Docker.
 
 Documentation: https://suzumio.aixmath.org/
 
 Core principles:
 
+- Projects are declared in YAML: task, agents, prompts, tools, scheduler, Docker backend, and model presets.
 - Agents run in isolated Docker activations managed by the backend.
 - The scheduler never interrupts a running agent.
 - Agents are only woken by pending signals or explicit user/system control.
-- Suzumio owns project state, messages, signals, artifacts, tool audit logs, and observability.
+- Suzumio owns project state, messages, signals, shared artifact directories, tool audit logs, and observability.
 - The Docker runner executes one agent activation and presents runner-side model-facing tools.
-- Stateful tools call Suzumio support APIs for messages, signals, artifacts, permissions, and final submission.
+- Stateful tools call Suzumio support APIs for messages, signals, permissions, and final submission.
 
 This repository is an early build. The first implementation includes:
 
-- YAML config loading with whole-field `@import(path)` and top-level `extends`.
+- YAML config loading with whole-field `@import(path)`, top-level `extends`, and copyable multi-agent patterns.
 - SQLite project storage using Node's built-in SQLite module.
 - A Docker-first chat backend and container runner.
 - Configured toolpacks for `core`, `shell`, and `web` tools.
@@ -82,7 +83,7 @@ backend:
         gateway:
           type: openai-compatible
           baseURL: https://example.invalid/v1
-          apiKeyEnv: GATEWAY_API_KEY
+          apiKeyEnv: SUZUMIO_GATEWAY_API_KEY
       presets:
         worker-main:
           provider: gateway

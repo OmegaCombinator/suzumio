@@ -1,72 +1,145 @@
 ---
 title: "Suzumio 文档"
-description: "Suzumio 是 Docker-first、非抢占式的多智能体协调运行时。"
-eyebrow: "面向长时间运行智能体的 Docker-first 协调"
-heroTitle: "Suzumio"
-lead: "Suzumio 用 signal-driven 非抢占式调度、隔离的 Docker activation、runner-side toolpacks、controller support API、SQLite 状态、CLI、HTTP API 和轻量 WebUI 来协调多智能体项目。"
+description: "Suzumio 是一个 YAML-based multi-agent system，用 Docker activation 运行智能体团队。"
+eyebrow: "用 YAML 定义多智能体项目"
+heroTitle: "写一个 YAML，运行一组智能体"
+lead: "Suzumio 让你用一个 YAML 项目文件描述 multi-agent workflow：任务、agents、prompts、tools、Docker runner、模型 presets 和调度策略。Runtime 会把 YAML 变成持久消息、signals、activations、共享文件和最终提交。"
 actions:
-  - text: "运行演示"
+  - text: "从 YAML 开始"
     link: "quickstart.html"
     variant: "primary"
-  - text: "编写配置"
+  - text: "YAML 参考"
     link: "configuration.html"
   - text: "使用 API"
     link: "api.html"
     variant: "blue"
 ---
 
-## 用途
+## 核心想法
 
-Suzumio 适合需要让智能体长时间专注工作的项目，例如形式化、代码工作、研究流程、评审流水线和 benchmark 实验。运行时把进展记录为持久的 activation、message、artifact 和 audit log。
+Suzumio 是一个 YAML-based multi-agent system。你不是先写 orchestration code，而是先写一个项目文件，说明：
 
-Suzumio 将项目协调与智能体执行分离。核心运行时拥有项目状态和调度逻辑；Docker runner 执行一个智能体 activation，向模型展示工具，只在需要 stateful support 时回调 Suzumio，写回结果，然后退出。
+- 项目要完成什么；
+- 有哪些 agents；
+- 每个 agent 可以做什么；
+- agents 应该如何协作；
+- 使用哪个 Docker runner 和模型 presets。
 
-<div class="grid">
+Runtime 负责协调细节：把状态存进 SQLite、启动 Docker activation、把消息变成 signal、避免打断 running agent、挂载共享文件，并记录 tool calls。
 
-<div class="card"><h3>Signal 调度</h3><p>正在运行的智能体不会被追加 prompt、催促或打断。新的消息和协调事件会成为等待未来 activation 的 pending signal。</p></div>
+## 一个最小项目
 
-<div class="card"><h3>持久项目状态</h3><p>项目在 SQLite 中保存配置、智能体、消息、signal、activation、事件、工具调用和 artifact。</p></div>
+这是最小可用形状。一个 `pm` agent 接收用户消息，可以给用户或其他 agent 发消息，可以等待未来 signal，也可以提交最终报告。
 
-<div class="card"><h3>Docker-first 执行</h3><p>每个 activation 在容器中运行，包含只读 activation input、agent workspace、runner-local shell/web tools 和 HTTP 结果提交。</p></div>
+```yaml
+name: tiny-research
+task: |
+  Answer the user's question carefully. If you are missing information,
+  ask a follow-up instead of pretending.
 
-<div class="card"><h3>Runner-side tools</h3><p>项目 toolpacks 选择模型可见工具；controller support API 在需要时提供状态、权限和持久化。</p></div>
+tools:
+  toolpacks:
+    - core
 
-</div>
+agents:
+  pm:
+    role: project-manager
+    displayName: Yuki
+    prompt: |
+      You coordinate the project. Keep a short working memory in your messages.
+      Submit only when the answer is ready for the user.
+    tools:
+      - messages.send
+      - coordination.wait_for_signal
+      - completion.submit
+```
 
-## 今天可以做什么
+运行：
 
-| 任务                   | 入口                        | 结果                                                                                     |
-|------------------------|-----------------------------|------------------------------------------------------------------------------------------|
-| 运行本地 AI smoke test | [快速开始](quickstart.html) | 一个 Docker-backed AI activation，验证调度、存储、controller support routes 和 runner wiring。 |
-| 定义项目               | [配置](configuration.html)  | 带 whole-field import、profile 组合、agent、tool 和 backend 的 YAML 配置。               |
-| 从终端运维             | [CLI 参考](cli.html)        | init、serve、start、send、inspect、approve、stop 等命令。                                |
-| 集成其他系统           | [HTTP API](api.html)        | 项目对象、用户动作、事件流和 controller support calls。                                  |
-| 理解运行时边界         | [架构](architecture.html)   | 核心运行时、Docker backend、runner toolpacks、support routes 和 SQLite 的职责边界。      |
+```bash
+suzumio config render tiny-research.yaml
+suzumio init tiny-research.yaml
+suzumio serve --host 0.0.0.0 --port 39400
+suzumio start tiny-research
+suzumio send tiny-research pm P1 "Start."
+```
 
-## 核心工作流
+## YAML 如何变成多智能体行为
 
-    1. 渲染并验证项目配置。
-    2. 在 SUZUMIO_ROOT 下初始化项目。
-    3. 启动 HTTP server 和 scheduler loop。
-    4. 向一个智能体发送用户消息，或创建其他 pending signal。
-    5. Scheduler 为 signal 目标启动一个 Docker activation。
-    6. Runner 执行 activation 和模型可见工具。
-    7. Suzumio 记录消息、signal、工具调用、事件、artifact 和 activation result。
-    8. 空闲智能体保持安静，直到收到新的 pending signal。
+| YAML 字段 | 控制什么 | Runtime 中发生什么 |
+|-----------|----------|--------------------|
+| `task` | 共享项目目标 | 渲染进第一次 activation prompt。 |
+| `agents` | roster 和 prompts | 每个 agent 都变成一个持久参与者，有自己的 workspace 和共享 artifact 目录。 |
+| `agents.<id>.tools` | 模型可见工具 allowlist | worker 不能调用未授权工具。 |
+| `tools.toolpacks` | 可用工具家族 | `core` 提供 messages/wait/submit；`shell` 提供 Python/bash；`web` 提供 HTTP fetch。 |
+| `scheduler` | signal 投递策略 | 有 pending signal 的 idle agent 会获得一次 activation；running agent 不会被打断。 |
+| `backend` | Docker/model/proxy 设置 | runner image、controller URL、模型 presets、mounts、network 和 proxy 都从 YAML 解析。 |
+
+## 默认协作循环
+
+1. 用户给某个 agent 发消息，通常是 `pm`。
+2. 消息变成 pending `message.created` signal。
+3. Scheduler 为 idle target agent 启动一个 Docker activation。
+4. Agent 可以发消息、跑工具、写 `/artifacts/<agent-id>` 文件、等待或提交。
+5. 如果它给另一个 agent 发消息，就为对方创建 pending signal。
+6. 如果它调用 `coordination.wait_for_signal`，activation 干净结束，agent 保持 quiet。
+7. 如果它调用 `completion.submit`，项目变成 submitted，并写出最终报告。
+
+## 好的 YAML 会产生好的协作
+
+最重要的设计能力不是写很长的 prompt，而是分清职责，并给每个 agent 刚好够用的工具。
+
+适合使用 PM 的情况：
+
+- 项目需要分派任务；
+- 多份报告需要合并；
+- 需要有人判断最终答案是否 ready。
+
+适合使用 workers 的情况：
+
+- 任务可以独立探索；
+- 你希望有多个尝试、实验或证明；
+- 你希望 PM 比较证据，而不是自己凭空完成全部工作。
+
+适合使用 critic/checker 的情况：
+
+- 最终输出需要审查；
+- 幻觉式确定性很危险；
+- workers 可能给出互相矛盾的 claims。
+
+适合使用 `shell.exec` 的情况：
+
+- agent 应该运行 Python、测试、脚本或本地搜索；
+- 结果应该保存到 `/artifacts/<agent-id>`；
+- 证据比纯文字更重要。
+
+## 可复制模式
+
+先看 [快速开始](quickstart.html) 跑一个完整 YAML 项目，再看 [配置](configuration.html) 里的可复制模式：PM + workers、PM + critic、Python 实验团队、web research 和 review pipeline。
 
 ## 项目目录
 
-    $SUZUMIO_ROOT/demo/
-      suzumio.sqlite      持久项目数据库
-      source.yaml         原始项目配置
-      resolved.yaml       完整解析后的配置
-      agents/             每个智能体的 workspace
-      artifacts/          每个 agent 的共享文件
-      activations/        activation input 目录
-      logs/               预留运行日志目录
+`suzumio init` 后，runtime root 中会出现由 YAML 生成的项目状态：
 
-## 公共文档范围
+```text
+$SUZUMIO_ROOT/tiny-research/
+  suzumio.sqlite      持久项目数据库
+  source.yaml         原始项目配置
+  resolved.yaml       完整解析后的配置
+  agents/             每个 agent 的 workspace
+  artifacts/          每个 agent 的共享文件
+  activations/        activation input 目录
+  logs/               预留运行日志目录
+```
 
-本站面向使用者说明 runtime contract、工作流、配置、CLI、API 和运维行为。示例使用占位 provider endpoint 和 key，不包含私有部署细节。
+## 下一步
+
+| 目标 | 阅读 |
+|------|------|
+| 跑第一个 YAML 项目 | [快速开始](quickstart.html) |
+| 学习所有 YAML 字段 | [配置](configuration.html) |
+| 理解 messages、signals 和 activations | [核心概念](concepts.html) |
+| 用终端运维项目 | [CLI 参考](cli.html) |
+| 集成或围绕 Suzumio 做 UI | [HTTP API](api.html) |
 
 <div class="footer">当前站点：<a href="https://suzumio.aixmath.org">suzumio.aixmath.org</a>。源码：<a href="https://github.com/OmegaCombinator/suzumio">OmegaCombinator/suzumio</a>。</div>

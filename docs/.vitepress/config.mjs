@@ -2,7 +2,7 @@ import { defineConfig } from "vitepress";
 
 export default defineConfig({
   title: "Suzumio",
-  description: "Suzumio is a Docker-first, non-preemptive multi-agent coordination runtime.",
+  description: "Suzumio is a YAML-based multi-agent system that runs agents in Docker activations.",
   head: [["meta", { name: "theme-color", content: "#2f9e55" }]],
   vite: {
     build: {
@@ -22,13 +22,13 @@ export default defineConfig({
       label: "English",
       lang: "en",
       title: "Suzumio",
-      description: "Suzumio is a Docker-first, non-preemptive multi-agent coordination runtime."
+      description: "Suzumio is a YAML-based multi-agent system that runs agents in Docker activations."
     },
     zh: {
       label: "中文",
       lang: "zh-Hans",
       title: "Suzumio",
-      description: "Suzumio 是 Docker-first、非抢占式的多智能体协调运行时。"
+      description: "Suzumio 是用 Docker activation 运行 agent 团队的 YAML-based multi-agent system。"
     }
   }
 });

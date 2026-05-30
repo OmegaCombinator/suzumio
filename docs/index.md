@@ -1,72 +1,145 @@
 ---
 title: "Suzumio Documentation"
-description: "Suzumio is a Docker-first, non-preemptive multi-agent coordination runtime."
-eyebrow: "Docker-first coordination for long-running agents"
-heroTitle: "Suzumio"
-lead: "Suzumio coordinates multi-agent projects with a signal-driven non-preemptive scheduler, isolated Docker activations, runner-side toolpacks, controller support APIs, SQLite state, a CLI, an HTTP API, and a lightweight WebUI."
+description: "Suzumio is a YAML-based multi-agent system that runs agents in Docker activations."
+eyebrow: "YAML-based multi-agent projects"
+heroTitle: "Write a YAML file. Run a team of agents."
+lead: "Suzumio lets you describe a multi-agent workflow in one YAML project file: task, agents, prompts, tools, Docker runner, model presets, and scheduling policy. The runtime turns that YAML into durable messages, signals, activations, shared files, and final submissions."
 actions:
-  - text: "Run the demo"
+  - text: "Start with YAML"
     link: "quickstart.html"
     variant: "primary"
-  - text: "Write a config"
+  - text: "YAML reference"
     link: "configuration.html"
   - text: "Use the API"
     link: "api.html"
     variant: "blue"
 ---
 
-## Purpose
+## The Idea
 
-Suzumio is a coordination runtime for projects where agents may need to work for a long time without being interrupted. It is suitable for formalization, code work, research workflows, review pipelines, benchmark experiments, and other tasks where progress is best represented as durable activations, messages, artifacts, and audit logs.
+Suzumio is a YAML-based multi-agent system. You do not start by writing orchestration code. You start by writing a project file that says:
 
-Suzumio separates project coordination from agent execution. The core runtime owns project state and scheduling. The Docker runner executes one agent activation, presents the model-facing tools, calls back to Suzumio only when stateful support is needed, writes a result, and exits.
+- what the project is trying to accomplish;
+- which agents exist;
+- what each agent is allowed to do;
+- how agents should coordinate;
+- which Docker runner and model presets to use.
 
-<div class="grid">
+The runtime then handles the boring coordination mechanics: storing state in SQLite, starting Docker activations, delivering messages as signals, preventing running agents from being interrupted, mounting shared files, and recording tool calls.
 
-<div class="card"><h3>Signal scheduling</h3><p>Running agents are not prompted, nudged, or interrupted. New messages and coordination events become pending signals for later activations.</p></div>
+## A Tiny Project
 
-<div class="card"><h3>Durable project state</h3><p>Projects store resolved configuration, agents, messages, signals, activations, events, tool calls, and artifacts in SQLite.</p></div>
+This is the smallest useful shape. One `pm` agent receives user messages, can message the user or other agents, can wait for future signals, and can submit a final report.
 
-<div class="card"><h3>Docker-first execution</h3><p>Each activation runs in a container with a read-only activation input file, an agent workspace, runner-local shell and web tools, and HTTP result submission.</p></div>
+```yaml
+name: tiny-research
+task: |
+  Answer the user's question carefully. If you are missing information,
+  ask a follow-up instead of pretending.
 
-<div class="card"><h3>Runner-side tools</h3><p>Project toolpacks choose available model-facing tools. Controller support APIs provide state, permissions, and persistence when needed.</p></div>
+tools:
+  toolpacks:
+    - core
 
-</div>
+agents:
+  pm:
+    role: project-manager
+    displayName: Yuki
+    prompt: |
+      You coordinate the project. Keep a short working memory in your messages.
+      Submit only when the answer is ready for the user.
+    tools:
+      - messages.send
+      - coordination.wait_for_signal
+      - completion.submit
+```
 
-## What You Can Do Today
+Run it with:
 
-| Task                                | Where to start                      | What you get                                                                                             |
-|-------------------------------------|-------------------------------------|----------------------------------------------------------------------------------------------------------|
-| Run a local AI smoke test           | [Quickstart](quickstart.html)       | A Docker-backed AI activation that verifies scheduling, storage, controller support routes, and runner wiring. |
-| Define a project                    | [Configuration](configuration.html) | YAML config with whole-field imports, profile composition, agents, tools, and backend settings.          |
-| Operate projects from terminal      | [CLI Reference](cli.html)           | Commands for init, serve, start, send, inspect, approve, and stop.                                       |
-| Integrate with other systems        | [HTTP API](api.html)                | Project objects, user actions, event streams, and controller support calls.                              |
-| Deploy docs or inspect architecture | [Architecture](architecture.html)   | Clear boundaries between core runtime, Docker backend, runner toolpacks, support routes, and SQLite.     |
+```bash
+suzumio config render tiny-research.yaml
+suzumio init tiny-research.yaml
+suzumio serve --host 0.0.0.0 --port 39400
+suzumio start tiny-research
+suzumio send tiny-research pm P1 "Start."
+```
 
-## Core Workflow
+## How YAML Becomes Multi-Agent Behavior
 
-    1. Render and validate project config.
-    2. Initialize a project under SUZUMIO_ROOT.
-    3. Start the HTTP server and scheduler loop.
-    4. Send a user message or create another pending signal for an agent.
-    5. Scheduler starts one Docker activation for that signal target.
-    6. Runner executes the activation and model-facing tools.
-    7. Suzumio records messages, signals, tool calls, events, and activation output.
-    8. Idle agents remain quiet until new pending signals arrive.
+| YAML field | What it controls | What happens at runtime |
+|------------|------------------|--------------------------|
+| `task` | The shared project goal | Rendered into the first activation prompt. |
+| `agents` | The roster and prompts | Each agent becomes a durable participant with its own workspace and shared artifact directory. |
+| `agents.<id>.tools` | The model-visible allowlist | A worker cannot call tools it was not given. |
+| `tools.toolpacks` | Which tool families exist | `core` gives messages/wait/submit; `shell` gives Python/bash; `web` gives HTTP fetch. |
+| `scheduler` | Signal delivery policy | Idle agents with pending signals get one activation; running agents are not interrupted. |
+| `backend` | Docker/model/proxy settings | The runner image, controller URL, model presets, mounts, network, and proxy are resolved from YAML. |
+
+## The Default Collaboration Loop
+
+1. A user sends a message to an agent, usually `pm`.
+2. That message becomes a pending `message.created` signal.
+3. The scheduler starts one Docker activation for the idle target agent.
+4. The agent can send messages, run tools, write `/artifacts/<agent-id>` files, wait, or submit.
+5. If it messages another agent, that creates a pending signal for the recipient.
+6. If it calls `coordination.wait_for_signal`, the activation ends cleanly and the agent stays quiet.
+7. If it calls `completion.submit`, the project is marked submitted and a final report is written.
+
+## Good YAML Produces Good Coordination
+
+The most important design skill is not writing long prompts. It is assigning clear responsibilities and giving each agent just enough tools.
+
+Use a PM when:
+
+- the project needs delegation;
+- multiple reports must be merged;
+- someone must decide when the final answer is ready.
+
+Use workers when:
+
+- tasks can be explored independently;
+- you want separate attempts, experiments, or proofs;
+- you want the PM to compare evidence rather than invent everything alone.
+
+Use a critic/checker when:
+
+- final output needs review;
+- hallucinated certainty is dangerous;
+- workers may produce incompatible claims.
+
+Use `shell.exec` when:
+
+- the agent should run Python, tests, scripts, or local searches;
+- the result should be saved under `/artifacts/<agent-id>`;
+- evidence matters more than prose.
+
+## Copyable Patterns
+
+Start with [Quickstart](quickstart.html) for a runnable tutorial, then use [Configuration](configuration.html) for copyable YAML patterns: PM plus workers, PM plus critic, Python experiment teams, web research, and review pipelines.
 
 ## Project Layout
 
-    $SUZUMIO_ROOT/demo/
-      suzumio.sqlite      durable project database
-      source.yaml         original project config
-      resolved.yaml       fully resolved config
-      agents/             per-agent workspaces
-      artifacts/          per-agent shared files
-      activations/        activation input directories
-      logs/               reserved for runtime logs
+After `suzumio init`, the runtime root contains the project state generated from YAML:
 
-## Public Documentation Scope
+```text
+$SUZUMIO_ROOT/tiny-research/
+  suzumio.sqlite      durable project database
+  source.yaml         original project config
+  resolved.yaml       fully resolved config
+  agents/             per-agent workspaces
+  artifacts/          per-agent shared files
+  activations/        activation input directories
+  logs/               reserved for runtime logs
+```
 
-This site documents the runtime contract, user workflows, configuration, CLI, API, and operational behavior. It intentionally avoids internal development history and private deployment details. Examples use placeholders for provider endpoints and keys.
+## Where To Go Next
+
+| Goal | Read |
+|------|------|
+| Run your first YAML project | [Quickstart](quickstart.html) |
+| Learn every YAML field | [Configuration](configuration.html) |
+| Understand messages, signals, and activations | [Core Concepts](concepts.html) |
+| Operate projects from the terminal | [CLI Reference](cli.html) |
+| Integrate or build UI around Suzumio | [HTTP API](api.html) |
 
 <div class="footer">Current site: <a href="https://suzumio.aixmath.org">suzumio.aixmath.org</a>. Source: <a href="https://github.com/OmegaCombinator/suzumio">OmegaCombinator/suzumio</a>.</div>
