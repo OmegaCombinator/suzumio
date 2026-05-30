@@ -24,8 +24,7 @@ Most commands read `SUZUMIO_ROOT`. You can also pass `--root` to commands that s
 | `suzumio send <project> <recipient> <priority> <message...>` | You want to deliver user input to an agent.                              |
 | `suzumio status [project]`                                   | You want project and agent status.                                       |
 | `suzumio messages <project>`                                 | You want recent project messages.                                        |
-| `suzumio turns <project>`                                    | You want runner outputs and failures.                                    |
-| `suzumio artifacts <project>`                                | You want published artifact paths.                                       |
+| `suzumio activations <project>`                              | You want runner outputs and failures.                                    |
 | `suzumio events <project>`                                   | You want the project event timeline.                                     |
 | `suzumio tick [project]`                                     | You want to run one scheduler pass manually.                             |
 | `suzumio stop <project>`                                     | You want to stop scheduling.                                             |
@@ -71,22 +70,21 @@ Starts the HTTP API, controller support routes, embedded WebUI, SSE endpoint, an
 
     suzumio start demo
 
-Sets project status to `running` and immediately runs one scheduler pass. If agents already have pending signals, turns may start immediately.
+Sets project status to `running` and immediately runs one scheduler pass. If agents already have pending signals, activations may start immediately.
 
 ## `suzumio send`
 
     suzumio send demo pm P1 "Start the project."
     suzumio send demo worker-1 P2 "Review artifact art_..."
 
-Creates a direct message from virtual sender `user` to the recipient, creates a pending `message.created` signal, and runs one scheduler pass. Priorities are `P0`, `P1`, `P2`, and `P3`. Priority is recorded and rendered into the turn prompt; it does not interrupt running agents.
+Creates a direct message from virtual sender `user` to the recipient, creates a pending `message.created` signal, and runs one scheduler pass. Priorities are `P0`, `P1`, `P2`, and `P3`. Priority is recorded and rendered into the activation prompt; it does not interrupt running agents.
 
 ## Inspection Commands
 
     suzumio status
     suzumio status demo
     suzumio messages demo --limit 20
-    suzumio turns demo --limit 10
-    suzumio artifacts demo
+    suzumio activations demo --limit 10
     suzumio events demo --limit 50
 
 Inspection commands read directly from SQLite. They do not wake agents and do not mutate the project except for normal SQLite read access.

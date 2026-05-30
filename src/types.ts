@@ -2,7 +2,7 @@ export type ProjectStatus = "initialized" | "running" | "submitted" | "completed
 
 export type AgentStatus = "quiet" | "ready" | "running" | "failed" | "stopped";
 
-export type TurnStatus = "running" | "completed" | "failed" | "cancelled";
+export type ActivationStatus = "running" | "completed" | "failed" | "cancelled";
 
 export type MessagePriority = "P0" | "P1" | "P2" | "P3";
 
@@ -46,8 +46,18 @@ export interface BackendConfig {
     memory?: string;
     cpus?: number;
     mounts?: DockerMountConfig[];
+    proxy?: DockerProxyConfig;
   };
   runner: RunnerConfig;
+}
+
+export interface DockerProxyConfig {
+  inheritEnv?: boolean;
+  http?: string;
+  https?: string;
+  all?: string;
+  noProxy?: string;
+  rewriteLocalhost?: boolean;
 }
 
 export interface RunnerConfig {
@@ -133,7 +143,7 @@ export interface AgentRecord {
   tools: string[];
   workspacePath: string;
   token: string;
-  activeTurnId?: string;
+  activeActivationId?: string;
   containerName?: string;
   createdAt: string;
   updatedAt: string;
@@ -150,11 +160,11 @@ export interface MessageRecord {
   createdAt: string;
 }
 
-export interface TurnRecord {
+export interface ActivationRecord {
   id: string;
   project: string;
   agentId: string;
-  status: TurnStatus;
+  status: ActivationStatus;
   prompt: string;
   inputPath: string;
   outputPath: string;
@@ -172,7 +182,7 @@ export interface SignalRecord {
   project: string;
   kind: string;
   sourceAgent?: string;
-  sourceTurn?: string;
+  sourceActivation?: string;
   targetAgent?: string;
   targetChannel?: string;
   priority: MessagePriority;
@@ -181,7 +191,7 @@ export interface SignalRecord {
   usefulEffect: boolean;
   createdAt: string;
   deliveredAt?: string;
-  deliveredTurnId?: string;
+  deliveredActivationId?: string;
 }
 
 export interface ToolDefinition {
@@ -197,7 +207,7 @@ export interface RunnerToolpackSpec {
   supportPath: string;
 }
 
-export interface RunnerTurnInput {
+export interface RunnerActivationInput {
   project: string;
   agent: {
     id: string;
@@ -206,7 +216,7 @@ export interface RunnerTurnInput {
     prompt: string;
     model?: string;
   };
-  turn: {
+  activation: {
     id: string;
     prompt: string;
   };
@@ -218,7 +228,7 @@ export interface RunnerTurnInput {
   toolpacks: RunnerToolpackSpec[];
 }
 
-export interface RunnerTurnOutput {
+export interface RunnerActivationOutput {
   text: string;
   usage?: JsonObject;
 }

@@ -2,20 +2,20 @@
 title: "Suzumio Roadmap"
 eyebrow: "Roadmap"
 heroTitle: "Make the quiet runtime stronger"
-lead: "The first version proves the shape: Docker-first turns, SQLite project truth, signal scheduling, audited support routes, and WebUI observability. The next work should harden those boundaries."
+lead: "The first version proves the shape: Docker-first activations, SQLite project truth, signal scheduling, audited support routes, and WebUI observability. The next work should harden those boundaries."
 ---
 
 ## Near Term
 
 <div class="grid">
 
-<div class="card"><h3>Runner event streaming</h3><p>Stream model deltas and tool call state from the container to Suzumio while a turn is running.</p></div>
+<div class="card"><h3>Runner event streaming</h3><p>Stream model deltas and tool call state from the container to Suzumio while an activation is running.</p></div>
 
 <div class="card"><h3>Container cleanup policy</h3><p>Keep failed containers for debugging, auto-remove successful containers when configured, and expose cleanup commands.</p></div>
 
 <div class="card"><h3>Safer Docker runtime</h3><p>Add CPU, memory, network, user, read-only mount, and capability controls to backend config.</p></div>
 
-<div class="card"><h3>Better WebUI</h3><p>Add filtering, artifact previews, resolved config view, turn input and result views, and live SSE updates.</p></div>
+<div class="card"><h3>Better WebUI</h3><p>Add filtering, artifact previews, resolved config view, activation input and result views, and live SSE updates.</p></div>
 
 </div>
 
@@ -39,7 +39,7 @@ The default scheduler should remain non-preemptive. Future schedulers can be add
 
 - Expose a scheduler decision log.
 - Add manual wake and manual cancel operations.
-- Add crash recovery for running turns whose containers disappeared.
+- Add crash recovery for running activations whose containers disappeared.
 - Add project-level concurrency limits.
 
 ## Security
@@ -59,7 +59,7 @@ The default scheduler should remain non-preemptive. Future schedulers can be add
 ## Non-goals For Now
 
 - No Kubernetes runtime until Docker-first semantics are stable.
-- No complicated workflow DSL before signal turns and toolpacks are reliable.
+- No complicated workflow DSL before signal activations and toolpacks are reliable.
 - No default in-process runner path; isolation remains the baseline.
 - No automatic project-manager chatter, progress nagging, or heartbeat prompts.
 

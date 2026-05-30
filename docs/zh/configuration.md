@@ -24,7 +24,7 @@ Suzumio 把配置当作 source material，而不是可变运行时状态。运�
 
     name: demo
     task: |
-      Demonstrate one non-preemptive turn.
+      Demonstrate one non-preemptive activation.
 
     backend:
       runner:
@@ -109,7 +109,6 @@ Suzumio 把配置当作 source material，而不是可变运行时状态。运�
     tools:
       toolpacks:
         - core
-        - artifacts
         - shell
         - web
 
@@ -121,8 +120,7 @@ Suzumio 把配置当作 source material，而不是可变运行时状态。运�
         model: pm-main
         tools:
           - messages.send
-          - artifacts.list
-          - coordination.no_valuable_work
+          - coordination.wait_for_signal
           - completion.submit
       worker:
         role: worker
@@ -134,9 +132,6 @@ Suzumio 把配置当作 source material，而不是可变运行时状态。运�
         model: worker-with-fallback
         tools:
           - messages.send
-          - artifacts.publish
-          - artifacts.list
-          - artifacts.read
           - shell.exec
           - web.fetch
 
@@ -145,9 +140,9 @@ Suzumio 把配置当作 source material，而不是可变运行时状态。运�
 | 字段            | 是否必需 | 说明                                                                                          |
 |-----------------|----------|-----------------------------------------------------------------------------------------------|
 | `name`          | 是       | `SUZUMIO_ROOT` 下的项目 id 和运行目录名。                                                     |
-| `task`          | 是       | 持久任务描述，会渲染进每个 turn prompt。                                                      |
+| `task`          | 是       | 持久任务描述，会渲染进每个 activation prompt。                                                |
 | `agents`        | 是       | Agent id 到 agent config 的映射。至少需要一个 agent。                                         |
-| `tools`         | 否       | 项目注册的 toolpacks。默认包含 `core`、`artifacts` 和 `web`；需要容器内 bash 时添加 `shell`。 |
+| `tools`         | 否       | 项目注册的 toolpacks。默认包含 `core` 和 `web`；需要容器内 bash 和共享 artifact 文件时添加 `shell`。 |
 | `extends`       | 否       | 一个 profile object 或 profile object 列表，在本地字段之前合并。                              |
 | `scheduler`     | 否       | Scheduler 类型和 prompt signal batching。默认是 `nonpreemptive-signals`。                     |
 | `backend`       | 否       | Docker runner image、controller support URL、Docker options 和 model runner 设置。            |
@@ -297,7 +292,7 @@ Suzumio 会拒绝循环 import 和过深的 import 链，避免项目意外无�
 |---------------------|---------------------------------------------------------------------|
 | `kind`              | 默认是 `nonpreemptive-signals`。`nonpreemptive-mailbox` 作为兼容 alias 接受。 |
 | `intervalMs`        | 预期 scheduler loop 间隔。当前 server 使用与默认值一致的固定 loop。 |
-| `maxPromptMessages` | 一个 turn prompt 中最多渲染多少条 pending signals。                 |
+| `maxPromptMessages` | 一个 activation prompt 中最多渲染多少条 pending signals。           |
 
 ## Backend Config
 
@@ -307,6 +302,12 @@ Suzumio 会拒绝循环 import 和过深的 import 链，避免项目意外无�
       controllerUrl: http://host.docker.internal:39400
       docker:
         network: bridge
+        proxy:
+          inheritEnv: true
+          https: ${HTTPS_PROXY}
+          http: ${HTTP_PROXY}
+          all: ${ALL_PROXY}
+          noProxy: ${NO_PROXY}
         mounts:
           - source: ./reference
             target: /mnt/reference
@@ -318,11 +319,14 @@ Suzumio 会拒绝循环 import 和过深的 import 链，避免项目意外无�
 | 字段             | 说明                                                                                                     |
 |------------------|----------------------------------------------------------------------------------------------------------|
 | `kind`           | Backend implementation。当前 backend 基于 Docker。                                                       |
-| `image`          | 每个 turn container 使用的 Docker image。                                                                |
-| `controllerUrl`  | 容器访问 Suzumio support routes 并提交 turn output 的 URL。本地 Docker 通常使用 `host.docker.internal`。 |
+| `image`          | 每个 activation container 使用的 Docker image。                                                          |
+| `controllerUrl`  | 容器访问 Suzumio support routes 并提交 activation output 的 URL。本地 Docker 通常使用 `host.docker.internal`。 |
 | `docker.network` | 可选 Docker network mode。                                                                               |
-| `docker.mounts`  | 显式挂载到每个 turn container 的 host 文件或目录。Source 会在 render 时相对顶层项目配置解析。            |
+| `docker.proxy`   | 可选代理配置，会传入 runner 容器。显式配置会覆盖继承的环境变量。                                          |
+| `docker.mounts`  | 显式挂载到每个 activation container 的 host 文件或目录。Source 会在 render 时相对顶层项目配置解析。      |
 | `runner.mode`    | 只支持 `ai`。                                                                                            |
+
+`docker.proxy` 字段包括 `inheritEnv`、`http`、`https`、`all`、`noProxy` 和 `rewriteLocalhost`。默认情况下，Suzumio 会继承 controller 进程中的标准代理环境变量，并在 bridge-network 容器中把 loopback 代理 host 改写为 `host.docker.internal`。如果代理只监听 host loopback，在 Linux 上可使用 `network: host`。
 
 ## AI Runner Config
 
@@ -366,18 +370,16 @@ Model 选择是显式的。可以在 `backend.runner.model` 设置项目级选�
     tools:
       toolpacks:
         - core
-        - artifacts
         - shell
         - web
 
 | Toolpack    | 注册工具                                                | 运行位置                             |
 |-------------|---------------------------------------------------------|--------------------------------------|
-| `core`      | `messages.send`, `coordination.no_valuable_work`, `completion.submit` | Runner wrapper + Suzumio support API |
-| `artifacts` | `artifacts.publish`, `artifacts.list`, `artifacts.read` | Runner wrapper + Suzumio support API |
+| `core`      | `messages.send`, `coordination.wait_for_signal`, `completion.submit` | Runner wrapper + Suzumio support API |
 | `shell`     | `shell.exec`                                            | Docker runner container              |
 | `web`       | `web.fetch`                                             | Docker runner container              |
 
-Mounted inputs 是通过配置挂载到容器路径的 host 文件或目录。Suzumio 会把这些路径渲染进 turn prompt。拥有 `shell.exec` 的 agent 可以把它们复制到 `/workspace`、编译代码、运行二进制，并发布生成的 artifact。
+Mounted inputs 是通过配置挂载到容器路径的 host 文件或目录。Suzumio 会把这些路径渲染进 activation prompt。拥有 `shell.exec` 的 agent 可以把它们复制到 `/workspace`、编译代码、运行二进制，并把持久输出写到 `/artifacts/<agent-id>`。当前 agent 的 artifact 目录可写；其他 agent 的 artifact 目录只读。
 
 ### Local toolpacks
 
@@ -421,9 +423,6 @@ Runner module 在容器内实现模型可见工具。Controller module 为需要
         model: worker-with-fallback
         tools:
           - messages.send
-          - artifacts.publish
-          - artifacts.list
-          - artifacts.read
           - shell.exec
           - web.fetch
         mounts:
@@ -437,7 +436,7 @@ Runner module 在容器内实现模型可见工具。Controller module 为需要
 | `displayName` | 单个 agent 的人类可读名字，或 counted agents 的 fallback 名字。                                     |
 | `names`       | Counted agents 的可选名字列表，按 index 分配。                                                      |
 | `count`       | 将一个配置项展开为 `worker-1`、`worker-2` 等编号 agents。                                           |
-| `prompt`      | 每个 turn prompt 中包含的 agent instructions，通常从 Markdown 导入。                                |
+| `prompt`      | 每个 activation prompt 中包含的 agent instructions，通常从 Markdown 导入。                          |
 | `model`       | 该 agent 的显式 model preset 选择。若省略，则必须设置 `backend.runner.model`。                      |
 | `tools`       | 该 agent 允许调用的工具名。支持精确名称、`namespace.*` 和 `*`，并且工具也必须由项目 toolpack 注册。 |
 | `mounts`      | 只挂载给这个 agent 的 host 文件或目录。                                                             |

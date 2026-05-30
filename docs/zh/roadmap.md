@@ -2,20 +2,20 @@
 title: "Suzumio 路线图"
 eyebrow: "路线图"
 heroTitle: "让安静运行时更可靠"
-lead: "第一版验证了核心形状：Docker-first turns、SQLite project truth、signal scheduling、audited support routes 和 WebUI observability。下一步应强化这些边界。"
+lead: "第一版验证了核心形状：Docker-first activations、SQLite project truth、signal scheduling、audited support routes 和 WebUI observability。下一步应强化这些边界。"
 ---
 
 ## 近期工作
 
 <div class="grid">
 
-<div class="card"><h3>Runner event streaming</h3><p>在 turn 运行时，把模型 delta 和工具调用状态从容器流式传回 Suzumio。</p></div>
+<div class="card"><h3>Runner event streaming</h3><p>在 activation 运行时，把模型 delta 和工具调用状态从容器流式传回 Suzumio。</p></div>
 
 <div class="card"><h3>Container cleanup policy</h3><p>失败容器保留用于调试；成功容器可配置自动删除；暴露 cleanup 命令。</p></div>
 
 <div class="card"><h3>更安全的 Docker runtime</h3><p>在 backend config 中加入 CPU、memory、network、user、read-only mount 和 capability 控制。</p></div>
 
-<div class="card"><h3>更好的 WebUI</h3><p>加入过滤、artifact preview、resolved config view、turn input 和 result view，以及 live SSE updates。</p></div>
+<div class="card"><h3>更好的 WebUI</h3><p>加入过滤、artifact preview、resolved config view、activation input 和 result view，以及 live SSE updates。</p></div>
 
 </div>
 
@@ -39,7 +39,7 @@ lead: "第一版验证了核心形状：Docker-first turns、SQLite project trut
 
 - 暴露 scheduler decision log。
 - 加入 manual wake 和 manual cancel 操作。
-- 恢复 running turn 但容器消失的 crash 状态。
+- 恢复 running activation 但容器消失的 crash 状态。
 - 加入 project-level concurrency limits。
 
 ## Security
@@ -59,7 +59,7 @@ lead: "第一版验证了核心形状：Docker-first turns、SQLite project trut
 ## 当前非目标
 
 - Docker-first 语义稳定前不做 Kubernetes runtime。
-- Signal turns 和 toolpacks 可靠前不引入复杂 workflow DSL。
+- Signal activations 和 toolpacks 可靠前不引入复杂 workflow DSL。
 - 默认不提供 in-process runner path；隔离仍是 baseline。
 - 不做自动 PM chatter、progress nagging 或 heartbeat prompts。
 

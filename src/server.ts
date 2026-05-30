@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { ProjectStore } from "./store.js";
 import { ToolSupportHost } from "./tools.js";
 import { NonPreemptiveSignalScheduler } from "./scheduler.js";
-import type { AgentRecord, MessagePriority, RunnerTurnOutput } from "./types.js";
+import type { AgentRecord, MessagePriority, RunnerActivationOutput } from "./types.js";
 
 export type ServeOptions = {
   host: string;
@@ -43,7 +43,7 @@ async function handleRequest(
   if (request.method === "POST" && url.pathname === "/runner/tool-calls/finish") return json(response, await ctx.toolSupport.finishToolCall(await readBody(request)));
   if (request.method === "POST" && url.pathname === "/runner/signals") return json(response, await ctx.toolSupport.recordRunnerSignal(await readBody(request)));
   if (request.method === "POST" && parts[0] === "toolpacks" && parts[2] === "support") return json(response, await ctx.toolSupport.support(parts[1]!, await readBody(request)));
-  if (request.method === "POST" && url.pathname === "/turn-output") return json(response, await submitTurnOutput(await readBody(request), ctx.root));
+  if (request.method === "POST" && url.pathname === "/activation-output") return json(response, await submitActivationOutput(await readBody(request), ctx.root));
 
   if (request.method === "GET" && url.pathname === "/api/projects") return json(response, await listProjects(ctx.root));
   if (parts[0] !== "api" || parts[1] !== "projects" || !parts[2]) return json(response, { error: "not found" }, 404);
@@ -55,9 +55,8 @@ async function handleRequest(
     if (request.method === "GET" && parts[3] === "agents") return json(response, store.listAgents().map(publicAgent));
     if (request.method === "GET" && parts[3] === "messages") return json(response, store.listMessages(limit(url, 100)));
     if (request.method === "GET" && parts[3] === "events") return json(response, store.listEvents(limit(url, 200)));
-    if (request.method === "GET" && parts[3] === "turns") return json(response, store.listTurns(limit(url, 100)));
+    if (request.method === "GET" && parts[3] === "activations") return json(response, store.listActivations(limit(url, 100)));
     if (request.method === "GET" && parts[3] === "tool-calls") return json(response, store.listToolCalls(limit(url, 100)));
-    if (request.method === "GET" && parts[3] === "artifacts") return json(response, store.listArtifacts(limit(url, 100)));
     if (request.method === "GET" && parts[3] === "config" && parts[4] === "resolved") return text(response, await readFile(store.paths.resolvedConfig, "utf8"));
     if (request.method === "GET" && parts[3] === "report") return text(response, await reportText(store));
     if (request.method === "GET" && parts[3] === "stream") return streamEvents(response, store, url);
@@ -94,27 +93,27 @@ async function handleRequest(
   return json(response, { error: "not found" }, 404);
 }
 
-async function submitTurnOutput(body: Record<string, unknown>, root?: string): Promise<Record<string, unknown>> {
+async function submitActivationOutput(body: Record<string, unknown>, root?: string): Promise<Record<string, unknown>> {
   const project = requiredString(body.project, "project");
   const agentId = requiredString(body.agentId, "agentId");
-  const turnId = requiredString(body.turnId, "turnId");
+  const activationId = requiredString(body.activationId, "activationId");
   const token = requiredString(body.token, "token");
   const output = outputBody(body.output);
   const store = new ProjectStore(project, root);
   try {
     const agent = store.requireAgent(agentId);
     if (agent.token !== token) throw new Error("Invalid agent token");
-    const turn = store.turn(turnId);
-    if (turn.agentId !== agent.id) throw new Error(`Turn ${turnId} does not belong to ${agent.id}`);
-    if (turn.status !== "running") return { status: turn.status, turnId };
-    store.completeTurn(turnId, output);
-    return { status: "completed", turnId };
+    const activation = store.activation(activationId);
+    if (activation.agentId !== agent.id) throw new Error(`Activation ${activationId} does not belong to ${agent.id}`);
+    if (activation.status !== "running") return { status: activation.status, activationId };
+    store.completeActivation(activationId, output);
+    return { status: "completed", activationId };
   } finally {
     store.close();
   }
 }
 
-function outputBody(value: unknown): RunnerTurnOutput {
+function outputBody(value: unknown): RunnerActivationOutput {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("output is required");
   const output = value as Record<string, unknown>;
   return { text: requiredString(output.text, "output.text"), usage: typeof output.usage === "object" && output.usage && !Array.isArray(output.usage) ? (output.usage as Record<string, unknown>) : undefined };
@@ -134,7 +133,7 @@ async function listProjects(root?: string): Promise<Record<string, unknown>[]> {
 
 function projectSummary(store: ProjectStore): Record<string, unknown> {
   const project = store.projectRow();
-  return { ...publicProject(project), agents: store.listAgents().map(publicAgent), recentTurns: store.listTurns(10), recentMessages: store.listMessages(10) };
+  return { ...publicProject(project), agents: store.listAgents().map(publicAgent), recentActivations: store.listActivations(10), recentMessages: store.listMessages(10) };
 }
 
 function publicProject(row: Record<string, unknown>): Record<string, unknown> {
@@ -250,15 +249,15 @@ const WEBUI_HTML = String.raw`<!doctype html>
     </aside>
     <section>
       <div id="summary" class="card"></div>
-      <div class="grid"><div class="card"><h3>Agents</h3><div id="agents"></div></div><div class="card"><h3>Artifacts</h3><div id="artifacts"></div></div></div>
-      <div class="grid"><div class="card"><h3>Messages</h3><div id="messages"></div></div><div class="card"><h3>Turns</h3><div id="turns"></div></div></div>
+      <div class="card"><h3>Agents</h3><div id="agents"></div></div>
+      <div class="grid"><div class="card"><h3>Messages</h3><div id="messages"></div></div><div class="card"><h3>Activations</h3><div id="activations"></div></div></div>
       <div class="card"><h3>Events</h3><div id="events"></div></div>
     </section>
   </main>
   <script>
     async function api(path, options) { const r = await fetch(path, options); if (!r.ok) throw new Error(await r.text()); return r.json(); }
     async function loadProjects() { const projects = await api('/api/projects'); const sel = document.getElementById('project'); sel.innerHTML = projects.map(p => '<option>'+p.id+'</option>').join(''); document.getElementById('projects').innerHTML = projects.map(p => '<div class="card"><b>'+p.id+'</b><br><span class="pill">'+p.status+'</span></div>').join(''); if (projects[0]) await loadProject(sel.value || projects[0].id); }
-    async function loadProject(name) { if (!name) return; const [p, events, artifacts] = await Promise.all([api('/api/projects/'+name), api('/api/projects/'+name+'/events?limit=40'), api('/api/projects/'+name+'/artifacts')]); document.getElementById('summary').innerHTML = '<b>'+p.id+'</b> <span class="pill">'+p.status+'</span><p class="muted">'+p.task+'</p>'; document.getElementById('agents').innerHTML = p.agents.map(a => '<p><b>'+a.id+'</b> <span class="pill">'+a.status+'</span><br><span class="muted">'+a.role+'</span></p>').join(''); document.getElementById('messages').innerHTML = p.recentMessages.map(m => '<pre><b>'+m.sender+'</b> -> '+(m.recipient || m.channel)+' ['+m.priority+']\n'+m.body+'</pre>').join(''); document.getElementById('turns').innerHTML = p.recentTurns.map(t => '<pre><b>'+t.agentId+'</b> '+t.status+'\n'+(t.text || t.error || '').slice(0, 600)+'</pre>').join(''); document.getElementById('events').innerHTML = events.reverse().map(e => '<pre>'+e.type+' '+e.created_at+'\n'+e.data_json+'</pre>').join(''); document.getElementById('artifacts').innerHTML = artifacts.map(a => '<pre>'+a.id+' '+a.name+'\n'+a.path+'</pre>').join('') || '<p class="muted">No artifacts</p>'; }
+    async function loadProject(name) { if (!name) return; const [p, events] = await Promise.all([api('/api/projects/'+name), api('/api/projects/'+name+'/events?limit=40')]); document.getElementById('summary').innerHTML = '<b>'+p.id+'</b> <span class="pill">'+p.status+'</span><p class="muted">'+p.task+'</p>'; document.getElementById('agents').innerHTML = p.agents.map(a => '<p><b>'+a.id+'</b> <span class="pill">'+a.status+'</span><br><span class="muted">'+a.role+'</span></p>').join(''); document.getElementById('messages').innerHTML = p.recentMessages.map(m => '<pre><b>'+m.sender+'</b> -> '+(m.recipient || m.channel)+' ['+m.priority+']\n'+m.body+'</pre>').join(''); document.getElementById('activations').innerHTML = p.recentActivations.map(a => '<pre><b>'+a.agentId+'</b> '+a.status+'\n'+(a.text || a.error || '').slice(0, 600)+'</pre>').join(''); document.getElementById('events').innerHTML = events.reverse().map(e => '<pre>'+e.type+' '+e.created_at+'\n'+e.data_json+'</pre>').join(''); }
     async function refresh() { const name = document.getElementById('project').value; if (name) await loadProject(name); else await loadProjects(); }
     async function sendMessage() { const name = document.getElementById('project').value; await api('/api/projects/'+name+'/messages', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ recipient: document.getElementById('recipient').value, body: document.getElementById('body').value }) }); document.getElementById('body').value=''; await refresh(); }
     document.getElementById('project').addEventListener('change', e => loadProject(e.target.value));

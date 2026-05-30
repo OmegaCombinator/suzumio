@@ -74,9 +74,9 @@ const ToolsSchema = z
           }),
         ]),
       )
-      .default(["core", "artifacts", "web"]),
+      .default(["core", "web"]),
   })
-  .default({ toolpacks: ["core", "artifacts", "web"] });
+  .default({ toolpacks: ["core", "web"] });
 
 const RunnerSchema = z
   .object({
@@ -96,6 +96,19 @@ const MountSchema = z.object({
   description: z.string().optional(),
 });
 
+const OptionalEnvString = z.preprocess((value) => (value === "" || value === null ? undefined : value), z.string().optional());
+
+const DockerProxySchema = z
+  .object({
+    inheritEnv: z.boolean().default(true),
+    http: OptionalEnvString,
+    https: OptionalEnvString,
+    all: OptionalEnvString,
+    noProxy: OptionalEnvString,
+    rewriteLocalhost: z.boolean().default(true),
+  })
+  .default({ inheritEnv: true, rewriteLocalhost: true });
+
 const BackendSchema = z
   .object({
     kind: z.literal("docker-chat").default("docker-chat"),
@@ -107,11 +120,12 @@ const BackendSchema = z
         memory: z.string().optional(),
         cpus: z.number().positive().optional(),
         mounts: z.array(MountSchema).default([]),
+        proxy: DockerProxySchema,
       })
-      .default({ mounts: [] }),
+      .default({ mounts: [], proxy: { inheritEnv: true, rewriteLocalhost: true } }),
     runner: RunnerSchema,
   })
-  .default({ kind: "docker-chat", image: "suzumio-runner:dev", controllerUrl: "http://host.docker.internal:39400", docker: { mounts: [] }, runner: { mode: "ai", maxIterations: 8, maxToolCalls: 20 } });
+  .default({ kind: "docker-chat", image: "suzumio-runner:dev", controllerUrl: "http://host.docker.internal:39400", docker: { mounts: [], proxy: { inheritEnv: true, rewriteLocalhost: true } }, runner: { mode: "ai", maxIterations: 8, maxToolCalls: 20 } });
 
 const AgentSchema = z.object({
   role: z.string().optional(),
@@ -258,7 +272,7 @@ function normalizeMountSources(config: ProjectConfig, baseDir: string): void {
     if (!path.isAbsolute(mount.source)) mount.source = path.resolve(baseDir, mount.source);
     if (!mount.target.startsWith("/")) throw new Error(`Docker mount target must be absolute: ${mount.target}`);
     const target = path.posix.normalize(mount.target);
-    if (target === "/turn" || target.startsWith("/turn/") || target === "/workspace" || target.startsWith("/workspace/")) {
+    if (target === "/activation" || target.startsWith("/activation/") || target === "/workspace" || target.startsWith("/workspace/") || target === "/artifacts" || target.startsWith("/artifacts/")) {
       throw new Error(`Docker mount target is reserved: ${mount.target}`);
     }
     mount.target = target;
@@ -266,7 +280,7 @@ function normalizeMountSources(config: ProjectConfig, baseDir: string): void {
 }
 
 async function normalizeToolpacks(config: ProjectConfig, baseDir: string): Promise<void> {
-  const builtins = new Set(["core", "artifacts", "shell", "web"]);
+  const builtins = new Set(["core", "shell", "web"]);
   for (const entry of config.tools.toolpacks) {
     if (typeof entry === "string") {
       if (!builtins.has(entry)) throw new Error(`Unknown built-in toolpack: ${entry}. Use { path: ... } for local toolpacks.`);

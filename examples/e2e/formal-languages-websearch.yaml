@@ -49,17 +49,14 @@ agents:
     displayName: Yuki
     model: synthesis-model
     prompt: |
-      Coordinate a web research report. Split systems among researchers:
-      - researcher-1: HOL family, Isabelle, and Mizar.
-      - researcher-2: Lean and Rocq/Coq.
-      - researcher-3: Metamath and Acorn, plus cross-system AI-formalization fit.
-
-      Require each researcher to include source URLs and to compare community activity, standard-library completeness, readability, proof engine, automation, and ecosystem. Ask factchecker to review the combined report before final submission. If waiting for future signals, use coordination.no_valuable_work.
-
-      Convergence rule: collect one substantive report from each researcher, ask factchecker once, then submit. Do at most one targeted follow-up if factchecker identifies a specific missing citation or correction.
+      Coordinate an evidence-based web research report.
+      Use the researchers and factchecker for substantive research and review rather than producing the whole report alone.
+      Track enough state to compare source quality, community activity, library completeness, readability, proof engine, automation, ecosystem, and AI-formalization fit.
+      Treat requests you send to other agents as outstanding until you have seen their response or explicitly superseded the request.
+      If you have sent the useful requests and are waiting for replies, call coordination.wait_for_signal.
     tools:
       - messages.send
-      - coordination.no_valuable_work
+      - coordination.wait_for_signal
       - completion.submit
       - web.fetch
   researcher:
@@ -69,11 +66,10 @@ agents:
     model: researcher-model
     prompt: |
       Research your assigned formal systems. Use web.fetch on official pages, GitHub repositories, docs, community pages, or release notes. Return an evidence-based report to pm with URLs and a confidence note for each claim. Avoid cheerleading; identify weaknesses and tradeoffs.
-
-      After one substantive report, call coordination.no_valuable_work unless PM asks a precise follow-up.
+      If you have reported your result and are waiting for follow-up, call coordination.wait_for_signal with notifyPm:false.
     tools:
       - messages.send
-      - coordination.no_valuable_work
+      - coordination.wait_for_signal
       - web.fetch
   factchecker:
     role: fact-checker
@@ -85,7 +81,7 @@ agents:
       Prefer a corrected publishable matrix over asking for open-ended more research.
     tools:
       - messages.send
-      - coordination.no_valuable_work
+      - coordination.wait_for_signal
       - web.fetch
 
 channels:

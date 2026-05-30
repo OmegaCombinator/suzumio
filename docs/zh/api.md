@@ -34,7 +34,7 @@ lead: "HTTP server 暴露项目观测、用户控制动作、SSE 事件流，以
 | 方法  | 路径                     | 说明                                                                     |
 |-------|--------------------------|--------------------------------------------------------------------------|
 | `GET` | `/api/projects`          | 列出 `SUZUMIO_ROOT` 下的项目，每项是 project summary。                   |
-| `GET` | `/api/projects/:project` | Project summary，包含 redacted agents、recent turns 和 recent messages。 |
+| `GET` | `/api/projects/:project` | Project summary，包含 redacted agents、recent activations 和 recent messages。 |
 
     curl http://127.0.0.1:39400/api/projects/demo
 
@@ -45,9 +45,8 @@ lead: "HTTP server 暴露项目观测、用户控制动作、SSE 事件流，以
 | `GET` | `/api/projects/:project/agents`               | Agent records，token 已隐藏。                   |
 | `GET` | `/api/projects/:project/messages?limit=100`   | 近期消息。                                      |
 | `GET` | `/api/projects/:project/events?limit=200`     | 近期事件。                                      |
-| `GET` | `/api/projects/:project/turns?limit=100`      | 近期 turn。                                     |
+| `GET` | `/api/projects/:project/activations?limit=100` | 近期 activation。                               |
 | `GET` | `/api/projects/:project/tool-calls?limit=100` | 近期工具调用。                                  |
-| `GET` | `/api/projects/:project/artifacts?limit=100`  | Artifact registry。                             |
 | `GET` | `/api/projects/:project/config/resolved`      | Resolved YAML config，plain text。              |
 | `GET` | `/api/projects/:project/report`               | Submitted final report 文本；未提交时返回提示。 |
 
@@ -82,19 +81,19 @@ Docker runner 把所有模型可见工具展示给模型。Controller 提供 sup
 
 | 方法   | 路径                                  | 用途                                                                                  |
 |--------|---------------------------------------|---------------------------------------------------------------------------------------|
-| `POST` | `/runner/tool-calls/start`            | 鉴权 agent/turn，校验工具属于已配置 toolpack 且在 allowlist 中，并创建 running 记录。 |
-| `POST` | `/runner/tool-calls/finish`           | 校验 tool call 属于当前 agent turn，然后标记 completed 或 failed。                    |
+| `POST` | `/runner/tool-calls/start`            | 鉴权 agent/activation，校验工具属于已配置 toolpack 且在 allowlist 中，并创建 running 记录。 |
+| `POST` | `/runner/tool-calls/finish`           | 校验 tool call 属于当前 agent activation，然后标记 completed 或 failed。                    |
 | `POST` | `/runner/signals`                     | 允许 runner-side 或 local toolpack 代码创建 pending signal 或 closed effect。         |
 | `POST` | `/toolpacks/:toolpackId/support`      | 分发 built-in 或 local toolpack 的 controller-side support。                          |
-| `POST` | `/turn-output`                        | 提交最终 turn 文本和 usage metadata。                                                 |
+| `POST` | `/activation-output`                  | 提交最终 activation 文本和 usage metadata。                                           |
 
-Support 请求包含 `project`、`agentId`、`turnId` 和 agent private `token`。Toolpack support 还包含工具名和 input：
+Support 请求包含 `project`、`agentId`、`activationId` 和 agent private `token`。Toolpack support 还包含工具名和 input：
 
     POST /toolpacks/core/support
     {
       "project": "demo",
       "agentId": "pm",
-      "turnId": "turn_...",
+      "activationId": "act_...",
       "token": "agent-private-token",
       "tool": "messages.send",
       "input": {
@@ -104,14 +103,14 @@ Support 请求包含 `project`、`agentId`、`turnId` 和 agent private `token`�
       }
     }
 
-Support host 会在调用 controller support 前校验 token、turn ownership、toolpack membership 和 agent allowlist。
+Support host 会在调用 controller support 前校验 token、activation ownership、toolpack membership 和 agent allowlist。
 
 ### `POST /runner/signals`
 
     {
       "project": "demo",
       "agentId": "worker-1",
-      "turnId": "turn_...",
+      "activationId": "act_...",
       "token": "agent-private-token",
       "kind": "review.ready",
       "targetAgent": "pm",
@@ -156,20 +155,20 @@ Local runner module 和 controller module 都会收到带 `recordSignal` 的 con
 
 第一个例子为 `pm` 创建 pending work。第二个例子记录 closed useful effect，不调度任何 agent。
 
-### `POST /turn-output`
+### `POST /activation-output`
 
     {
       "project": "demo",
       "agentId": "pm",
-      "turnId": "turn_...",
+      "activationId": "act_...",
       "token": "agent-private-token",
       "output": {
-        "text": "Turn result text",
+        "text": "Activation result text",
         "usage": { "model": "worker-main" }
       }
     }
 
-Backend 只有在收到这个已鉴权提交后才把 turn 标记为完成。`/turn/input.json` 是只读输入和调试 contract；turn output 不再从容器可写文件读取。
+Backend 只有在收到这个已鉴权提交后才把 activation 标记为完成。`/activation/input.json` 是只读输入和调试 contract；activation output 不再从容器可写文件读取。
 
 ## Core Tool Inputs
 
@@ -186,7 +185,7 @@ Backend 只有在收到这个已鉴权提交后才把 turn 标记为完成。`/t
 
 发给 agent 的消息会创建 pending `message.created` signal。频道消息会 fan out 到其他 agent。发给 `recipient: "user"` 的消息创建 closed useful effect，不唤醒 agent。
 
-### `coordination.no_valuable_work`
+### `coordination.wait_for_signal`
 
     {
       "reason": "Waiting for worker-2's result.",
@@ -194,30 +193,7 @@ Backend 只有在收到这个已鉴权提交后才把 turn 标记为完成。`/t
       "notifyPm": true
     }
 
-声明调用者在未来 signal 到来前没有有价值的工作可做。非 PM agent 默认用 direct message 通知 `pm`。PM 调用时会记录 closed useful effect 并安静等待。
-
-### `artifacts.publish`
-
-    {
-      "path": "relative/path/in/workspace.txt",
-      "name": "optional-name.txt",
-      "description": "What this artifact contains"
-    }
-
-Path 相对 agent workspace。Suzumio 会复制文件或目录到 artifact registry 并记录 SHA-256 hash。单独发布 artifact 不算 useful effect；artifact 准备好给别人使用时，agent 还应该发送消息或提交 completion。
-
-### `artifacts.list`
-
-    {}
-
-### `artifacts.read`
-
-    {
-      "id": "art_...",
-      "maxBytes": 20000
-    }
-
-使用 `id` 或 `name` 其一。该工具读取 artifact registry 中的文本文件 artifact。对于配置挂载的只读 host 文件或目录，使用 mounted path 和 `shell.exec`，例如 `cp -r /mnt/reference /workspace/reference`。
+声明当前进展依赖未来 signal，并结束当前 activation。非 PM agent 默认用 direct message 通知 `pm`。PM 调用时会记录 closed useful effect 并安静等待。
 
 ### `shell.exec`
 
@@ -236,7 +212,7 @@ Path 相对 agent workspace。Suzumio 会复制文件或目录到 artifact regis
       "report": "# Final Report\n\n..."
     }
 
-该工具写入 `final-report.md`，把项目设为 `submitted`，等待用户审批。
+该工具写入 `final-report.md`，把项目设为 `submitted`，等待用户审批。Agent 只有在已经整合相关当前信息、且自己请求的实质回复不再 outstanding 时才应调用它。
 
 ### `web.fetch`
 
@@ -251,6 +227,6 @@ Path 相对 agent workspace。Suzumio 会复制文件或目录到 artifact regis
 
 ## WebUI
 
-根路径 `/` 提供内嵌 WebUI。第一版保持简单：项目选择器、消息表单、agents、messages、turns、events 和 artifacts。
+根路径 `/` 提供内嵌 WebUI。第一版保持简单：项目选择器、消息表单、agents、messages、activations 和 events。
 
 <div class="footer">下一步：<a href="roadmap.html">路线图</a>。</div>

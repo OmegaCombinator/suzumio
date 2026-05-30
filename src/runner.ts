@@ -3,19 +3,27 @@ import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { ProxyAgent, fetch as undiciFetch, type Dispatcher } from "undici";
 import { jsonSchema, stepCountIs, streamText, tool as aiTool, type ModelMessage } from "ai";
 import { resolveRunnerModels, type ResolvedRunnerModel } from "./runner-model.js";
-import type { JsonObject, RunnerToolpackSpec, RunnerTurnInput, RunnerTurnOutput, ToolDefinition } from "./types.js";
+import { assertNodeFetchProxySupported, proxyForUrl } from "./proxy.js";
+import type { JsonObject, RunnerActivationInput, RunnerActivationOutput, RunnerToolpackSpec, ToolDefinition } from "./types.js";
 
 type ToolResult = { title?: string; output: string; metadata?: JsonObject };
 type RunnerToolHandler = (input: unknown) => Promise<ToolResult>;
 type RegisteredTool = { definition: ToolDefinition; toolpack: RunnerToolpackSpec; handler: RunnerToolHandler };
 type ToolCallLimiter = () => void;
+type EndActivationCallback = (output: string) => void;
+type ActivationEnded = () => boolean;
+type FetchWithDispatcher = (url: Parameters<typeof fetch>[0], init?: RequestInit & { dispatcher: Dispatcher }) => ReturnType<typeof fetch>;
+
+const fetchWithDispatcher = undiciFetch as unknown as FetchWithDispatcher;
+const webProxyDispatchers = new Map<string, ProxyAgent>();
 
 type RunnerToolContext = {
   project: string;
   agentId: string;
-  turnId: string;
+  activationId: string;
   workspace: string;
   toolpackId: string;
   callSupport: (tool: string, input: unknown) => Promise<ToolResult>;
@@ -25,12 +33,12 @@ type RunnerToolContext = {
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const inputPath = required(args.input, "--input");
-  const input = JSON.parse(await readFile(inputPath, "utf8")) as RunnerTurnInput;
+  const input = JSON.parse(await readFile(inputPath, "utf8")) as RunnerActivationInput;
   const output = await runAi(input);
-  await submitTurnOutput(input, output);
+  await submitActivationOutput(input, output);
 }
 
-async function runAi(input: RunnerTurnInput): Promise<RunnerTurnOutput> {
+async function runAi(input: RunnerActivationInput): Promise<RunnerActivationOutput> {
   if (!input.runner.models) throw new Error("runner.models is required in ai mode");
   const models = resolveRunnerModels(input.runner.models, input.agent.model ?? input.runner.model);
   const errors: string[] = [];
@@ -38,19 +46,26 @@ async function runAi(input: RunnerTurnInput): Promise<RunnerTurnOutput> {
     try {
       return await runAiWithModel(input, resolved);
     } catch (error) {
-      errors.push(`${resolved.presetId}: ${error instanceof Error ? error.message : String(error)}`);
+      errors.push(`${resolved.presetId}: ${errorMessage(error)}`);
     }
   }
   throw new Error(`All model attempts failed:\n${errors.join("\n")}`);
 }
 
-async function runAiWithModel(input: RunnerTurnInput, resolved: ResolvedRunnerModel): Promise<RunnerTurnOutput> {
+async function runAiWithModel(input: RunnerActivationInput, resolved: ResolvedRunnerModel): Promise<RunnerActivationOutput> {
   let toolCalls = 0;
+  const abortController = new AbortController();
+  let activationEnded = false;
+  let endActivationOutput: string | undefined;
   const tools = await toAiTools(input, () => {
     toolCalls += 1;
     if (toolCalls > input.runner.maxToolCalls) throw new Error(`Exceeded maxToolCalls: ${input.runner.maxToolCalls}`);
-  });
-  const messages: ModelMessage[] = [{ role: "user", content: input.turn.prompt }];
+  }, (output) => {
+    activationEnded = true;
+    endActivationOutput = output;
+    abortController.abort();
+  }, () => activationEnded);
+  const messages: ModelMessage[] = [{ role: "user", content: input.activation.prompt }];
   let text = "";
   const result = streamText({
     model: resolved.languageModel as never,
@@ -64,26 +79,42 @@ async function runAiWithModel(input: RunnerTurnInput, resolved: ResolvedRunnerMo
     maxOutputTokens: resolved.preset.maxOutputTokens,
     providerOptions: resolved.preset.providerOptions as never,
     headers: resolved.preset.headers,
+    abortSignal: abortController.signal,
     stopWhen: stepCountIs(input.runner.maxIterations),
     maxRetries: 0,
   } as never) as any;
-  for await (const event of result.fullStream as AsyncIterable<any>) {
-    if (event.type === "text-delta") text += event.text;
-    if (event.type === "error") throw event.error;
+  const output = (toolOutput?: string): RunnerActivationOutput => ({ text: text.trim() || toolOutput || "(model returned no text)", usage: { selectedModel: resolved.selectedPresetId, model: resolved.presetId, apiModel: resolved.apiModel } });
+  try {
+    for await (const event of result.fullStream as AsyncIterable<any>) {
+      if (event.type === "text-delta") text += event.text;
+      if (event.type === "error") {
+        if (activationEnded && isAbortError(event.error)) return output(endActivationOutput);
+        throw event.error;
+      }
+      if (endActivationOutput !== undefined) return output(endActivationOutput);
+    }
+  } catch (error) {
+    if (activationEnded && isAbortError(error)) return output(endActivationOutput);
+    throw error;
   }
-  return { text: text.trim() || "(model returned no text)", usage: { selectedModel: resolved.selectedPresetId, model: resolved.presetId, apiModel: resolved.apiModel } };
+  return output();
 }
 
-async function submitTurnOutput(input: RunnerTurnInput, output: RunnerTurnOutput): Promise<void> {
-  const response = await fetch(new URL("/turn-output", input.controllerUrl), {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ project: input.project, agentId: input.agent.id, turnId: input.turn.id, token: input.token, output }),
-  });
-  if (!response.ok) throw new Error((await response.text()) || `Turn output submit failed: ${response.status}`);
+async function submitActivationOutput(input: RunnerActivationInput, output: RunnerActivationOutput): Promise<void> {
+  let response: Response;
+  try {
+    response = await fetch(new URL("/activation-output", input.controllerUrl), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ project: input.project, agentId: input.agent.id, activationId: input.activation.id, token: input.token, output }),
+    });
+  } catch (error) {
+    throw controllerConnectionError(error);
+  }
+  if (!response.ok) throw new Error((await response.text()) || `Activation output submit failed: ${response.status}`);
 }
 
-async function toAiTools(input: RunnerTurnInput, limitToolCall: ToolCallLimiter): Promise<Record<string, unknown>> {
+async function toAiTools(input: RunnerActivationInput, limitToolCall: ToolCallLimiter, endActivation: EndActivationCallback, activationEnded: ActivationEnded): Promise<Record<string, unknown>> {
   const result: Record<string, unknown> = {};
   const tools = await loadRunnerTools(input);
   const seenSafeNames = new Map<string, string>();
@@ -96,15 +127,17 @@ async function toAiTools(input: RunnerTurnInput, limitToolCall: ToolCallLimiter)
       description: registered.definition.description,
       inputSchema: jsonSchema(registered.definition.inputSchema as never),
       execute: async (args: unknown) => {
+        if (activationEnded()) return { title: "activation ended", output: "Activation already ended; tool call ignored." };
         limitToolCall();
-        return callTool(input, registered, args);
+        if (activationEnded()) return { title: "activation ended", output: "Activation already ended; tool call ignored." };
+        return callTool(input, registered, args, endActivation);
       },
     } as never);
   }
   return result;
 }
 
-async function loadRunnerTools(input: RunnerTurnInput): Promise<RegisteredTool[]> {
+async function loadRunnerTools(input: RunnerActivationInput): Promise<RegisteredTool[]> {
   const registered: RegisteredTool[] = [];
   const seen = new Set<string>();
   for (const toolpack of input.toolpacks) {
@@ -121,11 +154,11 @@ async function loadRunnerTools(input: RunnerTurnInput): Promise<RegisteredTool[]
   return registered;
 }
 
-function runnerToolContext(input: RunnerTurnInput, toolpack: RunnerToolpackSpec): RunnerToolContext {
+function runnerToolContext(input: RunnerActivationInput, toolpack: RunnerToolpackSpec): RunnerToolContext {
   return {
     project: input.project,
     agentId: input.agent.id,
-    turnId: input.turn.id,
+    activationId: input.activation.id,
     workspace: input.workspace,
     toolpackId: toolpack.id,
     callSupport: (tool, toolInput) => callSupport(input, toolpack, tool, toolInput),
@@ -133,7 +166,7 @@ function runnerToolContext(input: RunnerTurnInput, toolpack: RunnerToolpackSpec)
       await postJson(new URL("/runner/signals", input.controllerUrl), {
         project: input.project,
         agentId: input.agent.id,
-        turnId: input.turn.id,
+        activationId: input.activation.id,
         token: input.token,
         ...signal,
       });
@@ -141,31 +174,41 @@ function runnerToolContext(input: RunnerTurnInput, toolpack: RunnerToolpackSpec)
   };
 }
 
-async function callTool(input: RunnerTurnInput, registered: RegisteredTool, args: unknown): Promise<ToolResult> {
+async function callTool(input: RunnerActivationInput, registered: RegisteredTool, args: unknown, endActivation: EndActivationCallback): Promise<ToolResult> {
   const toolCall = await postJson<{ toolCallId: string }>(new URL("/runner/tool-calls/start", input.controllerUrl), {
     project: input.project,
     agentId: input.agent.id,
-    turnId: input.turn.id,
+    activationId: input.activation.id,
     token: input.token,
     tool: registered.definition.name,
     input: args ?? {},
   });
+  let result: ToolResult;
   try {
-    const result = await registered.handler(args ?? {});
-    await finishToolCall(input, toolCall.toolCallId, "completed", result.output);
-    return result;
+    result = await registered.handler(args ?? {});
   } catch (error) {
     const message = errorMessage(error);
     await finishToolCall(input, toolCall.toolCallId, "failed", undefined, message).catch(() => undefined);
     throw error;
   }
+  await finishToolCall(input, toolCall.toolCallId, "completed", result.output);
+  if (endsActivation(registered.definition.name)) endActivation(result.output);
+  return result;
 }
 
-async function finishToolCall(input: RunnerTurnInput, toolCallId: string, status: "completed" | "failed", output?: string, error?: string): Promise<void> {
+function endsActivation(toolName: string): boolean {
+  return toolName === "coordination.wait_for_signal" || toolName === "completion.submit";
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && (error.name === "AbortError" || error.message.toLowerCase().includes("abort"));
+}
+
+async function finishToolCall(input: RunnerActivationInput, toolCallId: string, status: "completed" | "failed", output?: string, error?: string): Promise<void> {
   await postJson(new URL("/runner/tool-calls/finish", input.controllerUrl), {
     project: input.project,
     agentId: input.agent.id,
-    turnId: input.turn.id,
+    activationId: input.activation.id,
     token: input.token,
     toolCallId,
     status,
@@ -174,11 +217,11 @@ async function finishToolCall(input: RunnerTurnInput, toolCallId: string, status
   });
 }
 
-async function callSupport(input: RunnerTurnInput, toolpack: RunnerToolpackSpec, tool: string, toolInput: unknown): Promise<ToolResult> {
+async function callSupport(input: RunnerActivationInput, toolpack: RunnerToolpackSpec, tool: string, toolInput: unknown): Promise<ToolResult> {
   return postJson(new URL(toolpack.supportPath, input.controllerUrl), {
     project: input.project,
     agentId: input.agent.id,
-    turnId: input.turn.id,
+    activationId: input.activation.id,
     token: input.token,
     tool,
     input: toolInput ?? {},
@@ -190,14 +233,8 @@ function builtinRunnerHandlers(toolpackId: string, context: RunnerToolContext): 
     case "core":
       return {
         "messages.send": (input) => context.callSupport("messages.send", input),
-        "coordination.no_valuable_work": (input) => context.callSupport("coordination.no_valuable_work", input),
+        "coordination.wait_for_signal": (input) => context.callSupport("coordination.wait_for_signal", input),
         "completion.submit": (input) => context.callSupport("completion.submit", input),
-      };
-    case "artifacts":
-      return {
-        "artifacts.publish": (input) => context.callSupport("artifacts.publish", input),
-        "artifacts.list": (input) => context.callSupport("artifacts.list", input),
-        "artifacts.read": (input) => context.callSupport("artifacts.read", input),
       };
     case "shell":
       return { "shell.exec": (input) => runShellExec(context.workspace, input) };
@@ -264,7 +301,8 @@ async function runWebFetch(rawArgs: unknown): Promise<ToolResult> {
   const maxBytes = boundedNumber(args.maxBytes, 20_000, 100_000);
   let response: Response;
   try {
-    response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+    const proxyUrl = proxyForUrl(url);
+    response = proxyUrl ? await fetchWithDispatcher(url, { signal: AbortSignal.timeout(timeoutMs), dispatcher: webProxyDispatcher(proxyUrl) }) : await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
   } catch (error) {
     throw new Error(`web.fetch failed for ${url.toString()}: ${errorMessage(error)}`);
   }
@@ -276,6 +314,16 @@ async function runWebFetch(rawArgs: unknown): Promise<ToolResult> {
   return { title: "web fetch", output: truncated ? `${text.slice(0, maxBytes)}\n\n[truncated]` : text, metadata: { url: url.toString(), status: response.status, contentType: contentType || undefined, format, truncated } };
 }
 
+function webProxyDispatcher(proxyUrl: string): ProxyAgent {
+  assertNodeFetchProxySupported(proxyUrl);
+  let dispatcher = webProxyDispatchers.get(proxyUrl);
+  if (!dispatcher) {
+    dispatcher = new ProxyAgent(proxyUrl);
+    webProxyDispatchers.set(proxyUrl, dispatcher);
+  }
+  return dispatcher;
+}
+
 function errorMessage(error: unknown): string {
   if (!(error instanceof Error)) return String(error);
   const cause = error.cause instanceof Error ? `: ${error.cause.message}` : "";
@@ -284,10 +332,19 @@ function errorMessage(error: unknown): string {
 }
 
 async function postJson<T = ToolResult>(url: URL, body: unknown): Promise<T> {
-  const response = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  let response: Response;
+  try {
+    response = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  } catch (error) {
+    throw controllerConnectionError(error);
+  }
   const text = await response.text();
   if (!response.ok) throw new Error(text || `Request failed: ${response.status}`);
   return (text.trim() ? JSON.parse(text) : {}) as T;
+}
+
+function controllerConnectionError(error: unknown): Error {
+  return new Error(`Suzumio controller request failed: ${errorMessage(error)}. If the runner is in Docker, start the server with --host 0.0.0.0 and use a container-reachable controllerUrl such as host.docker.internal.`);
 }
 
 function safeToolName(value: string): string {
@@ -357,6 +414,6 @@ function required(value: string | undefined, label: string): string {
 }
 
 main().catch((error) => {
-  console.error(error instanceof Error ? error.stack ?? error.message : String(error));
+  console.error(errorMessage(error));
   process.exit(1);
 });

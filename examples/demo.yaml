@@ -1,6 +1,6 @@
 name: demo
 task: |
-  Demonstrate that Suzumio can deliver a user message to an isolated Docker AI runner and record the completed turn.
+  Demonstrate that Suzumio can deliver a user message to an isolated Docker AI runner and record the completed activation.
 
 scheduler:
   kind: nonpreemptive-signals
@@ -48,7 +48,6 @@ backend:
 tools:
   toolpacks:
     - core
-    - artifacts
     - shell
     - web
 
@@ -58,10 +57,10 @@ agents:
     displayName: Yuki
     model: pm-main
     prompt: |
-      You coordinate the project. When you receive a user request, handle it in one non-preemptive turn.
+      You coordinate the project. When you receive a user request, handle it in one non-preemptive activation.
     tools:
       - messages.send
-      - coordination.no_valuable_work
+      - coordination.wait_for_signal
       - completion.submit
 
   worker:
@@ -75,10 +74,7 @@ agents:
       Work uninterrupted. Report only when you have a result, useful artifact, blocker, or question.
     tools:
       - messages.send
-      - coordination.no_valuable_work
-      - artifacts.publish
-      - artifacts.list
-      - artifacts.read
+      - coordination.wait_for_signal
       - shell.exec
       - web.fetch
 

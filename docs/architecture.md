@@ -1,8 +1,8 @@
 ---
 title: "Suzumio Architecture"
 eyebrow: "Architecture"
-heroTitle: "Core owns coordination. Containers run turns."
-lead: "Suzumio separates orchestration from execution. The core process owns project truth and scheduling; the Docker runner performs one isolated turn and exits."
+heroTitle: "Core owns coordination. Containers run activations."
+lead: "Suzumio separates orchestration from execution. The core process owns project truth and scheduling; the Docker runner performs one isolated activation and exits."
 ---
 
 ## Layer Map
@@ -14,23 +14,23 @@ lead: "Suzumio separates orchestration from execution. The core process owns pro
       Config loader
       SQLite store
       Signal router
-      Artifact registry
+      Shared artifact mounts
       Tool support routes
       Non-preemptive scheduler
             |
             v
     Docker backend
-      Creates turn input JSON
-      Starts one container per turn
+      Creates activation input JSON
+      Starts one container per activation
       Monitors container exit
             |
             v
     Container runner
-      Reads /turn/input.json
+      Reads /activation/input.json
       Runs AI mode
       Runs model-facing tools
       Calls Suzumio support routes for stateful tools
-      POSTs /turn-output with final text
+      POSTs /activation-output with final text
 
 ## Core Process
 
@@ -39,21 +39,21 @@ The core process is the authority for project-level records. If data should be v
 | Module         | Responsibility                                                                                                                          |
 |----------------|-----------------------------------------------------------------------------------------------------------------------------------------|
 | `config.ts`    | Loads YAML, resolves imports, applies `extends`, validates config, and renders final YAML.                                              |
-| `store.ts`     | Creates and queries SQLite tables for projects, agents, messages, signals, turns, events, tool calls, and artifacts.                    |
+| `store.ts`     | Creates and queries SQLite tables for projects, agents, messages, signals, activations, events, and tool calls.                         |
 | `scheduler.ts` | Implements the signal-driven non-preemptive scheduling rule.                                                                            |
 | `tools.ts`     | Resolves built-in and local toolpacks and serves controller support with token and allowlist checks.                                    |
-| `server.ts`    | HTTP API, SSE stream, controller support route, turn result route, and embedded WebUI.                                                  |
-| `backend.ts`   | Docker container creation, configured bind mounts, runner input, and turn completion monitoring.                                        |
-| `runner.ts`    | Container entrypoint for model-backed turns and runner-local tool execution.                                                            |
+| `server.ts`    | HTTP API, SSE stream, controller support route, activation result route, and embedded WebUI.                                            |
+| `backend.ts`   | Docker container creation, configured bind mounts, runner input, and activation completion monitoring.                                  |
+| `runner.ts`    | Container entrypoint for model-backed activations and runner-local tool execution.                                                      |
 
 ## Runner Contract
 
 The runner receives all context through one read-only input file and reports completion back over HTTP. This keeps execution replaceable without letting a model-editable file become the output authority.
 
-    type RunnerTurnInput = {
+    type RunnerActivationInput = {
       project: string
       agent: { id: string; role: string; prompt: string; model?: string }
-      turn: { id: string; prompt: string }
+      activation: { id: string; prompt: string }
       workspace: string
       controllerUrl: string
       token: string
@@ -62,20 +62,20 @@ The runner receives all context through one read-only input file and reports com
       toolpacks: RunnerToolpackSpec[]
     }
 
-    type RunnerTurnOutput = {
+    type RunnerActivationOutput = {
       text: string
       usage?: Record<string, unknown>
     }
 
 ## Docker Isolation
 
-Each turn container receives a small, explicit environment:
+Each activation container receives a small, explicit environment:
 
-- A read-only bind mount for `/turn/input.json`.
+- A read-only bind mount for `/activation/input.json`.
 - A bind mount for the agent workspace at `/workspace`.
 - Configured host files or directories mounted at explicit non-reserved targets.
-- Environment variables for project id, agent id, turn id, token, and configured model-provider key variables.
-- `host.docker.internal` mapping so the runner can call Suzumio support routes and `/turn-output` on the host.
+- Environment variables for project id, agent id, activation id, token, and configured model-provider key variables.
+- `host.docker.internal` mapping so the runner can call Suzumio support routes and `/activation-output` on the host.
 
 Completed containers are currently kept for early debugging. Cleanup policy should become configurable as the Docker backend hardens.
 
@@ -87,18 +87,18 @@ Completed containers are currently kept for early debugging. Cleanup policy shou
       runner executes the runner-side tool handler
       if the tool needs project state:
         runner POSTs /toolpacks/:toolpackId/support
-        controller verifies token, turn ownership, toolpack membership, and allowlist
-        controller updates SQLite, messages, signals, artifacts, or submission state
+        controller verifies token, activation ownership, toolpack membership, and allowlist
+        controller updates SQLite, messages, signals, or submission state
       runner POSTs /runner/tool-calls/finish
       runner returns tool output to model
 
-The model does not receive arbitrary host tools by default. Tools are configured per agent. `shell.exec` and `web.fetch` run inside the Docker runner; message, artifact, completion, and coordination tools use Suzumio support APIs.
+The model does not receive arbitrary host tools by default. Tools are configured per agent. `shell.exec` and `web.fetch` run inside the Docker runner; message, completion, and coordination tools use Suzumio support APIs.
 
 ## Signal Delivery
 
-Agents do not poll for work. Suzumio renders pending signals into the next turn prompt and records which turn received each signal. This avoids polling loops and makes scheduling decisions auditable.
+Agents do not poll for work. Suzumio renders pending signals into the next activation prompt and records which activation received each signal. This avoids polling loops and makes scheduling decisions auditable.
 
-Messages create `message.created` signals. Artifacts create audit signals. Custom toolpacks can call `recordSignal` to create pending coordination work or closed useful effects.
+Messages create `message.created` signals. Shared artifact files are ordinary durable files and do not wake agents by themselves. Custom toolpacks can call `recordSignal` to create pending coordination work or closed useful effects.
 
 ## SQLite as Project Truth
 
@@ -107,16 +107,15 @@ Each project has one SQLite file. The container runner does not maintain the pro
 | Table           | Purpose                                                            |
 |-----------------|--------------------------------------------------------------------|
 | `projects`      | Project status, task, resolved config JSON, submitted report path. |
-| `agents`        | Agent roster, prompts, tool allowlists, token, active turn.        |
+| `agents`        | Agent roster, prompts, tool allowlists, token, active activation.  |
 | `messages`      | Direct and channel messages.                                       |
 | `signals`       | Scheduler inputs, delivered signal records, and useful effects.    |
-| `turns`         | Turn execution records and output text.                            |
+| `activations`   | Activation execution records and output text.                      |
 | `events`        | Append-style event timeline.                                       |
 | `tool_calls`    | Audited tool execution records.                                    |
-| `artifacts`     | Published file artifacts with hashes and metadata.                 |
 
 ## Why the Boundary Matters
 
-Keeping project truth in the core runtime makes agent execution disposable. A runner can fail, be replaced, or be upgraded while the project database, message history, artifacts, and user-control surface remain stable.
+Keeping project truth in the core runtime makes agent execution disposable. A runner can fail, be replaced, or be upgraded while the project database, message history, shared artifact files, and user-control surface remain stable.
 
 <div class="footer">Next: <a href="operations.html">Operations</a>.</div>

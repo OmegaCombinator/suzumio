@@ -1,8 +1,8 @@
 ---
 title: "Suzumio 架构"
 eyebrow: "架构"
-heroTitle: "Core 负责协调，Container 执行 turn。"
-lead: "Suzumio 将 orchestration 与 execution 分离。核心进程拥有项目事实和调度；Docker runner 执行一个隔离 turn 后退出。"
+heroTitle: "Core 负责协调，Container 执行 activation。"
+lead: "Suzumio 将 orchestration 与 execution 分离。核心进程拥有项目事实和调度；Docker runner 执行一个隔离 activation 后退出。"
 ---
 
 ## 层次图
@@ -14,23 +14,23 @@ lead: "Suzumio 将 orchestration 与 execution 分离。核心进程拥有项目
       Config loader
       SQLite store
       Signal router
-      Artifact registry
+      Shared artifact mounts
       Tool support routes
       Non-preemptive scheduler
             |
             v
     Docker backend
-      Creates turn input JSON
-      Starts one container per turn
+      Creates activation input JSON
+      Starts one container per activation
       Monitors container exit
             |
             v
     Container runner
-      Reads /turn/input.json
+      Reads /activation/input.json
       Runs AI mode
       Runs model-facing tools
       Calls Suzumio support routes for stateful tools
-      POSTs /turn-output with final text
+      POSTs /activation-output with final text
 
 ## 核心进程
 
@@ -39,21 +39,21 @@ lead: "Suzumio 将 orchestration 与 execution 分离。核心进程拥有项目
 | 模块           | 职责                                                                                                                   |
 |----------------|------------------------------------------------------------------------------------------------------------------------|
 | `config.ts`    | 加载 YAML、解析 import、应用 `extends`、验证配置并渲染最终 YAML。                                                      |
-| `store.ts`     | 创建和查询 projects、agents、messages、signals、turns、events、tool_calls、artifacts 等 SQLite 表。                    |
+| `store.ts`     | 创建和查询 projects、agents、messages、signals、activations、events、tool_calls 等 SQLite 表。                       |
 | `scheduler.ts` | 实现 signal-driven 非抢占式调度规则。                                                                                  |
 | `tools.ts`     | 解析 built-in 和 local toolpacks，并通过 token 与 allowlist 校验提供 controller support。                              |
-| `server.ts`    | HTTP API、SSE stream、controller support route、turn result route 和内嵌 WebUI。                                       |
-| `backend.ts`   | Docker 容器创建、配置的 bind mounts、runner input 和 turn completion monitoring。                                      |
-| `runner.ts`    | 模型驱动 turn 的容器入口，并执行 runner-local tools。                                                                  |
+| `server.ts`    | HTTP API、SSE stream、controller support route、activation result route 和内嵌 WebUI。                                 |
+| `backend.ts`   | Docker 容器创建、配置的 bind mounts、runner input 和 activation completion monitoring。                                |
+| `runner.ts`    | 模型驱动 activation 的容器入口，并执行 runner-local tools。                                                            |
 
 ## Runner Contract
 
 Runner 通过一个只读 input 文件接收全部上下文，并通过 HTTP 回传完成结果。这样执行层仍可替换，同时不会让模型可写文件成为 output authority。
 
-    type RunnerTurnInput = {
+    type RunnerActivationInput = {
       project: string
       agent: { id: string; role: string; prompt: string; model?: string }
-      turn: { id: string; prompt: string }
+      activation: { id: string; prompt: string }
       workspace: string
       controllerUrl: string
       token: string
@@ -62,20 +62,20 @@ Runner 通过一个只读 input 文件接收全部上下文，并通过 HTTP 回
       toolpacks: RunnerToolpackSpec[]
     }
 
-    type RunnerTurnOutput = {
+    type RunnerActivationOutput = {
       text: string
       usage?: Record<string, unknown>
     }
 
 ## Docker 隔离
 
-每个 turn container 只获得明确的小环境：
+每个 activation container 只获得明确的小环境：
 
-- 只读 `/turn/input.json` bind mount。
+- 只读 `/activation/input.json` bind mount。
 - `/workspace` bind mount，作为 agent workspace。
 - 按配置显式挂载到非保留 target 的 host 文件或目录。
-- project、agent、turn、token 以及配置的 provider key 环境变量。
-- `host.docker.internal` 映射，用于访问 host 上的 Suzumio support routes 和 `/turn-output`。
+- project、agent、activation、token 以及配置的 provider key 环境变量。
+- `host.docker.internal` 映射，用于访问 host 上的 Suzumio support routes 和 `/activation-output`。
 
 当前版本保留 completed containers 便于 early debugging。后续应把 cleanup policy 配置化。
 
@@ -87,8 +87,8 @@ Runner 通过一个只读 input 文件接收全部上下文，并通过 HTTP 回
       runner executes the runner-side tool handler
       if the tool needs project state:
         runner POSTs /toolpacks/:toolpackId/support
-        controller verifies token, turn ownership, toolpack membership, and allowlist
-        controller updates SQLite, messages, signals, artifacts, or submission state
+        controller verifies token, activation ownership, toolpack membership, and allowlist
+        controller updates SQLite, messages, signals, or submission state
       runner POSTs /runner/tool-calls/finish
       runner returns tool output to model
 
@@ -96,7 +96,7 @@ Runner 通过一个只读 input 文件接收全部上下文，并通过 HTTP 回
 
 ## Signal Delivery
 
-Agent 不 poll 工作。Suzumio 把 pending signal 渲染进下一个 turn prompt，并记录哪个 turn 收到了哪些 signal。这样既避免 polling loop，也让调度决策可审计。
+Agent 不 poll 工作。Suzumio 把 pending signal 渲染进下一个 activation prompt，并记录哪个 activation 收到了哪些 signal。这样既避免 polling loop，也让调度决策可审计。
 
 Message 会创建 `message.created` signal。Artifact 会创建审计 signal。自定义 toolpack 可以调用 `recordSignal` 创建 pending 协调任务或 closed useful effect。
 
@@ -107,13 +107,12 @@ Message 会创建 `message.created` signal。Artifact 会创建审计 signal。�
 | 表              | 用途                                                          |
 |-----------------|---------------------------------------------------------------|
 | `projects`      | 项目状态、任务、resolved config JSON、submitted report path。 |
-| `agents`        | Agent roster、prompt、tool allowlist、token、active turn。    |
+| `agents`        | Agent roster、prompt、tool allowlist、token、active activation。 |
 | `messages`      | 直接消息和频道消息。                                          |
 | `signals`       | Scheduler 输入、已投递 signal 记录和 useful effects。         |
-| `turns`         | Turn 执行记录和 output text。                                 |
+| `activations`   | Activation 执行记录和 output text。                           |
 | `events`        | Append-style event timeline。                                 |
 | `tool_calls`    | Controller-supported tool call 记录。                         |
-| `artifacts`     | 带 hash 和 metadata 的已发布文件。                            |
 
 ## 边界的价值
 

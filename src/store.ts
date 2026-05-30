@@ -1,11 +1,11 @@
-import { copyFile, cp, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
-import { createHash, randomBytes } from "node:crypto";
+import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import YAML from "yaml";
-import { createId, nowIso, safeName } from "./id.js";
+import { createId, nowIso } from "./id.js";
 import { agentPaths, ensureProjectDirs, projectPaths, suzumioRoot, type ProjectPaths } from "./paths.js";
-import type { AgentRecord, JsonObject, MessagePriority, MessageRecord, ProjectConfig, ProjectStatus, RunnerTurnOutput, SignalRecord, TurnRecord } from "./types.js";
+import type { ActivationRecord, AgentRecord, JsonObject, MessagePriority, MessageRecord, ProjectConfig, ProjectStatus, RunnerActivationOutput, SignalRecord } from "./types.js";
 
 export class ProjectStore {
   readonly paths: ProjectPaths;
@@ -81,12 +81,12 @@ export class ProjectStore {
     return agentFromRow(row);
   }
 
-  setAgentStatus(agentId: string, status: AgentRecord["status"], activeTurnId?: string | null, containerName?: string | null): void {
-    this.db.prepare("UPDATE agents SET status = ?, active_turn_id = ?, container_name = COALESCE(?, container_name), updated_at = ? WHERE project = ? AND id = ?").run(status, activeTurnId ?? null, containerName ?? null, nowIso(), this.project, agentId);
-    this.appendEvent("agent.status", { agentId, status, activeTurnId });
+  setAgentStatus(agentId: string, status: AgentRecord["status"], activeActivationId?: string | null, containerName?: string | null): void {
+    this.db.prepare("UPDATE agents SET status = ?, active_activation_id = ?, container_name = COALESCE(?, container_name), updated_at = ? WHERE project = ? AND id = ?").run(status, activeActivationId ?? null, containerName ?? null, nowIso(), this.project, agentId);
+    this.appendEvent("agent.status", { agentId, status, activeActivationId });
   }
 
-  sendMessage(input: { sender: string; recipient?: string; channel?: string; priority?: MessagePriority; body: string; sourceAgent?: string; sourceTurn?: string }): MessageRecord {
+  sendMessage(input: { sender: string; recipient?: string; channel?: string; priority?: MessagePriority; body: string; sourceAgent?: string; sourceActivation?: string }): MessageRecord {
     if (!input.recipient && !input.channel) throw new Error("Message needs recipient or channel");
     if (input.recipient && input.channel) throw new Error("Message cannot have both recipient and channel");
     if (input.recipient && input.recipient !== "user") this.requireAgent(input.recipient);
@@ -104,7 +104,7 @@ export class ProjectStore {
     };
     this.db.prepare("INSERT INTO messages (id, project, sender, recipient, channel, priority, body, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(message.id, message.project, message.sender, message.recipient ?? null, message.channel ?? null, message.priority, message.body, message.createdAt);
     this.appendEvent("message.created", message);
-    this.recordSignal({ kind: "message.created", sourceAgent: input.sourceAgent, sourceTurn: input.sourceTurn, targetAgent: signalAgent(input.recipient), targetChannel: input.channel, priority: message.priority, payload: message as unknown as JsonObject });
+    this.recordSignal({ kind: "message.created", sourceAgent: input.sourceAgent, sourceActivation: input.sourceActivation, targetAgent: signalAgent(input.recipient), targetChannel: input.channel, priority: message.priority, payload: message as unknown as JsonObject });
     return message;
   }
 
@@ -113,67 +113,83 @@ export class ProjectStore {
     return rows.reverse().map(messageFromRow);
   }
 
-  createTurn(agent: AgentRecord, prompt: string): TurnRecord {
-    const turnId = createId("turn");
-    const turnDir = path.join(this.paths.turns, turnId);
-    const inputPath = path.join(turnDir, "input.json");
-    const outputPath = path.join(turnDir, "result.json");
+  agentMessageHistory(agentId: string, limit = 1000): MessageRecord[] {
+    const rows = this.db.prepare(
+      `SELECT * FROM messages
+       WHERE project = ?
+         AND (sender = ? OR recipient = ? OR channel IS NOT NULL)
+       ORDER BY created_at DESC
+       LIMIT ?`,
+    ).all(this.project, agentId, agentId, limit) as DbMessage[];
+    return rows.reverse().map(messageFromRow);
+  }
+
+  createActivation(agent: AgentRecord, prompt: string): ActivationRecord {
+    const activationId = createId("act");
+    const activationDir = path.join(this.paths.activations, activationId);
+    const inputPath = path.join(activationDir, "input.json");
+    const outputPath = path.join(activationDir, "result.json");
     const now = nowIso();
-    this.db.prepare("INSERT INTO turns (id, project, agent_id, status, prompt, input_path, output_path, started_at, emitted_messages) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(turnId, this.project, agent.id, "running", prompt, inputPath, outputPath, now, 0);
-    this.setAgentStatus(agent.id, "running", turnId);
-    this.appendEvent("turn.started", { turnId, agentId: agent.id });
-    return { id: turnId, project: this.project, agentId: agent.id, status: "running", prompt, inputPath, outputPath, startedAt: now, emittedMessages: 0 };
+    this.db.prepare("INSERT INTO activations (id, project, agent_id, status, prompt, input_path, output_path, started_at, emitted_messages) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(activationId, this.project, agent.id, "running", prompt, inputPath, outputPath, now, 0);
+    this.setAgentStatus(agent.id, "running", activationId);
+    this.appendEvent("activation.started", { activationId, agentId: agent.id });
+    return { id: activationId, project: this.project, agentId: agent.id, status: "running", prompt, inputPath, outputPath, startedAt: now, emittedMessages: 0 };
   }
 
-  setTurnContainer(turnId: string, containerName: string): void {
-    this.db.prepare("UPDATE turns SET container_name = ? WHERE id = ? AND project = ?").run(containerName, turnId, this.project);
-    const agentId = (this.db.prepare("SELECT agent_id FROM turns WHERE id = ? AND project = ?").get(turnId, this.project) as { agent_id: string }).agent_id;
-    this.setAgentStatus(agentId, "running", turnId, containerName);
+  setActivationContainer(activationId: string, containerName: string): void {
+    this.db.prepare("UPDATE activations SET container_name = ? WHERE id = ? AND project = ?").run(containerName, activationId, this.project);
+    const agentId = (this.db.prepare("SELECT agent_id FROM activations WHERE id = ? AND project = ?").get(activationId, this.project) as { agent_id: string }).agent_id;
+    this.setAgentStatus(agentId, "running", activationId, containerName);
   }
 
-  completeTurn(turnId: string, output: RunnerTurnOutput): void {
-    const turn = this.turn(turnId);
-    const emitted = this.countTurnMessages(turn.agentId, turn.startedAt);
-    this.db.prepare("UPDATE turns SET status = ?, completed_at = ?, text = ?, usage_json = ?, emitted_messages = ? WHERE id = ? AND project = ?").run("completed", nowIso(), output.text, JSON.stringify(output.usage ?? {}), emitted, turnId, this.project);
-    this.setAgentStatus(turn.agentId, "quiet", null);
-    const usefulEffects = this.countTurnUsefulEffects(turnId);
-    this.appendEvent("turn.completed", { turnId, agentId: turn.agentId, emittedMessages: emitted, usefulEffects });
-    if (usefulEffects === 0 && !this.turnWasNoEffectNudge(turnId)) {
+  completeActivation(activationId: string, output: RunnerActivationOutput): void {
+    const activation = this.activation(activationId);
+    const emitted = this.countActivationMessages(activation.agentId, activation.startedAt);
+    this.db.prepare("UPDATE activations SET status = ?, completed_at = ?, text = ?, usage_json = ?, emitted_messages = ? WHERE id = ? AND project = ?").run("completed", nowIso(), output.text, JSON.stringify(output.usage ?? {}), emitted, activationId, this.project);
+    this.setAgentStatus(activation.agentId, "quiet", null);
+    const usefulEffects = this.countActivationUsefulEffects(activationId);
+    this.appendEvent("activation.completed", { activationId, agentId: activation.agentId, emittedMessages: emitted, usefulEffects });
+    if (usefulEffects === 0 && !this.activationWasNoEffectNudge(activationId)) {
       this.recordSignal({
         kind: "scheduler.no_effect_nudge",
-        targetAgent: turn.agentId,
+        targetAgent: activation.agentId,
         priority: "P1",
         payload: {
-          previousTurnId: turnId,
-          message: "Your previous turn produced no externally visible effect. Send a message, publish an artifact, submit completion, or report a blocker.",
+          previousActivationId: activationId,
+          message: "Your previous activation produced no externally visible effect. Send a message, publish an artifact, submit completion, or report a blocker.",
         },
       });
     }
   }
 
-  failTurn(turnId: string, error: string): void {
-    const turn = this.turn(turnId);
-    this.db.prepare("UPDATE turns SET status = ?, completed_at = ?, error = ? WHERE id = ? AND project = ?").run("failed", nowIso(), error, turnId, this.project);
-    this.setAgentStatus(turn.agentId, "failed", null);
-    this.appendEvent("turn.failed", { turnId, agentId: turn.agentId, error });
+  failActivation(activationId: string, error: string): void {
+    const activation = this.activation(activationId);
+    this.db.prepare("UPDATE activations SET status = ?, completed_at = ?, error = ? WHERE id = ? AND project = ?").run("failed", nowIso(), error, activationId, this.project);
+    this.setAgentStatus(activation.agentId, "failed", null);
+    this.appendEvent("activation.failed", { activationId, agentId: activation.agentId, error });
   }
 
-  turn(turnId: string): TurnRecord {
-    const row = this.db.prepare("SELECT * FROM turns WHERE id = ? AND project = ?").get(turnId, this.project) as DbTurn | undefined;
-    if (!row) throw new Error(`Unknown turn: ${turnId}`);
-    return turnFromRow(row);
+  activation(activationId: string): ActivationRecord {
+    const row = this.db.prepare("SELECT * FROM activations WHERE id = ? AND project = ?").get(activationId, this.project) as DbActivation | undefined;
+    if (!row) throw new Error(`Unknown activation: ${activationId}`);
+    return activationFromRow(row);
   }
 
-  listTurns(limit = 100): TurnRecord[] {
-    const rows = this.db.prepare("SELECT * FROM turns WHERE project = ? ORDER BY started_at DESC LIMIT ?").all(this.project, limit) as DbTurn[];
-    return rows.reverse().map(turnFromRow);
+  listActivations(limit = 100): ActivationRecord[] {
+    const rows = this.db.prepare("SELECT * FROM activations WHERE project = ? ORDER BY started_at DESC LIMIT ?").all(this.project, limit) as DbActivation[];
+    return rows.reverse().map(activationFromRow);
   }
 
-  recordToolCall(input: { turnId: string; agentId: string; tool: string; input: unknown; status: "running" | "completed" | "failed"; output?: string; error?: string }): string {
+  agentActivationHistory(agentId: string, limit = 50): ActivationRecord[] {
+    const rows = this.db.prepare("SELECT * FROM activations WHERE project = ? AND agent_id = ? ORDER BY started_at DESC LIMIT ?").all(this.project, agentId, limit) as DbActivation[];
+    return rows.reverse().map(activationFromRow);
+  }
+
+  recordToolCall(input: { activationId: string; agentId: string; tool: string; input: unknown; status: "running" | "completed" | "failed"; output?: string; error?: string }): string {
     const id = createId("tool");
     const now = nowIso();
-    this.db.prepare("INSERT INTO tool_calls (id, project, turn_id, agent_id, tool, input_json, status, output, error, created_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(id, this.project, input.turnId, input.agentId, input.tool, JSON.stringify(input.input ?? {}), input.status, input.output ?? null, input.error ?? null, now, input.status === "running" ? null : now);
-    this.appendEvent("tool.called", { id, turnId: input.turnId, agentId: input.agentId, tool: input.tool, status: input.status });
+    this.db.prepare("INSERT INTO tool_calls (id, project, activation_id, agent_id, tool, input_json, status, output, error, created_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(id, this.project, input.activationId, input.agentId, input.tool, JSON.stringify(input.input ?? {}), input.status, input.output ?? null, input.error ?? null, now, input.status === "running" ? null : now);
+    this.appendEvent("tool.called", { id, activationId: input.activationId, agentId: input.agentId, tool: input.tool, status: input.status });
     return id;
   }
 
@@ -182,9 +198,9 @@ export class ProjectStore {
     this.appendEvent(status === "completed" ? "tool.completed" : "tool.failed", { id, output, error });
   }
 
-  finishToolCallForTurn(id: string, agentId: string, turnId: string, status: "completed" | "failed", output?: string, error?: string): void {
-    const row = this.db.prepare("SELECT id FROM tool_calls WHERE id = ? AND project = ? AND agent_id = ? AND turn_id = ?").get(id, this.project, agentId, turnId) as { id: string } | undefined;
-    if (!row) throw new Error(`Unknown tool call for turn: ${id}`);
+  finishToolCallForActivation(id: string, agentId: string, activationId: string, status: "completed" | "failed", output?: string, error?: string): void {
+    const row = this.db.prepare("SELECT id FROM tool_calls WHERE id = ? AND project = ? AND agent_id = ? AND activation_id = ?").get(id, this.project, agentId, activationId) as { id: string } | undefined;
+    if (!row) throw new Error(`Unknown tool call for activation: ${id}`);
     this.finishToolCall(id, status, output, error);
   }
 
@@ -192,7 +208,7 @@ export class ProjectStore {
     return this.db.prepare("SELECT * FROM tool_calls WHERE project = ? ORDER BY created_at DESC LIMIT ?").all(this.project, limit) as Record<string, unknown>[];
   }
 
-  recordSignal(input: { kind: string; sourceAgent?: string; sourceTurn?: string; targetAgent?: string; targetChannel?: string; priority?: MessagePriority; payload?: JsonObject; status?: "pending" | "closed"; usefulEffect?: boolean }): SignalRecord[] {
+  recordSignal(input: { kind: string; sourceAgent?: string; sourceActivation?: string; targetAgent?: string; targetChannel?: string; priority?: MessagePriority; payload?: JsonObject; status?: "pending" | "closed"; usefulEffect?: boolean }): SignalRecord[] {
     const targets = this.signalTargets(input);
     const signals: SignalRecord[] = [];
     const createdAt = nowIso();
@@ -201,8 +217,8 @@ export class ProjectStore {
       const id = createId("sig");
       const status = signalStatus(input.status, target.targetAgent ? "pending" : "closed");
       const usefulEffect = input.usefulEffect ?? defaultUsefulEffect(input.kind, status);
-      this.db.prepare("INSERT INTO signals (id, project, kind, source_agent, source_turn, target_agent, target_channel, priority, payload_json, status, useful_effect, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(id, this.project, input.kind, input.sourceAgent ?? null, input.sourceTurn ?? null, target.targetAgent ?? null, target.targetChannel ?? null, priority, JSON.stringify(input.payload ?? {}), status, usefulEffect ? 1 : 0, createdAt);
-      const signal = { id, project: this.project, kind: input.kind, sourceAgent: input.sourceAgent, sourceTurn: input.sourceTurn, targetAgent: target.targetAgent, targetChannel: target.targetChannel, priority, payload: input.payload ?? {}, status, usefulEffect, createdAt } satisfies SignalRecord;
+      this.db.prepare("INSERT INTO signals (id, project, kind, source_agent, source_activation, target_agent, target_channel, priority, payload_json, status, useful_effect, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(id, this.project, input.kind, input.sourceAgent ?? null, input.sourceActivation ?? null, target.targetAgent ?? null, target.targetChannel ?? null, priority, JSON.stringify(input.payload ?? {}), status, usefulEffect ? 1 : 0, createdAt);
+      const signal = { id, project: this.project, kind: input.kind, sourceAgent: input.sourceAgent, sourceActivation: input.sourceActivation, targetAgent: target.targetAgent, targetChannel: target.targetChannel, priority, payload: input.payload ?? {}, status, usefulEffect, createdAt } satisfies SignalRecord;
       signals.push(signal);
       this.appendEvent("signal.created", signal);
     }
@@ -219,41 +235,18 @@ export class ProjectStore {
     return rows.map(signalFromRow);
   }
 
-  markSignalsDelivered(agentId: string, signals: SignalRecord[], turnId: string): void {
-    const stmt = this.db.prepare("UPDATE signals SET status = 'delivered', delivered_at = ?, delivered_turn_id = ? WHERE project = ? AND id = ? AND target_agent = ? AND status = 'pending'");
+  markSignalsDelivered(agentId: string, signals: SignalRecord[], activationId: string): void {
+    const stmt = this.db.prepare("UPDATE signals SET status = 'delivered', delivered_at = ?, delivered_activation_id = ? WHERE project = ? AND id = ? AND target_agent = ? AND status = 'pending'");
     const now = nowIso();
-    for (const signal of signals) stmt.run(now, turnId, this.project, signal.id, agentId);
+    for (const signal of signals) stmt.run(now, activationId, this.project, signal.id, agentId);
   }
 
-  async publishArtifact(input: { creator: string; turnId: string; workspacePath: string; sourcePath: string; name?: string; description?: string }): Promise<Record<string, unknown>> {
-    const resolved = path.resolve(input.workspacePath, input.sourcePath);
-    assertInside(resolved, input.workspacePath);
-    const info = await stat(resolved);
-    const name = safeName(input.name ?? path.basename(resolved));
-    const id = createId("art");
-    const destination = path.join(this.paths.artifacts, `${id}_${name}`);
-    if (info.isDirectory()) await cp(resolved, destination, { recursive: true, errorOnExist: true });
-    else if (info.isFile()) await copyFile(resolved, destination);
-    else throw new Error("Only file and directory artifacts are supported");
-    const sha256 = info.isDirectory() ? await directorySha256(destination) : createHash("sha256").update(await readFile(destination)).digest("hex");
-    const createdAt = nowIso();
-    this.db.prepare("INSERT INTO artifacts (id, project, creator, turn_id, name, path, sha256, description, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(id, this.project, input.creator, input.turnId, name, destination, sha256, input.description ?? null, createdAt);
-    const artifact = { id, project: this.project, creator: input.creator, turnId: input.turnId, name, path: destination, sha256, description: input.description, createdAt };
-    this.appendEvent("artifact.published", artifact);
-    this.recordSignal({ kind: "artifact.published", sourceAgent: input.creator, sourceTurn: input.turnId, payload: artifact as JsonObject, status: "closed", usefulEffect: false });
-    return artifact;
-  }
-
-  listArtifacts(limit = 100): Record<string, unknown>[] {
-    return this.db.prepare("SELECT * FROM artifacts WHERE project = ? ORDER BY created_at DESC LIMIT ?").all(this.project, limit) as Record<string, unknown>[];
-  }
-
-  async submitProject(input: { agentId: string; report: string; turnId?: string }): Promise<string> {
+  async submitProject(input: { agentId: string; report: string; activationId?: string }): Promise<string> {
     const reportPath = path.join(this.paths.root, "final-report.md");
     await writeFile(reportPath, input.report.trim() + "\n", "utf8");
     this.db.prepare("UPDATE projects SET status = ?, submitted_report = ?, updated_at = ? WHERE id = ?").run("submitted", reportPath, nowIso(), this.project);
     this.appendEvent("project.submitted", { agentId: input.agentId, reportPath });
-    this.recordSignal({ kind: "completion.submitted", sourceAgent: input.agentId, sourceTurn: input.turnId, payload: { reportPath }, status: "closed", usefulEffect: true });
+    this.recordSignal({ kind: "completion.submitted", sourceAgent: input.agentId, sourceActivation: input.activationId, payload: { reportPath }, status: "closed", usefulEffect: true });
     return reportPath;
   }
 
@@ -269,18 +262,18 @@ export class ProjectStore {
     this.db.prepare("INSERT INTO agents (id, project, role, display_name, status, prompt, model, tools_json, workspace_path, token, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(agent.id, agent.project, agent.role, agent.displayName, agent.status, agent.prompt, agent.model ?? null, JSON.stringify(agent.tools), agent.workspacePath, agent.token, agent.createdAt, agent.updatedAt);
   }
 
-  private countTurnMessages(agentId: string, startedAt: string): number {
+  private countActivationMessages(agentId: string, startedAt: string): number {
     const row = this.db.prepare("SELECT COUNT(*) AS count FROM messages WHERE project = ? AND sender = ? AND created_at >= ?").get(this.project, agentId, startedAt) as { count: number };
     return row.count;
   }
 
-  private countTurnUsefulEffects(turnId: string): number {
-    const row = this.db.prepare("SELECT COUNT(*) AS count FROM signals WHERE project = ? AND source_turn = ? AND useful_effect != 0").get(this.project, turnId) as { count: number };
+  private countActivationUsefulEffects(activationId: string): number {
+    const row = this.db.prepare("SELECT COUNT(*) AS count FROM signals WHERE project = ? AND source_activation = ? AND useful_effect != 0").get(this.project, activationId) as { count: number };
     return row.count;
   }
 
-  private turnWasNoEffectNudge(turnId: string): boolean {
-    const row = this.db.prepare("SELECT id FROM signals WHERE project = ? AND delivered_turn_id = ? AND kind = 'scheduler.no_effect_nudge' LIMIT 1").get(this.project, turnId) as { id: string } | undefined;
+  private activationWasNoEffectNudge(activationId: string): boolean {
+    const row = this.db.prepare("SELECT id FROM signals WHERE project = ? AND delivered_activation_id = ? AND kind = 'scheduler.no_effect_nudge' LIMIT 1").get(this.project, activationId) as { id: string } | undefined;
     return row !== undefined;
   }
 
@@ -298,6 +291,41 @@ export class ProjectStore {
 
   private createSchema(): void {
     this.db.exec(SCHEMA);
+    this.migrateActivationSchema();
+  }
+
+  private migrateActivationSchema(): void {
+    this.addColumnIfMissing("agents", "active_activation_id", "TEXT");
+    if (this.columnExists("agents", "active_turn_id")) this.db.exec("UPDATE agents SET active_activation_id = active_turn_id WHERE active_activation_id IS NULL AND active_turn_id IS NOT NULL");
+
+    if (this.tableExists("turns")) {
+      this.db.exec(`INSERT OR IGNORE INTO activations (id, project, agent_id, status, prompt, input_path, output_path, container_name, started_at, completed_at, text, error, emitted_messages, usage_json)
+        SELECT id, project, agent_id, status, prompt, input_path, output_path, container_name, started_at, completed_at, text, error, emitted_messages, usage_json FROM turns`);
+    }
+
+    this.addColumnIfMissing("tool_calls", "activation_id", "TEXT");
+    if (this.columnExists("tool_calls", "turn_id")) this.db.exec("UPDATE tool_calls SET activation_id = turn_id WHERE activation_id IS NULL AND turn_id IS NOT NULL");
+
+    this.addColumnIfMissing("signals", "source_activation", "TEXT");
+    if (this.columnExists("signals", "source_turn")) this.db.exec("UPDATE signals SET source_activation = source_turn WHERE source_activation IS NULL AND source_turn IS NOT NULL");
+    this.addColumnIfMissing("signals", "delivered_activation_id", "TEXT");
+    if (this.columnExists("signals", "delivered_turn_id")) this.db.exec("UPDATE signals SET delivered_activation_id = delivered_turn_id WHERE delivered_activation_id IS NULL AND delivered_turn_id IS NOT NULL");
+
+  }
+
+  private tableExists(table: string): boolean {
+    const row = this.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(table) as { name: string } | undefined;
+    return row !== undefined;
+  }
+
+  private columnExists(table: string, column: string): boolean {
+    const rows = this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    return rows.some((row) => row.name === column);
+  }
+
+  private addColumnIfMissing(table: string, column: string, type: string): void {
+    if (!this.tableExists(table) || this.columnExists(table, column)) return;
+    this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
   }
 }
 
@@ -312,7 +340,9 @@ async function expandAgents(config: ProjectConfig, root?: string): Promise<Agent
     for (let index = 1; index <= count; index += 1) {
       const id = count === 1 ? baseId : `${baseId}-${index}`;
       const paths = agentPaths(config.name, id, root);
+      const artifacts = path.join(projectPaths(config.name, root).artifacts, id);
       await mkdir(paths.workspace, { recursive: true });
+      await mkdir(artifacts, { recursive: true });
       const now = nowIso();
       records.push({
         id,
@@ -337,36 +367,6 @@ function displayName(spec: { displayName?: string; names?: string[] }, id: strin
   return spec.names?.[index - 1] ?? spec.displayName ?? id;
 }
 
-function assertInside(filePath: string, root: string): void {
-  const resolved = path.resolve(filePath);
-  const base = path.resolve(root);
-  if (resolved === base || resolved.startsWith(base + path.sep)) return;
-  throw new Error(`Path is outside workspace: ${filePath}`);
-}
-
-async function directorySha256(directory: string): Promise<string> {
-  const hash = createHash("sha256");
-  const files = await directoryFiles(directory, directory);
-  for (const file of files.sort((a, b) => a.relative.localeCompare(b.relative))) {
-    hash.update(file.relative);
-    hash.update("\0");
-    hash.update(await readFile(file.absolute));
-    hash.update("\0");
-  }
-  return hash.digest("hex");
-}
-
-async function directoryFiles(root: string, directory: string): Promise<Array<{ absolute: string; relative: string }>> {
-  const entries = await readdir(directory, { withFileTypes: true });
-  const files: Array<{ absolute: string; relative: string }> = [];
-  for (const entry of entries) {
-    const absolute = path.join(directory, entry.name);
-    if (entry.isDirectory()) files.push(...(await directoryFiles(root, absolute)));
-    else if (entry.isFile()) files.push({ absolute, relative: path.relative(root, absolute) });
-  }
-  return files;
-}
-
 type DbAgent = {
   id: string;
   project: string;
@@ -378,14 +378,14 @@ type DbAgent = {
   tools_json: string;
   workspace_path: string;
   token: string;
-  active_turn_id: string | null;
+  active_activation_id: string | null;
   container_name: string | null;
   created_at: string;
   updated_at: string;
 };
 
 function agentFromRow(row: DbAgent): AgentRecord {
-  return { id: row.id, project: row.project, role: row.role, displayName: row.display_name, status: row.status, prompt: row.prompt, model: row.model ?? undefined, tools: JSON.parse(row.tools_json) as string[], workspacePath: row.workspace_path, token: row.token, activeTurnId: row.active_turn_id ?? undefined, containerName: row.container_name ?? undefined, createdAt: row.created_at, updatedAt: row.updated_at };
+  return { id: row.id, project: row.project, role: row.role, displayName: row.display_name, status: row.status, prompt: row.prompt, model: row.model ?? undefined, tools: JSON.parse(row.tools_json) as string[], workspacePath: row.workspace_path, token: row.token, activeActivationId: row.active_activation_id ?? undefined, containerName: row.container_name ?? undefined, createdAt: row.created_at, updatedAt: row.updated_at };
 }
 
 type DbMessage = { id: string; project: string; sender: string; recipient: string | null; channel: string | null; priority: MessagePriority; body: string; created_at: string };
@@ -394,16 +394,16 @@ function messageFromRow(row: DbMessage): MessageRecord {
   return { id: row.id, project: row.project, sender: row.sender, recipient: row.recipient ?? undefined, channel: row.channel ?? undefined, priority: row.priority, body: row.body, createdAt: row.created_at };
 }
 
-type DbTurn = { id: string; project: string; agent_id: string; status: TurnRecord["status"]; prompt: string; input_path: string; output_path: string; container_name: string | null; started_at: string; completed_at: string | null; text: string | null; error: string | null; emitted_messages: number; usage_json: string | null };
+type DbActivation = { id: string; project: string; agent_id: string; status: ActivationRecord["status"]; prompt: string; input_path: string; output_path: string; container_name: string | null; started_at: string; completed_at: string | null; text: string | null; error: string | null; emitted_messages: number; usage_json: string | null };
 
-function turnFromRow(row: DbTurn): TurnRecord {
+function activationFromRow(row: DbActivation): ActivationRecord {
   return { id: row.id, project: row.project, agentId: row.agent_id, status: row.status, prompt: row.prompt, inputPath: row.input_path, outputPath: row.output_path, containerName: row.container_name ?? undefined, startedAt: row.started_at, completedAt: row.completed_at ?? undefined, text: row.text ?? undefined, error: row.error ?? undefined, emittedMessages: row.emitted_messages, usageJson: row.usage_json ?? undefined };
 }
 
-type DbSignal = { id: string; project: string; kind: string; source_agent: string | null; source_turn: string | null; target_agent: string | null; target_channel: string | null; priority: MessagePriority; payload_json: string; status: SignalRecord["status"]; useful_effect: number; created_at: string; delivered_at: string | null; delivered_turn_id: string | null };
+type DbSignal = { id: string; project: string; kind: string; source_agent: string | null; source_activation: string | null; target_agent: string | null; target_channel: string | null; priority: MessagePriority; payload_json: string; status: SignalRecord["status"]; useful_effect: number; created_at: string; delivered_at: string | null; delivered_activation_id: string | null };
 
 function signalFromRow(row: DbSignal): SignalRecord {
-  return { id: row.id, project: row.project, kind: row.kind, sourceAgent: row.source_agent ?? undefined, sourceTurn: row.source_turn ?? undefined, targetAgent: row.target_agent ?? undefined, targetChannel: row.target_channel ?? undefined, priority: row.priority, payload: JSON.parse(row.payload_json) as JsonObject, status: row.status, usefulEffect: row.useful_effect !== 0, createdAt: row.created_at, deliveredAt: row.delivered_at ?? undefined, deliveredTurnId: row.delivered_turn_id ?? undefined };
+  return { id: row.id, project: row.project, kind: row.kind, sourceAgent: row.source_agent ?? undefined, sourceActivation: row.source_activation ?? undefined, targetAgent: row.target_agent ?? undefined, targetChannel: row.target_channel ?? undefined, priority: row.priority, payload: JSON.parse(row.payload_json) as JsonObject, status: row.status, usefulEffect: row.useful_effect !== 0, createdAt: row.created_at, deliveredAt: row.delivered_at ?? undefined, deliveredActivationId: row.delivered_activation_id ?? undefined };
 }
 
 function signalAgent(value: string | undefined): string | undefined {
@@ -426,9 +426,9 @@ function signalStatus(value: unknown, fallback: SignalRecord["status"]): SignalR
 }
 
 function defaultUsefulEffect(kind: string, status: SignalRecord["status"]): boolean {
-  if (kind === "artifact.published" || kind === "scheduler.no_effect_nudge") return false;
+  if (kind === "scheduler.no_effect_nudge") return false;
   if (status === "pending") return true;
-  return kind === "message.created" || kind === "completion.submitted" || kind === "coordination.no_valuable_work";
+  return kind === "message.created" || kind === "completion.submitted" || kind === "coordination.wait_for_signal";
 }
 
 const SCHEMA = `
@@ -453,7 +453,7 @@ CREATE TABLE IF NOT EXISTS agents (
   tools_json TEXT NOT NULL,
   workspace_path TEXT NOT NULL,
   token TEXT NOT NULL,
-  active_turn_id TEXT,
+  active_activation_id TEXT,
   container_name TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
@@ -469,7 +469,7 @@ CREATE TABLE IF NOT EXISTS messages (
   body TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS turns (
+CREATE TABLE IF NOT EXISTS activations (
   id TEXT PRIMARY KEY,
   project TEXT NOT NULL,
   agent_id TEXT NOT NULL,
@@ -495,7 +495,7 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE TABLE IF NOT EXISTS tool_calls (
   id TEXT PRIMARY KEY,
   project TEXT NOT NULL,
-  turn_id TEXT NOT NULL,
+  activation_id TEXT NOT NULL,
   agent_id TEXT NOT NULL,
   tool TEXT NOT NULL,
   input_json TEXT NOT NULL,
@@ -510,7 +510,7 @@ CREATE TABLE IF NOT EXISTS signals (
   project TEXT NOT NULL,
   kind TEXT NOT NULL,
   source_agent TEXT,
-  source_turn TEXT,
+  source_activation TEXT,
   target_agent TEXT,
   target_channel TEXT,
   priority TEXT NOT NULL,
@@ -519,22 +519,11 @@ CREATE TABLE IF NOT EXISTS signals (
   useful_effect INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   delivered_at TEXT,
-  delivered_turn_id TEXT
-);
-CREATE TABLE IF NOT EXISTS artifacts (
-  id TEXT PRIMARY KEY,
-  project TEXT NOT NULL,
-  creator TEXT NOT NULL,
-  turn_id TEXT NOT NULL,
-  name TEXT NOT NULL,
-  path TEXT NOT NULL,
-  sha256 TEXT NOT NULL,
-  description TEXT,
-  created_at TEXT NOT NULL
+  delivered_activation_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_messages_project_created ON messages(project, created_at);
 CREATE INDEX IF NOT EXISTS idx_events_project_created ON events(project, created_at);
-CREATE INDEX IF NOT EXISTS idx_turns_project_started ON turns(project, started_at);
+CREATE INDEX IF NOT EXISTS idx_activations_project_started ON activations(project, started_at);
 CREATE INDEX IF NOT EXISTS idx_signals_project_target ON signals(project, target_agent, status, created_at);
-CREATE INDEX IF NOT EXISTS idx_signals_project_source ON signals(project, source_turn, useful_effect);
+CREATE INDEX IF NOT EXISTS idx_signals_project_source ON signals(project, source_activation, useful_effect);
 `;

@@ -9,7 +9,7 @@ lead: "Suzumio is designed to be transparent. Every important object has a CLI v
 
     export SUZUMIO_ROOT=/data/suzumio-runtime
 
-Runtime state should live outside the source repository. The root contains project databases, turn input files, agent workspaces, artifacts, and logs.
+Runtime state should live outside the source repository. The root contains project databases, activation input files, agent workspaces, artifacts, and logs.
 
 ## Recommended Run Pattern
 
@@ -37,35 +37,35 @@ Then, from another terminal:
 | Store     | Project was initialized under the expected root.           | `suzumio status project`                  |
 | Server    | HTTP and controller support routes are reachable.          | `curl http://127.0.0.1:39400/health`      |
 | Scheduler | Project is running and idle agents have pending signals.    | `suzumio messages project` and events     |
-| Turn      | Container completed and turn text was submitted over HTTP. | `suzumio turns project`                   |
+| Activation | Container completed and activation text was submitted over HTTP. | `suzumio activations project`             |
 
-## Inspecting a Turn
+## Inspecting an Activation
 
-A turn directory contains the exact runner input:
+An activation directory contains the exact runner input:
 
-    $SUZUMIO_ROOT/demo/turns/turn_.../
+    $SUZUMIO_ROOT/demo/activations/act_.../
       input.json
 
-The input includes the rendered prompt, agent identity, controller URL, runner config, and tool definitions available to the model. Final turn text is submitted through `POST /turn-output` and stored in SQLite, so failed turns are still reviewable without trusting a container-writable output file.
+The input includes the rendered prompt, agent identity, controller URL, runner config, and tool definitions available to the model. Final activation text is submitted through `POST /activation-output` and stored in SQLite, so failed activations are still reviewable without trusting a container-writable output file.
 
 ## Debugging Scheduler Silence
 
 | Symptom                                | Likely cause                               | Action                                                        |
 |----------------------------------------|--------------------------------------------|---------------------------------------------------------------|
-| Project never starts a turn.           | Project is not `running`.                  | `suzumio start project`                                       |
+| Project never starts an activation.    | Project is not `running`.                  | `suzumio start project`                                       |
 | Agent stays quiet.                     | No pending signals for that agent.         | `suzumio send project agent P1 "..."`                         |
-| Message exists but no new turn starts. | Agent is already `running`, project is stopped, or message targeted `user`. | Wait for completion or send a direct message to an agent. |
-| Turn fails immediately.                | Image, mount, or Docker daemon issue.      | Inspect `suzumio turns`, turn input, and `docker logs`.       |
+| Message exists but no new activation starts. | Agent is already `running`, project is stopped, or message targeted `user`. | Wait for completion or send a direct message to an agent. |
+| Activation fails immediately.          | Image, mount, or Docker daemon issue.      | Inspect `suzumio activations`, activation input, and `docker logs`. |
 
 ## Avoiding Coordination Loops
 
-Agents should not post "nothing to do" messages to a shared channel. Use `coordination.no_valuable_work` instead. Worker agents notify `pm` by direct message by default, and PM can record an intentional wait state without waking itself.
+Agents should not post "nothing to do" messages to a shared channel. Use `coordination.wait_for_signal` instead. It records the wait state and ends the current activation. Worker agents notify `pm` by direct message by default, and PM can record an intentional wait state without waking itself.
 
-If an agent publishes an artifact, it should also send a message or submit completion when the artifact is ready for someone else. Artifact publication alone is stored for audit, but it does not count as useful coordination work.
+If an agent writes a shared artifact under `/artifacts/<agent-id>`, it should also send a message or submit completion when the file is ready for someone else. File writes are durable, but they do not wake another agent by themselves.
 
 ## Cleaning Debug Containers
 
-Early Suzumio keeps completed turn containers for debugging. Remove only containers that Suzumio created:
+Early Suzumio keeps completed activation containers for debugging. Remove only containers that Suzumio created:
 
     docker ps -a --filter name=suzumio
     docker rm <container-name>
@@ -83,7 +83,40 @@ Use environment variables for API keys and local, untracked config for private g
     export SUZUMIO_GATEWAY_API_KEY=...
     suzumio serve --host 0.0.0.0 --port 39400
 
-The runner backend passes configured provider key environment variables into containers when those variables exist in the host environment. Committed examples should use placeholder endpoints and environment-variable names only.
+The runner backend passes configured provider key environment variables into containers when those variables exist in the process that launches the activation. This can be the long-running server, but CLI commands such as `suzumio start`, `suzumio send`, and `suzumio tick` can also trigger scheduler ticks directly, so run them with the same provider environment. Committed examples should use placeholder endpoints and environment-variable names only.
+
+## Proxies And Runner Tools
+
+The default runner image includes `python3` and `curl`, so agents with `shell.exec` can run small scripts and command-line network probes inside Docker.
+
+Suzumio passes standard proxy variables into runner containers when they exist: `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`, and lowercase variants. If a proxy value points at `127.0.0.1`, `localhost`, or `::1`, Suzumio rewrites that host to `host.docker.internal` for bridge-network containers.
+
+For local HTTP proxies, export the proxy before starting any process that may launch activations:
+
+    export HTTPS_PROXY=http://127.0.0.1:7890
+    export HTTP_PROXY=http://127.0.0.1:7890
+    suzumio serve --host 0.0.0.0 --port 39400
+
+HTTP and HTTPS proxy URLs are used by built-in model calls and `web.fetch`. SOCKS proxy URLs are still passed to the container for shell tools such as `curl`, but built-in model calls and `web.fetch` require an HTTP or HTTPS proxy.
+
+You can also make proxy use explicit in local project YAML:
+
+    backend:
+      docker:
+        proxy:
+          inheritEnv: true
+          https: ${HTTPS_PROXY}
+          http: ${HTTP_PROXY}
+          all: ${ALL_PROXY}
+          noProxy: ${NO_PROXY}
+
+If the local proxy only listens on host loopback and is not reachable from Docker bridge networking, use Linux host networking for that project and set `backend.controllerUrl` to `http://127.0.0.1:<port>`:
+
+    backend:
+      docker:
+        network: host
+
+With `network: host`, Suzumio leaves `127.0.0.1` proxy URLs unchanged because the container shares the host network namespace.
 
 ## Long-running Servers
 

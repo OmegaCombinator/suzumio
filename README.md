@@ -6,11 +6,11 @@ Documentation: https://suzumio.aixmath.org/
 
 Core principles:
 
-- Agents run in isolated Docker turns managed by the backend.
+- Agents run in isolated Docker activations managed by the backend.
 - The scheduler never interrupts a running agent.
 - Agents are only woken by pending signals or explicit user/system control.
 - Suzumio owns project state, messages, signals, artifacts, tool audit logs, and observability.
-- The Docker runner executes one agent turn and presents runner-side model-facing tools.
+- The Docker runner executes one agent activation and presents runner-side model-facing tools.
 - Stateful tools call Suzumio support APIs for messages, signals, artifacts, permissions, and final submission.
 
 This repository is an early build. The first implementation includes:
@@ -18,8 +18,8 @@ This repository is an early build. The first implementation includes:
 - YAML config loading with whole-field `@import(path)` and top-level `extends`.
 - SQLite project storage using Node's built-in SQLite module.
 - A Docker-first chat backend and container runner.
-- Configured toolpacks for `core`, `artifacts`, `shell`, and `web` tools.
-- Runner-local `shell.exec` and `web.fetch`, plus support-backed message, artifact, coordination, and completion tools.
+- Configured toolpacks for `core`, `shell`, and `web` tools.
+- Runner-local `shell.exec` and `web.fetch`, plus support-backed message, coordination, and completion tools.
 - A signal-driven non-preemptive scheduler.
 - CLI, HTTP API, SSE stream, and a minimal flat WebUI.
 
@@ -61,10 +61,12 @@ The default scheduler is `nonpreemptive-signals`. `nonpreemptive-mailbox` remain
 
 - Running agents are never interrupted or prompted again.
 - Messages and coordination events become pending signals.
-- Idle agents with pending signals are started for exactly one turn.
+- Idle agents with pending signals are started for exactly one activation.
 - Idle agents without pending signals remain quiet.
-- Turns with no useful effect receive one no-effect nudge unless they were already nudge-driven.
-- Use `coordination.no_valuable_work` when an agent intentionally has to wait for future signals.
+- Activations with no useful effect receive one no-effect nudge unless they were already nudge-driven.
+- Use `coordination.wait_for_signal` when an agent intentionally has to wait for future signals.
+
+Each activation also gets shared artifact directories under `/artifacts/<agent-id>`. The current agent's directory is writable and other agents' directories are read-only, so agents can use ordinary shell commands to write scripts, logs, notes, and experiment outputs.
 
 ## Secrets
 
@@ -96,7 +98,6 @@ backend:
 tools:
   toolpacks:
     - core
-    - artifacts
     - shell
     - web
 

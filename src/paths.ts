@@ -10,7 +10,7 @@ export type ProjectPaths = {
   resolvedConfig: string;
   agents: string;
   artifacts: string;
-  turns: string;
+  activations: string;
   logs: string;
 };
 
@@ -34,7 +34,7 @@ export function projectPaths(project: string, root?: string): ProjectPaths {
     resolvedConfig: path.join(base, "resolved.yaml"),
     agents: path.join(base, "agents"),
     artifacts: path.join(base, "artifacts"),
-    turns: path.join(base, "turns"),
+    activations: path.join(base, "activations"),
     logs: path.join(base, "logs"),
   };
 }
@@ -47,6 +47,6 @@ export function agentPaths(project: string, agentId: string, root?: string): Age
 
 export async function ensureProjectDirs(project: string, root?: string): Promise<ProjectPaths> {
   const p = projectPaths(project, root);
-  await Promise.all([mkdir(p.root, { recursive: true }), mkdir(p.agents, { recursive: true }), mkdir(p.artifacts, { recursive: true }), mkdir(p.turns, { recursive: true }), mkdir(p.logs, { recursive: true })]);
+  await Promise.all([mkdir(p.root, { recursive: true }), mkdir(p.agents, { recursive: true }), mkdir(p.artifacts, { recursive: true }), mkdir(p.activations, { recursive: true }), mkdir(p.logs, { recursive: true })]);
   return p;
 }

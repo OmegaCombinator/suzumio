@@ -2,7 +2,7 @@
 title: "Suzumio 核心概念"
 eyebrow: "核心概念"
 heroTitle: "Suzumio 如何组织工作"
-lead: "Suzumio 把项目建模为持久消息、signal 和隔离 turn。Scheduler 很保守：只有当智能体有 pending signal 时才开始工作，并且不会打断正在运行的智能体。"
+lead: "Suzumio 把项目建模为持久消息、signal 和隔离 activation。Scheduler 很保守：只有当智能体有 pending signal 时才开始工作，并且不会打断正在运行的智能体。"
 ---
 
 ## Project
@@ -19,13 +19,13 @@ Project 是持久工作单元，包含名称、任务描述、解析后的配置
 
 ## Agent
 
-Agent 是带 role、prompt、model、workspace 和 tool allowlist 的参与者。Agent 不拥有项目状态；它通过 Suzumio 产生消息、工具调用、artifact 和 turn output。
+Agent 是带 role、prompt、model、workspace 和 tool allowlist 的参与者。Agent 不拥有项目状态；它通过 Suzumio 产生消息、工具调用、artifact 和 activation output。
 
 | 状态      | 含义                                                  |
 |-----------|-------------------------------------------------------|
 | `quiet`   | 空闲且没有 pending signal。                           |
-| `running` | 一个 Docker turn 正在运行，scheduler 不能 prompt 它。 |
-| `failed`  | 上一次 turn 或 backend 操作失败。                     |
+| `running` | 一个 Docker activation 正在运行，scheduler 不能 prompt 它。 |
+| `failed`  | 上一次 activation 或 backend 操作失败。                     |
 | `stopped` | 该 agent 被禁用。                                     |
 
 ## Message
@@ -48,7 +48,7 @@ Signal 同时是 scheduler 输入和 effect ledger。带 `targetAgent` 且 `stat
     type SignalRecord = {
       kind: string
       sourceAgent?: string
-      sourceTurn?: string
+      sourceActivation?: string
       targetAgent?: string
       targetChannel?: string
       priority: "P0" | "P1" | "P2" | "P3"
@@ -59,31 +59,30 @@ Signal 同时是 scheduler 输入和 effect ledger。带 `targetAgent` 且 `stat
 
 | 状态        | 含义                                             |
 |-------------|--------------------------------------------------|
-| `pending`   | 等待渲染进目标 agent 的下一个 turn prompt。      |
-| `delivered` | 已经渲染进一个 turn prompt，不会再次投递。       |
+| `pending`   | 等待渲染进目标 agent 的下一个 activation prompt。 |
+| `delivered` | 已经渲染进一个 activation prompt，不会再次投递。  |
 | `closed`    | 不参与调度的审计或 effect 记录。                 |
 
 带目标的 signal 不能显式 closed。要唤醒 agent 就创建 pending signal；只想记录 effect 而不唤醒任何人，就不要给 target，创建 closed signal。
 
 ## Useful Effect
 
-`usefulEffect` 回答一个问题：这个 turn 有没有做足够的外部协调工作，从而不应该被自动催促？Turn 完成时，Suzumio 会按 `sourceTurn` 统计 useful effect。
+`usefulEffect` 回答一个问题：这个 activation 有没有做足够的外部协调工作，从而不应该被自动催促？Activation 完成时，Suzumio 会按 `sourceActivation` 统计 useful effect。
 
 | Signal kind                         | 默认 useful effect | 原因                                                |
 |-------------------------------------|--------------------|-----------------------------------------------------|
 | 给其他 agent 的 pending signal      | 是                 | 它安排了后续工作。                                  |
 | `message.created`                   | 是                 | 它和 agent 或用户进行了沟通。                       |
 | `completion.submitted`              | 是                 | 它把最终报告交给用户。                              |
-| `coordination.no_valuable_work`     | 是                 | 它记录了明确的等待状态。                            |
-| `artifact.published`                | 否                 | 只发布 artifact 不会通知任何人，需要再发消息交接。  |
+| `coordination.wait_for_signal`      | 是                 | 它记录了明确的等待状态。                            |
 | `scheduler.no_effect_nudge`         | 否                 | 这是 scheduler 反馈，不是 agent 进展。              |
 | generic closed custom signal        | 否                 | 自定义工具需要时可显式设置 `usefulEffect: true`。   |
 
-## Turn
+## Activation
 
-Turn 是一个 agent 的一次隔离执行。Suzumio 创建 turn record，写入只读 `input.json`，启动 Docker 容器，通过 `POST /turn-output` 接收完成结果，并记录成功或失败。
+Activation 是一个连续 agent 的一次隔离执行。Suzumio 创建 activation record，写入只读 `input.json`，启动 Docker 容器，通过 `POST /activation-output` 接收完成结果，并记录成功或失败。
 
-    turn.started -> container runs -> POST /turn-output -> turn.completed
+    activation.started -> container runs -> POST /activation-output -> activation.completed
 
 ## Signal Scheduler
 
@@ -93,25 +92,19 @@ Turn 是一个 agent 的一次隔离执行。Suzumio 创建 turn record，写入
 2.  跳过已经 `running` 的 agent。
 3.  按 priority 和创建时间读取每个 idle agent 的 pending signals。
 4.  没有 pending signal 时保持 quiet。
-5.  有 pending signal 时渲染一个 prompt 并启动一个 turn。
-6.  创建 turn 后把这些 signal 标记为 delivered。
-7.  如果 turn 完成时没有 useful effect，就创建一次 `scheduler.no_effect_nudge`，但由 nudge 唤醒的 turn 不会继续无限 nudge。
+5.  有 pending signal 时渲染一个 prompt 并启动一个 activation。
+6.  创建 activation 后把这些 signal 标记为 delivered。
+7.  如果 activation 完成时没有 useful effect，就创建一次 `scheduler.no_effect_nudge`，但由 nudge 唤醒的 activation 不会继续无限 nudge。
 
 ## Tools
 
-工具由 Docker runner 展示给模型。需要持久状态的工具会回调 Suzumio support API，用于消息、artifact registry、项目提交、权限检查和审计记录；`shell`、`web.fetch` 这类 local tools 在 runner 容器内执行。
+工具由 Docker runner 展示给模型。需要持久状态的工具会回调 Suzumio support API，用于消息、项目提交、权限检查和审计记录；`shell`、`web.fetch` 这类 local tools 在 runner 容器内执行。
 
 <div class="grid">
 
 <div class="card"><h3><code>messages.send</code></h3><p>通过 Suzumio support API 创建直接或频道消息。</p></div>
 
-<div class="card"><h3><code>coordination.no_valuable_work</code></h3><p>声明当前没有有价值的工作可做。非 PM agent 默认通知 <code>pm</code>；PM 自己会安静等待。</p></div>
-
-<div class="card"><h3><code>artifacts.publish</code></h3><p>把 workspace 文件或目录注册为持久 artifact。</p></div>
-
-<div class="card"><h3><code>artifacts.list</code></h3><p>返回已发布 artifact。</p></div>
-
-<div class="card"><h3><code>artifacts.read</code></h3><p>按 id 或 name 读取文本文件 artifact。</p></div>
+<div class="card"><h3><code>coordination.wait_for_signal</code></h3><p>声明当前正在等待未来 signal。非 PM agent 默认通知 <code>pm</code>；PM 自己会安静等待。</p></div>
 
 <div class="card"><h3><code>shell.exec</code></h3><p>在 Docker runner 容器内运行 bash。</p></div>
 
@@ -121,17 +114,16 @@ Turn 是一个 agent 的一次隔离执行。Suzumio 创建 turn record，写入
 
 </div>
 
-## Artifact 和 Event
+## Shared Artifacts 和 Event
 
-Artifact 是从 agent workspace 发布的文件或目录，记录 id、creator、turn、路径、hash 和描述。发布 artifact 是持久存储，不是沟通；如果希望其他参与者处理它，agent 应该再发送消息或提交 completion。Event 是项目时间线，用于 WebUI、debug、审计和未来 replay 工具。
+每个 activation 都会挂载 `/artifacts/<agent-id>`。当前 agent 的目录可写，其他 agent 的目录只读。这就是轻量 artifact 工作流：拥有 `shell.exec` 的 agent 可以直接把脚本、输出、笔记和数据写进自己的共享目录，然后发消息告诉其他 agent 路径。Event 是项目时间线，用于 WebUI、debug、审计和未来 replay 工具。
 
     project.initialized
     message.created
     signal.created
-    turn.started
+    activation.started
     tool.called
-    artifact.published
-    turn.completed
+    activation.completed
     project.submitted
 
 <div class="footer">下一步：<a href="configuration.html">配置</a>。</div>

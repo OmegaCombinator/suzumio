@@ -1,6 +1,6 @@
 name: ai-demo
 task: |
-  Demonstrate one AI-backed Suzumio turn. The agent should send a short status message to the user.
+  Demonstrate one AI-backed Suzumio activation. The agent should send a short status message to the user.
 
 scheduler:
   kind: nonpreemptive-signals
@@ -50,7 +50,7 @@ agents:
       You are a concise project manager. Send one short status update to the user using messages.send.
     tools:
       - messages.send
-      - coordination.no_valuable_work
+      - coordination.wait_for_signal
 
 channels:
   - "#project"

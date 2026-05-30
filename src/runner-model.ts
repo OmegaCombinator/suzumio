@@ -2,10 +2,11 @@ import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import { Agent, fetch as undiciFetch } from "undici";
+import { Agent, ProxyAgent, fetch as undiciFetch, type Dispatcher } from "undici";
+import { assertNodeFetchProxySupported, hasProxyEnv, proxyForUrl } from "./proxy.js";
 import type { ModelPresetConfig, ModelRegistryConfig, ProviderConfig } from "./types.js";
 
-type FetchWithDispatcher = (url: Parameters<typeof fetch>[0], init?: RequestInit & { dispatcher: Agent }) => ReturnType<typeof fetch>;
+type FetchWithDispatcher = (url: Parameters<typeof fetch>[0], init?: RequestInit & { dispatcher: Dispatcher }) => ReturnType<typeof fetch>;
 const fetchWithDispatcher = undiciFetch as unknown as FetchWithDispatcher;
 
 export type ResolvedRunnerModel = {
@@ -57,19 +58,33 @@ function createProvider(providerId: string, provider: ProviderConfig): unknown {
 }
 
 function createProviderFetch(provider: ProviderConfig): typeof fetch | undefined {
-  if (provider.timeoutMs === undefined && provider.chunkTimeoutMs === undefined) return undefined;
+  if (provider.timeoutMs === undefined && provider.chunkTimeoutMs === undefined && !hasProxyEnv()) return undefined;
   const requestTimeoutMs = provider.timeoutMs === false ? undefined : provider.timeoutMs;
   const dispatcher = new Agent({
     connectTimeout: provider.timeoutMs === false ? 0 : provider.timeoutMs,
     headersTimeout: provider.timeoutMs === false ? 0 : provider.timeoutMs,
     bodyTimeout: provider.chunkTimeoutMs ?? (provider.timeoutMs === false ? 0 : provider.timeoutMs),
   } as never);
-  return (url, init) =>
-    fetchWithDispatcher(url, {
+  const proxyDispatchers = new Map<string, ProxyAgent>();
+  return (url, init) => {
+    const proxyUrl = proxyForUrl(String(url));
+    const selectedDispatcher = proxyUrl ? proxyDispatcher(proxyUrl, proxyDispatchers) : dispatcher;
+    return fetchWithDispatcher(url, {
       ...init,
       signal: withTimeoutSignal(init?.signal, requestTimeoutMs),
-      dispatcher,
+      dispatcher: selectedDispatcher,
     });
+  };
+}
+
+function proxyDispatcher(proxyUrl: string, cache: Map<string, ProxyAgent>): ProxyAgent {
+  assertNodeFetchProxySupported(proxyUrl);
+  let dispatcher = cache.get(proxyUrl);
+  if (!dispatcher) {
+    dispatcher = new ProxyAgent(proxyUrl);
+    cache.set(proxyUrl, dispatcher);
+  }
+  return dispatcher;
 }
 
 function withTimeoutSignal(signal: AbortSignal | null | undefined, timeoutMs: number | undefined): AbortSignal | null | undefined {

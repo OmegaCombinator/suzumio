@@ -24,8 +24,7 @@ lead: "CLI 是初始化项目、渲染配置、发送任务、查看运行状态
 | `suzumio send <project> <recipient> <priority> <message...>` | 向 agent 投递用户输入。                                             |
 | `suzumio status [project]`                                   | 查看项目和 agent 状态。                                             |
 | `suzumio messages <project>`                                 | 查看近期消息。                                                      |
-| `suzumio turns <project>`                                    | 查看 runner 输出和失败信息。                                        |
-| `suzumio artifacts <project>`                                | 查看已发布 artifact。                                               |
+| `suzumio activations <project>`                              | 查看 runner 输出和失败信息。                                        |
 | `suzumio events <project>`                                   | 查看事件时间线。                                                    |
 | `suzumio tick [project]`                                     | 手动运行一次 scheduler pass。                                       |
 | `suzumio stop <project>`                                     | 停止调度。                                                          |
@@ -64,15 +63,14 @@ lead: "CLI 是初始化项目、渲染配置、发送任务、查看运行状态
     suzumio send demo pm P1 "Start the project."
     suzumio send demo worker-1 P2 "Review artifact art_..."
 
-`start` 将项目状态设为 `running` 并立即 tick 一次 scheduler；如果 agent 已有 pending signal，可能马上启动 turn。`send` 从虚拟 sender `user` 创建直接消息、创建 pending `message.created` signal，并 tick。优先级为 `P0`、`P1`、`P2`、`P3`；优先级不会打断 running agent。
+`start` 将项目状态设为 `running` 并立即 tick 一次 scheduler；如果 agent 已有 pending signal，可能马上启动 activation。`send` 从虚拟 sender `user` 创建直接消息、创建 pending `message.created` signal，并 tick。优先级为 `P0`、`P1`、`P2`、`P3`；优先级不会打断 running agent。
 
 ## 查看命令
 
     suzumio status
     suzumio status demo
     suzumio messages demo --limit 20
-    suzumio turns demo --limit 10
-    suzumio artifacts demo
+    suzumio activations demo --limit 10
     suzumio events demo --limit 50
 
 查看命令直接读取 SQLite，不唤醒 agent，也不会修改项目状态。

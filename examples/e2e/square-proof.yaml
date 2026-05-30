@@ -53,26 +53,14 @@ agents:
     displayName: Yuki
     model: main
     prompt: |
-      Coordinate a small proof team. On the first user request, send direct messages to worker-1 and worker-2 with distinct proof strategies, then wait.
-
-      Strategy split:
-      - worker-1 should focus on the exact epsilon-shifted four-point piercing lemma. They must either prove it rigorously or refute it with a concrete unit square placement.
-      - worker-2 should independently test the same route adversarially, identify the sharpness/equality picture, and explicitly distinguish the shifted interior-piercing lemma from the easier but insufficient unshifted boundary-anchor statement.
-
-      Maintain a proof-state ledger in your own messages. Every time you summarize progress, include:
-      - Route ID, e.g. R1 epsilon-shifted piercing, R2 four-corner cross, R3 center-distance/width.
-      - Exact lemma statement under discussion.
-      - Status: PROVED, REFUTED, GAP, or SUPERSEDED.
-      - The smallest current blocker or the exact accepted proof text.
-
-      Do not conflate related routes. In particular, a counterexample to two squares sharing the unshifted point (1,1) on their boundaries does not refute the epsilon-shifted statement that every square contains one of four shifted points in its interior.
-
-      After both workers report, send their reports to checker for critique. Do not submit a final report before checker reviews the proof. If checker accepts, submit a final report with completion.submit and also message the user. If checker rejects, route the specific gap back to the relevant worker. If you are waiting for future signals, call coordination.no_valuable_work instead of chatting.
-
-      Convergence rule: do at most one checker-driven repair cycle. If checker says ACCEPT or ACCEPT-with-edits for R1, incorporate the edits yourself and submit a proof; do not ask workers for more polish. If checker rejects R1 and no other exact route is PROVED, submit an explicit gap report. If workers disagree, ask checker to adjudicate the exact lemma version rather than restarting open-ended exploration.
+      Coordinate a small proof team toward a checked proof or an honest gap report.
+      Use the workers and checker for the substantive mathematical work instead of trying to solve the whole theorem alone.
+      Keep enough state to compare competing claims, request critique when a candidate proof is ready, and submit only when the team evidence supports the final report.
+      Treat requests you send to other agents as outstanding until you have seen their response or explicitly superseded the request.
+      If you have sent the useful requests and are waiting for replies, call coordination.wait_for_signal.
     tools:
       - messages.send
-      - coordination.no_valuable_work
+      - coordination.wait_for_signal
       - completion.submit
   worker:
     role: proof-worker
@@ -80,40 +68,23 @@ agents:
     count: 2
     model: main
     prompt: |
-      Work on the proof request you receive. Produce a rigorous argument or a precise gap report. Be explicit about geometric lemmas, why they apply to arbitrarily oriented unit squares, and where the constant 2 + sqrt(2)/2 enters.
-
-      Your report must be structured as:
-      1. Route ID and exact lemma statement.
-      2. Verdict: PROVED, REFUTED, or GAP.
-      3. Detailed attempt log: what you tried, what worked, what failed, and why.
-      4. If PROVED: full proof with all inequalities and strict interior/boundary details.
-      5. If REFUTED: explicit coordinates/orientation for the counterexample and which exact lemma it refutes.
-      6. If GAP: the smallest missing lemma, not a vague statement that the proof is incomplete.
-
-      Important distinction: the unshifted anchor points (1,1), (L-1,1), (1,L-1), (L-1,L-1) may lie on boundaries and can be shared. That does not by itself refute an epsilon-shifted interior-piercing lemma. If you discuss boundary sharing, say whether it applies to the shifted points.
-
-      Send your result to pm. If you need checker review directly, also send checker a concise version. Do not claim a proof if a step is only plausible.
-      After you have sent one substantive report for a request, call coordination.no_valuable_work unless PM asks a new precise follow-up.
+      Work on the mathematical request you receive. Send pm a rigorous proof, a concrete counterexample, or the smallest precise gap you find.
+      Be explicit about geometric lemmas, arbitrary orientations, strict interior versus boundary containment, and where the constant 2 + sqrt(2)/2 enters.
+      Do not claim a proof if a step is only plausible. If you have reported your result and are waiting for follow-up, call coordination.wait_for_signal with notifyPm:false.
     tools:
       - messages.send
-      - coordination.no_valuable_work
+      - coordination.wait_for_signal
   checker:
     role: proof-checker
     displayName: Mio
     model: checker-model
     prompt: |
       You are the adversarial proof checker. Review worker/PM arguments for hidden assumptions, invalid geometric inequalities, missing compactness cases, and misuse of disjoint interiors. Send pm a verdict: ACCEPT with a cleaned proof outline, or REJECT with the smallest concrete gap and suggested repair.
-      If the proof is acceptable with local edits, provide the replacement text and mark it ACCEPT-with-edits so PM can submit without another worker round.
-
-      Check route versions exactly. In particular, separately adjudicate:
-      - R1: epsilon-shifted four-point interior-piercing lemma.
-      - R1-unshifted: boundary-anchor pigeonhole at points like (1,1), which is not enough by itself.
-      - R2: four-corner cross after assuming corner blockers.
-
-      Do not reject R1 because R1-unshifted is false. Reject R1 only if the shifted interior-piercing lemma or its inequalities fail, and give the exact failing inequality or a concrete counterexample.
+      If the proof is acceptable with local edits, provide the replacement text and mark it ACCEPT-with-edits.
+      Treat similar-looking statements carefully, especially shifted interior-piercing claims versus unshifted boundary-anchor claims.
     tools:
       - messages.send
-      - coordination.no_valuable_work
+      - coordination.wait_for_signal
 
 channels:
   - "#project"

@@ -22,7 +22,7 @@ export type ResolvedToolpack = {
 export type ToolSupportInput = {
   project: string;
   agentId: string;
-  turnId: string;
+  activationId: string;
   token: string;
   tool: string;
   input: unknown;
@@ -31,7 +31,7 @@ export type ToolSupportInput = {
 export type ToolCallStartInput = {
   project: string;
   agentId: string;
-  turnId: string;
+  activationId: string;
   token: string;
   tool: string;
   input: unknown;
@@ -40,7 +40,7 @@ export type ToolCallStartInput = {
 export type ToolCallFinishInput = {
   project: string;
   agentId: string;
-  turnId: string;
+  activationId: string;
   token: string;
   toolCallId: string;
   status: "completed" | "failed";
@@ -51,7 +51,7 @@ export type ToolCallFinishInput = {
 export type SignalInput = {
   project: string;
   agentId: string;
-  turnId: string;
+  activationId: string;
   token: string;
   kind: string;
   targetAgent?: string;
@@ -64,7 +64,7 @@ export type SignalInput = {
 type ControllerContext = {
   store: ProjectStore;
   agent: AgentRecord;
-  turnId: string;
+  activationId: string;
   recordSignal: (input: { kind: string; targetAgent?: string; targetChannel?: string; priority?: MessagePriority; payload?: JsonObject; status?: "pending" | "closed"; usefulEffect?: boolean }) => void;
 };
 
@@ -82,9 +82,9 @@ export class ToolSupportHost {
   async startToolCall(input: ToolCallStartInput): Promise<{ toolCallId: string }> {
     const store = new ProjectStore(input.project, this.root);
     try {
-      const agent = this.authorize(store, input.agentId, input.token, input.turnId);
+      const agent = this.authorize(store, input.agentId, input.token, input.activationId);
       await this.requireTool(store, agent, input.tool);
-      return { toolCallId: store.recordToolCall({ turnId: input.turnId, agentId: agent.id, tool: input.tool, input: input.input, status: "running" }) };
+      return { toolCallId: store.recordToolCall({ activationId: input.activationId, agentId: agent.id, tool: input.tool, input: input.input, status: "running" }) };
     } finally {
       store.close();
     }
@@ -93,8 +93,8 @@ export class ToolSupportHost {
   async finishToolCall(input: ToolCallFinishInput): Promise<{ status: string }> {
     const store = new ProjectStore(input.project, this.root);
     try {
-      const agent = this.authorize(store, input.agentId, input.token, input.turnId);
-      store.finishToolCallForTurn(input.toolCallId, agent.id, input.turnId, input.status, input.output, input.error);
+      const agent = this.authorize(store, input.agentId, input.token, input.activationId, { requireRunning: false });
+      store.finishToolCallForActivation(input.toolCallId, agent.id, input.activationId, input.status, input.output, input.error);
       return { status: input.status };
     } finally {
       store.close();
@@ -104,8 +104,8 @@ export class ToolSupportHost {
   async recordRunnerSignal(input: SignalInput): Promise<{ status: string }> {
     const store = new ProjectStore(input.project, this.root);
     try {
-      const agent = this.authorize(store, input.agentId, input.token, input.turnId);
-      store.recordSignal({ kind: input.kind, sourceAgent: agent.id, sourceTurn: input.turnId, targetAgent: input.targetAgent, targetChannel: input.targetChannel, priority: input.priority, payload: input.payload ?? {}, usefulEffect: input.usefulEffect });
+      const agent = this.authorize(store, input.agentId, input.token, input.activationId);
+      store.recordSignal({ kind: input.kind, sourceAgent: agent.id, sourceActivation: input.activationId, targetAgent: input.targetAgent, targetChannel: input.targetChannel, priority: input.priority, payload: input.payload ?? {}, usefulEffect: input.usefulEffect });
       return { status: "recorded" };
     } finally {
       store.close();
@@ -115,13 +115,13 @@ export class ToolSupportHost {
   async support(toolpackId: string, input: ToolSupportInput): Promise<ToolCallOutput> {
     const store = new ProjectStore(input.project, this.root);
     try {
-      const agent = this.authorize(store, input.agentId, input.token, input.turnId);
+      const agent = this.authorize(store, input.agentId, input.token, input.activationId);
       const toolpacks = await resolveToolpacks(store.config().tools.toolpacks);
       const toolpack = toolpacks.find((item) => item.id === toolpackId);
       if (!toolpack) throw new Error(`Unknown toolpack: ${toolpackId}`);
       if (!toolpack.tools.some((tool) => tool.name === input.tool)) throw new Error(`Tool ${input.tool} is not in toolpack ${toolpackId}`);
       if (!isAllowed(input.tool, agent.tools)) throw new Error(`Tool not allowed for ${agent.id}: ${input.tool}`);
-      const context = controllerContext(store, agent, input.turnId);
+      const context = controllerContext(store, agent, input.activationId);
       if (toolpack.kind === "builtin") return await builtinSupport(toolpack.id, input.tool, context, input.input);
       return await externalSupport(toolpack, input.tool, context, input.input);
     } finally {
@@ -129,11 +129,12 @@ export class ToolSupportHost {
     }
   }
 
-  private authorize(store: ProjectStore, agentId: string, token: string, turnId: string): AgentRecord {
+  private authorize(store: ProjectStore, agentId: string, token: string, activationId: string, options: { requireRunning?: boolean } = {}): AgentRecord {
     const agent = store.requireAgent(agentId);
     if (agent.token !== token) throw new Error("Invalid agent token");
-    const turn = store.turn(turnId);
-    if (turn.agentId !== agent.id) throw new Error(`Turn ${turnId} does not belong to ${agent.id}`);
+    const activation = store.activation(activationId);
+    if (activation.agentId !== agent.id) throw new Error(`Activation ${activationId} does not belong to ${agent.id}`);
+    if (options.requireRunning !== false && activation.status !== "running") throw new Error(`Activation ${activationId} is ${activation.status}; no more tool calls are accepted`);
     return agent;
   }
 
@@ -169,13 +170,13 @@ export function isAllowed(tool: string, allowlist: string[]): boolean {
   return allowed;
 }
 
-function controllerContext(store: ProjectStore, agent: AgentRecord, turnId: string): ControllerContext {
+function controllerContext(store: ProjectStore, agent: AgentRecord, activationId: string): ControllerContext {
   return {
     store,
     agent,
-    turnId,
+    activationId,
     recordSignal: (input) => {
-      store.recordSignal({ kind: input.kind, sourceAgent: agent.id, sourceTurn: turnId, targetAgent: input.targetAgent, targetChannel: input.targetChannel, priority: input.priority, payload: input.payload ?? {}, status: input.status, usefulEffect: input.usefulEffect });
+      store.recordSignal({ kind: input.kind, sourceAgent: agent.id, sourceActivation: activationId, targetAgent: input.targetAgent, targetChannel: input.targetChannel, priority: input.priority, payload: input.payload ?? {}, status: input.status, usefulEffect: input.usefulEffect });
     },
   };
 }
@@ -238,20 +239,11 @@ function builtinSupport(toolpackId: string, tool: string, context: ControllerCon
 const BUILTIN_TOOLPACKS: Record<string, BuiltinToolpack> = {
   core: {
     id: "core",
-    tools: [messagesSendDefinition(), noValuableWorkDefinition(), completionSubmitDefinition()],
+    tools: [messagesSendDefinition(), waitForSignalDefinition(), completionSubmitDefinition()],
     support: {
       "messages.send": messagesSendSupport,
-      "coordination.no_valuable_work": noValuableWorkSupport,
+      "coordination.wait_for_signal": waitForSignalSupport,
       "completion.submit": completionSubmitSupport,
-    },
-  },
-  artifacts: {
-    id: "artifacts",
-    tools: [artifactsPublishDefinition(), artifactsListDefinition(), artifactsReadDefinition()],
-    support: {
-      "artifacts.publish": artifactsPublishSupport,
-      "artifacts.list": artifactsListSupport,
-      "artifacts.read": artifactsReadSupport,
     },
   },
   shell: { id: "shell", tools: [shellExecDefinition()], support: {} },
@@ -276,48 +268,48 @@ function messagesSendDefinition(): ToolDefinition {
   };
 }
 
-async function messagesSendSupport({ store, agent, turnId }: ControllerContext, input: unknown): Promise<ToolCallOutput> {
+async function messagesSendSupport({ store, agent, activationId }: ControllerContext, input: unknown): Promise<ToolCallOutput> {
   const args = objectInput(input);
   const body = stringArg(args, "body");
   const priority = priorityArg(args.priority ?? "P2");
   const recipient = optionalString(args.recipient);
   const channel = optionalString(args.channel);
-  const message = store.sendMessage({ sender: agent.id, recipient, channel, priority, body, sourceAgent: agent.id, sourceTurn: turnId });
+  const message = store.sendMessage({ sender: agent.id, recipient, channel, priority, body, sourceAgent: agent.id, sourceActivation: activationId });
   return { title: "message sent", output: `Message sent: ${message.id}`, metadata: { messageId: message.id } };
 }
 
-function noValuableWorkDefinition(): ToolDefinition {
+function waitForSignalDefinition(): ToolDefinition {
   return {
-    name: "coordination.no_valuable_work",
-    description: "Declare that there is no valuable work to do until future signals arrive. Non-PM agents notify pm by default; pm records a wait state without self-waking.",
+    name: "coordination.wait_for_signal",
+    description: "Declare that useful progress now depends on future signals. Non-PM agents notify pm by default; pm records a wait state without self-waking. If you already sent pm your result in this activation, set notifyPm:false to avoid a duplicate wake-up.",
     inputSchema: {
       type: "object",
       properties: {
-        reason: { type: "string", description: "Why no useful progress can be made right now." },
+        reason: { type: "string", description: "What future signal or external response you are waiting for." },
         pm: { type: "string", description: "Coordinator agent id to notify. Defaults to pm." },
-        notifyPm: { type: "boolean", description: "Whether to send a direct message to the coordinator. Defaults to true for non-PM agents and false for the PM." },
+        notifyPm: { type: "boolean", description: "Whether to send a direct message to the coordinator. Defaults to true for non-PM agents and false for the PM. Use false after you already sent the coordinator your current result." },
       },
       additionalProperties: false,
     },
   };
 }
 
-async function noValuableWorkSupport({ store, agent, turnId }: ControllerContext, input: unknown): Promise<ToolCallOutput> {
+async function waitForSignalSupport({ store, agent, activationId }: ControllerContext, input: unknown): Promise<ToolCallOutput> {
   const args = objectInput(input);
-  const reason = optionalString(args.reason) ?? "No valuable work can be done until new signals arrive.";
+  const reason = optionalString(args.reason) ?? "Waiting for future signals.";
   const pm = optionalString(args.pm) ?? "pm";
   const notifyPm = optionalBoolean(args.notifyPm) ?? agent.id !== pm;
   let messageId: string | undefined;
   let notifiedAgent: string | undefined;
   if (notifyPm && agent.id !== pm && store.listAgents().some((item) => item.id === pm)) {
-    const message = store.sendMessage({ sender: agent.id, recipient: pm, priority: "P2", body: `No valuable work to do right now.\n\nReason: ${reason}`, sourceAgent: agent.id, sourceTurn: turnId });
+    const message = store.sendMessage({ sender: agent.id, recipient: pm, priority: "P2", body: `Waiting for future signals.\n\nReason: ${reason}`, sourceAgent: agent.id, sourceActivation: activationId });
     messageId = message.id;
     notifiedAgent = pm;
   }
-  store.recordSignal({ kind: "coordination.no_valuable_work", sourceAgent: agent.id, sourceTurn: turnId, payload: { reason, notifiedAgent, messageId }, status: "closed", usefulEffect: true });
+  store.recordSignal({ kind: "coordination.wait_for_signal", sourceAgent: agent.id, sourceActivation: activationId, payload: { reason, notifiedAgent, messageId }, status: "closed", usefulEffect: true });
   return {
-    title: "no valuable work",
-    output: messageId ? `No valuable work recorded; notified ${notifiedAgent} with ${messageId}.` : "No valuable work recorded. Wait for future signals instead of polling.",
+    title: "waiting for signal",
+    output: messageId ? `Wait state recorded; notified ${notifiedAgent} with ${messageId}.` : "Wait state recorded. Future signals will wake the agent.",
     metadata: { reason, notifiedAgent, messageId },
   };
 }
@@ -325,79 +317,15 @@ async function noValuableWorkSupport({ store, agent, turnId }: ControllerContext
 function completionSubmitDefinition(): ToolDefinition {
   return {
     name: "completion.submit",
-    description: "Submit the final Markdown project report for user approval.",
+    description: "Submit the final Markdown project report for user approval. Use this only when you have incorporated the relevant current information and are no longer waiting for substantive replies you requested. If the roster shows an agent still running on work you requested, wait unless that work is explicitly irrelevant or superseded.",
     inputSchema: { type: "object", properties: { report: { type: "string" } }, required: ["report"], additionalProperties: false },
   };
 }
 
-async function completionSubmitSupport({ store, agent, turnId }: ControllerContext, input: unknown): Promise<ToolCallOutput> {
+async function completionSubmitSupport({ store, agent, activationId }: ControllerContext, input: unknown): Promise<ToolCallOutput> {
   const args = objectInput(input);
-  const reportPath = await store.submitProject({ agentId: agent.id, report: stringArg(args, "report"), turnId });
+  const reportPath = await store.submitProject({ agentId: agent.id, report: stringArg(args, "report"), activationId });
   return { title: "project submitted", output: `Project submitted for user approval. Report: ${reportPath}`, metadata: { reportPath } };
-}
-
-function artifactsPublishDefinition(): ToolDefinition {
-  return {
-    name: "artifacts.publish",
-    description: "Publish a file or directory from this agent workspace as a project artifact.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        path: { type: "string", description: "Workspace-relative file or directory path." },
-        name: { type: "string" },
-        description: { type: "string" },
-      },
-      required: ["path"],
-      additionalProperties: false,
-    },
-  };
-}
-
-async function artifactsPublishSupport({ store, agent, turnId }: ControllerContext, input: unknown): Promise<ToolCallOutput> {
-  const args = objectInput(input);
-  const artifact = await store.publishArtifact({ creator: agent.id, turnId, workspacePath: agent.workspacePath, sourcePath: stringArg(args, "path"), name: optionalString(args.name), description: optionalString(args.description) });
-  return { title: "artifact published", output: `Artifact published: ${artifact.id}`, metadata: artifact as JsonObject };
-}
-
-function artifactsListDefinition(): ToolDefinition {
-  return { name: "artifacts.list", description: "List project artifacts published so far.", inputSchema: { type: "object", properties: {}, additionalProperties: false } };
-}
-
-async function artifactsListSupport({ store }: ControllerContext): Promise<ToolCallOutput> {
-  const artifacts = store.listArtifacts(100);
-  return { title: "artifacts", output: artifacts.length ? JSON.stringify(artifacts, null, 2) : "No artifacts published yet.", metadata: { count: artifacts.length } };
-}
-
-function artifactsReadDefinition(): ToolDefinition {
-  return {
-    name: "artifacts.read",
-    description: "Read a text artifact by id or name.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        id: { type: "string", description: "Artifact id." },
-        name: { type: "string", description: "Artifact name." },
-        maxBytes: { type: "number", description: "Maximum characters to return, capped at 100000." },
-      },
-      additionalProperties: false,
-    },
-  };
-}
-
-async function artifactsReadSupport({ store }: ControllerContext, input: unknown): Promise<ToolCallOutput> {
-  const args = objectInput(input);
-  const id = optionalString(args.id);
-  const name = optionalString(args.name);
-  if (!id && !name) throw new Error("id or name is required");
-  const artifact = store.listArtifacts(1000).find((item) => (id && item.id === id) || (name && item.name === name));
-  if (!artifact) throw new Error(`Artifact not found: ${id ?? name}`);
-  const maxBytes = boundedNumber(args.maxBytes, 20_000, 100_000);
-  const artifactPath = String(artifact.path);
-  const info = await stat(artifactPath);
-  if (info.isDirectory()) throw new Error("artifacts.read only reads text file artifacts. Use mounted paths and shell.exec for directory handoff.");
-  const text = await readFile(artifactPath, "utf8");
-  const truncated = text.length > maxBytes;
-  return { title: "artifact read", output: truncated ? `${text.slice(0, maxBytes)}\n\n[truncated]` : text, metadata: { artifactId: String(artifact.id), name: String(artifact.name), truncated } };
 }
 
 function shellExecDefinition(): ToolDefinition {

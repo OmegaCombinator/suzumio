@@ -2,7 +2,7 @@
 title: "Suzumio 快速开始"
 eyebrow: "快速开始"
 heroTitle: "端到端运行运行时"
-lead: "本指南在 Docker 中运行一个 AI-backed agent turn，并验证 config、SQLite、scheduler、Docker backend、runner tools、controller support routes、HTTP API 和 WebUI。"
+lead: "本指南在 Docker 中运行一个 AI-backed agent activation，并验证 config、SQLite、scheduler、Docker backend、runner tools、controller support routes、HTTP API 和 WebUI。"
 ---
 
 ## 前置要求
@@ -11,7 +11,7 @@ lead: "本指南在 Docker 中运行一个 AI-backed agent turn，并验证 conf
 |-------------|-----------------------------------------------|------------------|
 | Node.js 24+ | CLI、server、runner build、内置 SQLite 模块。 | `node --version` |
 | npm         | 安装 TypeScript 和运行时依赖。                | `npm --version`  |
-| Docker      | 每个智能体 turn 都在容器中运行。              | `docker ps`      |
+| Docker      | 每个智能体 activation 都在容器中运行。        | `docker ps`      |
 | Git         | clone 仓库并管理本地修改。                    | `git --version`  |
 
 ## 1. Clone 和 Build
@@ -32,7 +32,7 @@ lead: "本指南在 Docker 中运行一个 AI-backed agent turn，并验证 conf
     export SUZUMIO_ROOT=/tmp/suzumio-root
     mkdir -p "$SUZUMIO_ROOT"
 
-`SUZUMIO_ROOT` 存储项目数据库、turn input 文件、workspace 和 artifact。建议放在 Git 仓库外。
+`SUZUMIO_ROOT` 存储项目数据库、activation input 文件、workspace 和 artifact。建议放在 Git 仓库外。
 
 ## 4. 配置模型凭据
 
@@ -69,19 +69,19 @@ lead: "本指南在 Docker 中运行一个 AI-backed agent turn，并验证 conf
     suzumio start demo
     suzumio send demo pm P1 "Send one short status update to the user."
 
-这条消息会为 `pm` 创建 pending `message.created` signal。Scheduler 会把该 signal 投递进一个 turn，并启动一个 Docker 容器。
+这条消息会为 `pm` 创建 pending `message.created` signal。Scheduler 会把该 signal 投递进一个 activation，并启动一个 Docker 容器。
 
 ## 9. 检查结果
 
-    suzumio turns demo --limit 5
+    suzumio activations demo --limit 5
     suzumio messages demo --limit 10
     suzumio events demo --limit 20
 
-成功运行会显示 completed turn，以及模型通过 Suzumio support routes 创建的消息、artifact 或提交状态。
+成功运行会显示 completed activation，以及模型通过 Suzumio support routes 创建的消息、artifact 或提交状态。
 
 ## 10. 验证非抢占行为
 
-如果智能体已经处于 `running`，发送新消息不会打断当前 turn。新消息会创建 pending signal，等待当前 turn 完成后再投递。
+如果智能体已经处于 `running`，发送新消息不会打断当前 activation。新消息会创建 pending signal，等待当前 activation 完成后再投递。
 
 ## 可选备用 AI 配置
 
@@ -102,8 +102,8 @@ lead: "本指南在 Docker 中运行一个 AI-backed agent turn，并验证 conf
 
 | 现象                              | 原因                                                                   | 处理                                                                           |
 |-----------------------------------|------------------------------------------------------------------------|--------------------------------------------------------------------------------|
-| Turn 提交结果前失败。             | 镜像未构建、镜像名错误、容器启动失败或 controller support 连接问题。   | 运行 `docker build -t suzumio-runner:dev .` 并检查 `docker logs <container>`。 |
-| Support tool connection refused。 | 容器无法访问 Suzumio server 来使用 stateful tools 或提交 turn output。 | 用 `--host 0.0.0.0` 启动 server，并使用 `http://host.docker.internal:39400`。  |
+| Activation 提交结果前失败。       | 镜像未构建、镜像名错误、容器启动失败或 controller support 连接问题。   | 运行 `docker build -t suzumio-runner:dev .` 并检查 `docker logs <container>`。 |
+| Support tool connection refused。 | 容器无法访问 Suzumio server 来使用 stateful tools 或提交 activation output。 | 用 `--host 0.0.0.0` 启动 server，并使用 `http://host.docker.internal:39400`。  |
 | Agent 不启动。                    | 项目不是 `running`，或 agent 没有 pending signal。                     | 运行 `suzumio start project` 并向该 agent 发送直接消息。                       |
 | 自定义域名只有 HTTP。             | GitHub Pages 证书仍在签发。                                            | 等待证书完成后再启用 HTTPS enforcement。                                       |
 

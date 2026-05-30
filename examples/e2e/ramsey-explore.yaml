@@ -16,6 +16,14 @@ backend:
   image: suzumio-runner:dev
   controllerUrl: ${SUZUMIO_CONTROLLER_URL}
   docker:
+    network: host
+    proxy:
+      inheritEnv: true
+      rewriteLocalhost: false
+      http: ${HTTP_PROXY}
+      https: ${HTTPS_PROXY}
+      all: ${ALL_PROXY}
+      noProxy: ${NO_PROXY}
     mounts: []
   runner:
     mode: ai
@@ -51,17 +59,14 @@ agents:
     displayName: Yuki
     model: explorer
     prompt: |
-      Coordinate a lightweight Ramsey exploration. First ask three researchers to pick complementary small targets and methods:
-      - researcher-1: lower bounds via colorings or construction sketches.
-      - researcher-2: upper bounds via recursive inequalities or small-case arguments.
-      - researcher-3: synthesis, sanity checks, and comparison of target difficulty.
-
-      Keep a research-state ledger with target pair, current lower/upper bounds, evidence type, confidence, and open gap. Ask critic to review the combined findings before final submission.
-
-      Convergence rule: collect one substantive report from each researcher, ask critic once, then submit. Do at most one targeted follow-up if critic identifies a concrete factual or logical error.
+      Coordinate a lightweight Ramsey exploration toward a conservative final summary.
+      Use the researchers and critic for substantive exploration and review rather than producing the whole report alone.
+      Keep enough state to compare targets, bounds, evidence quality, confidence, and open gaps.
+      Treat requests you send to other agents as outstanding until you have seen their response or explicitly superseded the request.
+      If you have sent the useful requests and are waiting for replies, call coordination.wait_for_signal.
     tools:
       - messages.send
-      - coordination.no_valuable_work
+      - coordination.wait_for_signal
       - completion.submit
   researcher:
     role: ramsey-researcher
@@ -69,19 +74,14 @@ agents:
     count: 3
     model: explorer
     prompt: |
-      Explore Ramsey bounds in your assigned direction. This demo does not require web access or record-level facts. Prefer small examples where you can show a proof sketch, construction idea, or honest failure.
-
-      Your report must include:
-      1. Target pairs considered.
-      2. Lower/upper bounds you believe are safe.
-      3. Derivation or construction sketch.
-      4. Failed attempts and why they failed.
-      5. Confidence level and what should be checked by critic.
-
-      After one substantive report, call coordination.no_valuable_work unless PM asks a precise follow-up.
+      Explore Ramsey bounds in your assigned direction. Prefer small examples where you can show a proof sketch, construction idea, executable search result, or honest failure.
+      Use shell.exec with Python for small finite experiments when that would test a construction or recurrence. Use web.fetch only for lightweight fact checks; cite uncertainty if a source cannot be checked.
+      Send pm the most useful result you have, including enough support and uncertainty for critic review. If you have reported your result and are waiting for follow-up, call coordination.wait_for_signal with notifyPm:false.
     tools:
       - messages.send
-      - coordination.no_valuable_work
+      - coordination.wait_for_signal
+      - shell.exec
+      - web.fetch
   critic:
     role: research-critic
     displayName: Mio
@@ -92,7 +92,8 @@ agents:
       Prefer a conservative final table over asking for open-ended more research.
     tools:
       - messages.send
-      - coordination.no_valuable_work
+      - coordination.wait_for_signal
+      - web.fetch
 
 channels:
   - "#project"
@@ -100,6 +101,8 @@ channels:
 tools:
   toolpacks:
     - core
+    - shell
+    - web
 observability:
   http:
     enabled: true

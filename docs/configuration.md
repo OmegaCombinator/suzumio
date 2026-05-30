@@ -24,7 +24,7 @@ Use `suzumio config render path/to/project.yaml` before review or initialization
 
     name: demo
     task: |
-      Demonstrate one non-preemptive turn.
+      Demonstrate one non-preemptive activation.
 
     backend:
       runner:
@@ -109,7 +109,6 @@ The example below shows the main fields in one file. Most projects should split 
     tools:
       toolpacks:
         - core
-        - artifacts
         - shell
         - web
 
@@ -121,8 +120,7 @@ The example below shows the main fields in one file. Most projects should split 
         model: pm-main
         tools:
           - messages.send
-          - artifacts.list
-          - coordination.no_valuable_work
+          - coordination.wait_for_signal
           - completion.submit
       worker:
         role: worker
@@ -134,9 +132,6 @@ The example below shows the main fields in one file. Most projects should split 
         model: worker-with-fallback
         tools:
           - messages.send
-          - artifacts.publish
-          - artifacts.list
-          - artifacts.read
           - shell.exec
           - web.fetch
 
@@ -145,9 +140,9 @@ The example below shows the main fields in one file. Most projects should split 
 | Field           | Required | Description                                                                                                             |
 |-----------------|----------|-------------------------------------------------------------------------------------------------------------------------|
 | `name`          | Yes      | Project id and runtime directory name under `SUZUMIO_ROOT`.                                                             |
-| `task`          | Yes      | Durable task statement rendered into every turn prompt.                                                                 |
+| `task`          | Yes      | Durable task statement rendered into every activation prompt.                                                           |
 | `agents`        | Yes      | Map of agent ids to agent configs. At least one agent is required.                                                      |
-| `tools`         | No       | Toolpacks registered for the project. Defaults to `core`, `artifacts`, and `web`; add `shell` for container-local bash. |
+| `tools`         | No       | Toolpacks registered for the project. Defaults to `core` and `web`; add `shell` for container-local bash and shared artifact files. |
 | `extends`       | No       | One profile object or a list of profile objects to merge before local fields.                                           |
 | `scheduler`     | No       | Scheduler kind and prompt-signal batching. Defaults to `nonpreemptive-signals`.                                         |
 | `backend`       | No       | Docker runner image, controller support URL, Docker options, and model runner settings.                                 |
@@ -297,7 +292,7 @@ The backend object deep-merges, so `backend.image` remains from the profile whil
 |---------------------|---------------------------------------------------------------------------------------------------|
 | `kind`              | `nonpreemptive-signals` is the default. `nonpreemptive-mailbox` is accepted as a compatibility alias. |
 | `intervalMs`        | Intended scheduler loop interval. The current server uses a fixed loop aligned with this default. |
-| `maxPromptMessages` | Maximum pending signals rendered into one turn prompt.                                            |
+| `maxPromptMessages` | Maximum pending signals rendered into one activation prompt.                                      |
 
 ## Backend Config
 
@@ -307,6 +302,12 @@ The backend object deep-merges, so `backend.image` remains from the profile whil
       controllerUrl: http://host.docker.internal:39400
       docker:
         network: bridge
+        proxy:
+          inheritEnv: true
+          https: ${HTTPS_PROXY}
+          http: ${HTTP_PROXY}
+          all: ${ALL_PROXY}
+          noProxy: ${NO_PROXY}
         mounts:
           - source: ./reference
             target: /mnt/reference
@@ -318,11 +319,14 @@ The backend object deep-merges, so `backend.image` remains from the profile whil
 | Field            | Description                                                                                                                                        |
 |------------------|----------------------------------------------------------------------------------------------------------------------------------------------------|
 | `kind`           | Backend implementation. The current backend is Docker-based.                                                                                       |
-| `image`          | Docker image used for each turn container.                                                                                                         |
-| `controllerUrl`  | URL the container uses to call Suzumio support routes and submit turn output. For local Docker, use `host.docker.internal`.                        |
+| `image`          | Docker image used for each activation container.                                                                                                   |
+| `controllerUrl`  | URL the container uses to call Suzumio support routes and submit activation output. For local Docker, use `host.docker.internal`.                  |
 | `docker.network` | Optional Docker network mode.                                                                                                                      |
-| `docker.mounts`  | Explicit host files or directories mounted into every turn container. Sources are resolved relative to the top-level project config during render. |
+| `docker.proxy`   | Optional proxy configuration passed into runner containers. Explicit values override inherited environment variables.                              |
+| `docker.mounts`  | Explicit host files or directories mounted into every activation container. Sources are resolved relative to the top-level project config during render. |
 | `runner.mode`    | Only `ai` is supported.                                                                                                                            |
+
+`docker.proxy` fields are `inheritEnv`, `http`, `https`, `all`, `noProxy`, and `rewriteLocalhost`. By default Suzumio inherits standard proxy env vars from the controller process and rewrites loopback proxy hosts to `host.docker.internal` for bridge-network containers. Use `network: host` on Linux if the proxy only listens on host loopback.
 
 ## AI Runner Config
 
@@ -366,18 +370,16 @@ Committed examples must stay sanitized. Put real provider endpoints and keys in 
     tools:
       toolpacks:
         - core
-        - artifacts
         - shell
         - web
 
 | Toolpack    | Registered tools                                        | Runs in                                 |
 |-------------|---------------------------------------------------------|-----------------------------------------|
-| `core`      | `messages.send`, `coordination.no_valuable_work`, `completion.submit` | Runner wrapper with Suzumio support API |
-| `artifacts` | `artifacts.publish`, `artifacts.list`, `artifacts.read` | Runner wrapper with Suzumio support API |
+| `core`      | `messages.send`, `coordination.wait_for_signal`, `completion.submit` | Runner wrapper with Suzumio support API |
 | `shell`     | `shell.exec`                                            | Docker runner container                 |
 | `web`       | `web.fetch`                                             | Docker runner container                 |
 
-Mounted inputs are host files or directories exposed at configured container paths. Suzumio renders those paths into the turn prompt. Agents with `shell.exec` can copy them into `/workspace`, compile code, run binaries, and publish resulting artifacts.
+Mounted inputs are host files or directories exposed at configured container paths. Suzumio renders those paths into the activation prompt. Agents with `shell.exec` can copy them into `/workspace`, compile code, run binaries, and write durable outputs to `/artifacts/<agent-id>`. The current agent's artifact directory is read-write; other agents' artifact directories are read-only.
 
 ### Local toolpacks
 
@@ -421,9 +423,6 @@ Runner modules implement model-facing tools in the container. Controller modules
         model: worker-with-fallback
         tools:
           - messages.send
-          - artifacts.publish
-          - artifacts.list
-          - artifacts.read
           - shell.exec
           - web.fetch
         mounts:
@@ -437,7 +436,7 @@ Runner modules implement model-facing tools in the container. Controller modules
 | `displayName` | Human-readable name for a single agent or the fallback name for counted agents.                                                          |
 | `names`       | Optional name list for counted agents, assigned by index.                                                                                |
 | `count`       | Expands one config entry into numbered agents such as `worker-1` and `worker-2`.                                                         |
-| `prompt`      | Agent instructions included in every turn prompt. Usually imported from Markdown.                                                        |
+| `prompt`      | Agent instructions included in every activation prompt. Usually imported from Markdown.                                                  |
 | `model`       | Explicit model preset selection for this agent. If omitted, `backend.runner.model` must be set.                                          |
 | `tools`       | Allowed tool names for this agent. Supports exact names, `namespace.*`, and `*`. The tool must also be registered by a project toolpack. |
 | `mounts`      | Explicit host files or directories mounted only for this agent.                                                                          |

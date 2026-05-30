@@ -26,10 +26,8 @@ async function main(): Promise<void> {
       return showStatus(args);
     case "messages":
       return showMessages(args);
-    case "turns":
-      return showTurns(args);
-    case "artifacts":
-      return showArtifacts(args);
+    case "activations":
+      return showActivations(args);
     case "events":
       return showEvents(args);
     case "tick":
@@ -111,7 +109,7 @@ async function printProject(project: string, root?: string): Promise<void> {
   try {
     const row = store.projectRow();
     console.log(`${row.id}  ${row.status}`);
-    for (const agent of store.listAgents()) console.log(`  ${agent.id.padEnd(16)} ${agent.status}${agent.activeTurnId ? ` ${agent.activeTurnId}` : ""}`);
+    for (const agent of store.listAgents()) console.log(`  ${agent.id.padEnd(16)} ${agent.status}${agent.activeActivationId ? ` ${agent.activeActivationId}` : ""}`);
   } finally {
     store.close();
   }
@@ -128,23 +126,14 @@ async function showMessages(args: string[]): Promise<void> {
   }
 }
 
-async function showTurns(args: string[]): Promise<void> {
+async function showActivations(args: string[]): Promise<void> {
   const store = openProject(args);
   try {
-    for (const turn of store.listTurns(numberFlag(args, "limit", 50))) {
-      console.log(`\n${turn.id} ${turn.agentId} ${turn.status} ${turn.startedAt}`);
-      if (turn.text) console.log(turn.text);
-      if (turn.error) console.log(turn.error);
+    for (const activation of store.listActivations(numberFlag(args, "limit", 50))) {
+      console.log(`\n${activation.id} ${activation.agentId} ${activation.status} ${activation.startedAt}`);
+      if (activation.text) console.log(activation.text);
+      if (activation.error) console.log(activation.error);
     }
-  } finally {
-    store.close();
-  }
-}
-
-async function showArtifacts(args: string[]): Promise<void> {
-  const store = openProject(args);
-  try {
-    for (const artifact of store.listArtifacts(numberFlag(args, "limit", 50))) console.log(`${artifact.id} ${artifact.name} ${artifact.path}`);
   } finally {
     store.close();
   }
@@ -218,8 +207,7 @@ Commands:
   suzumio send <project> <recipient> <P0|P1|P2|P3> <message...> [--root dir]
   suzumio status [project] [--root dir]
   suzumio messages <project> [--limit n] [--root dir]
-  suzumio turns <project> [--limit n] [--root dir]
-  suzumio artifacts <project> [--root dir]
+  suzumio activations <project> [--limit n] [--root dir]
   suzumio events <project> [--limit n] [--root dir]
   suzumio tick [project] [--root dir]
 `);
