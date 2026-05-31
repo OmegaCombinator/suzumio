@@ -294,12 +294,13 @@ export class ProjectStore {
   }
 
   private notifyPmOfAgentIssue(input: { agentId: string; activationId: string; priority: MessagePriority; title: string; details: string }): void {
+    const body = [`${input.title}.`, "", `Agent: ${input.agentId}`, `Activation: ${input.activationId}`, "", input.details].join("\n");
     if (input.agentId === "pm") {
-      this.appendEvent("pm.notification.skipped", { agentId: input.agentId, activationId: input.activationId, reason: "source-is-pm", title: input.title });
+      this.sendMessage({ sender: "system", recipient: "user", priority: input.priority, sourceAgent: input.agentId, sourceActivation: input.activationId, body });
       return;
     }
     if (!this.listAgents().some((agent) => agent.id === "pm")) {
-      this.appendEvent("pm.notification.skipped", { agentId: input.agentId, activationId: input.activationId, reason: "pm-not-found", title: input.title });
+      this.sendMessage({ sender: "system", recipient: "user", priority: input.priority, sourceAgent: input.agentId, sourceActivation: input.activationId, body });
       return;
     }
     this.sendMessage({
@@ -308,7 +309,7 @@ export class ProjectStore {
       priority: input.priority,
       sourceAgent: input.agentId,
       sourceActivation: input.activationId,
-      body: [`${input.title}.`, "", `Agent: ${input.agentId}`, `Activation: ${input.activationId}`, "", input.details].join("\n"),
+      body,
     });
   }
 
