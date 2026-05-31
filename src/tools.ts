@@ -253,14 +253,14 @@ const BUILTIN_TOOLPACKS: Record<string, BuiltinToolpack> = {
 function messagesSendDefinition(): ToolDefinition {
   return {
     name: "messages.send",
-    description: "Send a Markdown message to another agent, the user, or a configured project channel.",
+    description: "Send a Markdown message to another agent, the user, or a configured project channel. This is the normal way to make work externally visible and finish an activation after shell/file work.",
     inputSchema: {
       type: "object",
       properties: {
-        recipient: { type: "string", description: "Direct recipient agent id, or user." },
+        recipient: { type: "string", description: "Direct recipient agent id, or user. Non-PM agents usually report to pm unless the signal names another recipient." },
         channel: { type: "string", description: "Project channel such as #project. Use either recipient or channel." },
         priority: { type: "string", enum: ["P0", "P1", "P2", "P3"], default: "P2" },
-        body: { type: "string" },
+        body: { type: "string", description: "Markdown body containing results, exact artifact paths, exact commands/results, next action requested, or blocker." },
       },
       required: ["body"],
       additionalProperties: false,
@@ -281,7 +281,7 @@ async function messagesSendSupport({ store, agent, activationId }: ControllerCon
 function waitForSignalDefinition(): ToolDefinition {
   return {
     name: "coordination.wait_for_signal",
-    description: "Declare that useful progress now depends on future signals. Non-PM agents notify pm by default; pm records a wait state without self-waking. If you already sent pm your result in this activation, set notifyPm:false to avoid a duplicate wake-up.",
+    description: "Declare that useful progress now depends on future signals. Call this after sending required messages, not instead of reporting. Non-PM agents notify pm by default; pm records a wait state without self-waking. If you already sent pm your result in this activation, set notifyPm:false to avoid a duplicate wake-up.",
     inputSchema: {
       type: "object",
       properties: {
@@ -331,7 +331,7 @@ async function completionSubmitSupport({ store, agent, activationId }: Controlle
 function shellExecDefinition(): ToolDefinition {
   return {
     name: "shell.exec",
-    description: "Execute a bash command inside the Docker runner container. Runs in /workspace by default.",
+    description: "Execute a bash command inside the Docker runner container. Runs in /workspace by default. This does not notify anyone; report important output with messages.send before ending.",
     inputSchema: {
       type: "object",
       properties: {

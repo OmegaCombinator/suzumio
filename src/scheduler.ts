@@ -55,10 +55,36 @@ function renderActivationPrompt(config: ProjectConfig, agent: AgentRecord, agent
     renderActivationHistory(activations),
     "# New Signals",
     ...signals.map(renderSignal),
-    "# Activation Rule\n\nTreat the conversation history and your previous activation outputs as your continuous working context. New Signals are the current wake-up triggers, not the whole context. Work until you have a useful result, blocker, message to send, wait-for-signal declaration, or final submission. Shell commands and files alone are not an externally visible result: if you write an artifact or learn an important fact, send `messages.send` with the exact path or finding before ending the activation. If a signal asks you to report to pm, you must call `messages.send` to pm in this activation. If you are waiting for replies you requested, call coordination.wait_for_signal rather than continuing by assumption. Calling coordination.wait_for_signal or completion.submit ends this activation. Do not poll for more work; new signals will be delivered in a later activation.",
+    renderToolAndReportingContract(agent),
+    renderActivationRule(),
   ]
     .filter(Boolean)
     .join("\n\n");
+}
+
+function renderToolAndReportingContract(agent: AgentRecord): string {
+  return [
+    "# Tool And Reporting Contract",
+    `Available tools for you: ${agent.tools.length ? agent.tools.join(", ") : "none"}.`,
+    "New Signals are your current assignments. Use the newest direct assignment unless a higher-priority signal blocks it.",
+    "Use `shell.exec` only for inspection, file writing, and verification commands. Shell output and files are private until you report them.",
+    "Before ending every activation, create one externally visible effect with the appropriate tool.",
+    "If you completed work or hit a blocker, call `messages.send`. Use the requested recipient; if none is specified and you are not `pm`, send to `pm`.",
+    "If you are `pm` and you handled the signal by delegating work, call `messages.send` to the target agent or `user`.",
+    "If you already reported and are waiting, call `coordination.wait_for_signal` with `notifyPm:false`.",
+    "Only the PM should call `completion.submit`, and only for the final project report.",
+    "If the task, recipient, or required tool is unclear, call `messages.send` with a blocker to `pm`, or to `user` if you are `pm`. Do not end silently.",
+  ].join("\n");
+}
+
+function renderActivationRule(): string {
+  return [
+    "# Activation Rule",
+    "Treat the conversation history and your previous activation outputs as continuous working context. New Signals are wake-up triggers, not the whole context.",
+    "Work until you have a useful result, blocker, message to send, wait-for-signal declaration, or final submission.",
+    "If a signal asks you to report to a specific recipient, you must call `messages.send` to that recipient in this activation.",
+    "Calling `coordination.wait_for_signal` or `completion.submit` ends this activation. Do not poll for more work; new signals will be delivered in a later activation.",
+  ].join("\n\n");
 }
 
 function renderAgentRoster(agents: AgentRecord[]): string {
@@ -134,7 +160,7 @@ function renderSignal(signal: SignalRecord): string {
     ].join("\n");
   }
   if (signal.kind === "scheduler.no_effect_nudge") {
-    return [`## ${signal.id} scheduler.no_effect_nudge`, `Priority: ${signal.priority}`, "", String(signal.payload.message ?? "Your previous activation produced no externally visible effect.")].join("\n");
+    return [`## ${signal.id} scheduler.no_effect_nudge`, `Priority: ${signal.priority}`, "", String(signal.payload.message ?? "Your previous activation produced no externally visible effect. Before ending, call messages.send, coordination.wait_for_signal, or completion.submit as appropriate.")].join("\n");
   }
   return [`## ${signal.id} ${signal.kind}`, `Priority: ${signal.priority}`, `Time: ${signal.createdAt}`, "", JSON.stringify(signal.payload, null, 2)].join("\n");
 }

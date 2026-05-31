@@ -156,7 +156,9 @@ export class ProjectStore {
         priority: "P1",
         payload: {
           previousActivationId: activationId,
-          message: "Your previous activation produced no externally visible effect. Send a message, publish an artifact, submit completion, or report a blocker.",
+          message: activation.agentId === "pm"
+            ? "Your previous activation produced no externally visible effect. Before ending this activation, use messages.send to delegate work or report a blocker to user, coordination.wait_for_signal after reporting, or completion.submit for a final report. Do not only run shell commands."
+            : "Your previous activation produced no externally visible effect. Before ending this activation, use messages.send to report results, artifact paths, or a blocker to pm, or use coordination.wait_for_signal after reporting. Do not only run shell commands.",
         },
       });
     } else if (usefulEffects === 0) {
