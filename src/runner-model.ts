@@ -40,7 +40,7 @@ function expandPreset(models: ModelRegistryConfig, presetId: string, selectedPre
 function createProvider(providerId: string, provider: ProviderConfig): unknown {
   const options = {
     apiKey: provider.apiKey ?? (provider.apiKeyEnv ? process.env[provider.apiKeyEnv] : undefined),
-    baseURL: provider.baseURL,
+    baseURL: provider.baseURL ?? (provider.baseURLEnv ? process.env[provider.baseURLEnv] : undefined),
     headers: provider.headers,
     fetch: createProviderFetch(provider),
     ...provider.options,

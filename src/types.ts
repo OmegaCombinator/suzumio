@@ -79,6 +79,7 @@ export interface ProviderConfig {
   apiKey?: string;
   apiKeyEnv?: string;
   baseURL?: string;
+  baseURLEnv?: string;
   headers?: Record<string, string>;
   timeoutMs?: number | false;
   chunkTimeoutMs?: number;

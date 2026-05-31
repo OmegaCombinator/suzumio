@@ -27,6 +27,7 @@ const ProviderSchema = z.object({
   apiKey: z.string().optional(),
   apiKeyEnv: z.string().optional(),
   baseURL: z.string().optional(),
+  baseURLEnv: z.string().optional(),
   headers: z.record(z.string(), z.string()).default({}),
   timeoutMs: z.union([z.number().int().positive(), z.literal(false)]).optional(),
   chunkTimeoutMs: z.number().int().positive().optional(),

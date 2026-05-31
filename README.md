@@ -71,7 +71,7 @@ Each activation also gets shared artifact directories under `/artifacts/<agent-i
 
 ## Secrets
 
-Do not put API keys in committed config. Use `apiKeyEnv` and pass the key through the environment when starting `suzumio serve`.
+Do not put provider endpoints or API keys in committed config. Use `baseURLEnv` and `apiKeyEnv`, then pass both values through the environment when starting `suzumio serve`.
 
 ```yaml
 backend:
@@ -82,7 +82,7 @@ backend:
       providers:
         gateway:
           type: openai-compatible
-          baseURL: https://example.invalid/v1
+          baseURLEnv: SUZUMIO_GATEWAY_BASE_URL
           apiKeyEnv: SUZUMIO_GATEWAY_API_KEY
       presets:
         worker-main:

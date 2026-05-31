@@ -28,7 +28,7 @@ backend:
         gateway:
           type: openai-compatible
           apiKeyEnv: SUZUMIO_GATEWAY_API_KEY
-          baseURL: ${SUZUMIO_GATEWAY_BASE_URL}
+          baseURLEnv: SUZUMIO_GATEWAY_BASE_URL
           timeoutMs: 300000
       presets:
         explorer:

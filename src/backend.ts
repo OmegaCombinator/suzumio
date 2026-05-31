@@ -151,9 +151,11 @@ async function mountBinds(mounts: DockerMountConfig[]): Promise<string[]> {
 function modelEnv(config: ProjectConfig): string[] {
   const env: string[] = [];
   for (const provider of Object.values(config.backend.runner.models?.providers ?? {})) {
-    if (!provider.apiKeyEnv) continue;
-    const value = process.env[provider.apiKeyEnv];
-    if (value) env.push(`${provider.apiKeyEnv}=${value}`);
+    for (const key of [provider.apiKeyEnv, provider.baseURLEnv]) {
+      if (!key) continue;
+      const value = process.env[key];
+      if (value) env.push(`${key}=${value}`);
+    }
   }
   return env;
 }

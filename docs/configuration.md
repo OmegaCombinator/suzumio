@@ -34,7 +34,7 @@ Use `suzumio config render path/to/project.yaml` before review or initialization
           providers:
             gateway:
               type: openai-compatible
-              baseURL: https://your-gateway.example/v1
+              baseURLEnv: SUZUMIO_GATEWAY_BASE_URL
               apiKeyEnv: SUZUMIO_GATEWAY_API_KEY
           presets:
             main:
@@ -297,7 +297,7 @@ The example below shows the main fields in one file. Most projects should split 
           providers:
             gateway:
               type: openai-compatible
-              baseURL: https://your-gateway.example/v1
+              baseURLEnv: SUZUMIO_GATEWAY_BASE_URL
               apiKeyEnv: SUZUMIO_GATEWAY_API_KEY
               timeoutMs: 300000
           presets:
@@ -539,7 +539,7 @@ Most projects should omit `scheduler`. The default is signal-driven and non-pree
           providers:
             gateway:
               type: openai-compatible
-              baseURL: https://your-gateway.example/v1
+              baseURLEnv: SUZUMIO_GATEWAY_BASE_URL
               apiKeyEnv: SUZUMIO_GATEWAY_API_KEY
               timeoutMs: 300000
           presets:
@@ -561,7 +561,7 @@ Model selection is explicit. Set `backend.runner.model` for a project-level sele
 
 <div class="notice danger">
 
-Committed examples must stay sanitized. Put real provider endpoints and keys in local untracked config and environment variables.
+Committed examples must stay sanitized. Prefer `baseURLEnv` and `apiKeyEnv` so real provider endpoints and keys stay in environment variables.
 
 </div>
 

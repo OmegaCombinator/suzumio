@@ -34,7 +34,7 @@ Suzumio 把配置当作 source material，而不是可变运行时状态。运�
           providers:
             gateway:
               type: openai-compatible
-              baseURL: https://your-gateway.example/v1
+              baseURLEnv: SUZUMIO_GATEWAY_BASE_URL
               apiKeyEnv: SUZUMIO_GATEWAY_API_KEY
           presets:
             main:
@@ -297,7 +297,7 @@ agents:
           providers:
             gateway:
               type: openai-compatible
-              baseURL: https://your-gateway.example/v1
+              baseURLEnv: SUZUMIO_GATEWAY_BASE_URL
               apiKeyEnv: SUZUMIO_GATEWAY_API_KEY
               timeoutMs: 300000
           presets:
@@ -539,7 +539,7 @@ Suzumio 会拒绝循环 import 和过深的 import 链，避免项目意外无�
           providers:
             gateway:
               type: openai-compatible
-              baseURL: https://your-gateway.example/v1
+              baseURLEnv: SUZUMIO_GATEWAY_BASE_URL
               apiKeyEnv: SUZUMIO_GATEWAY_API_KEY
               timeoutMs: 300000
           presets:
@@ -561,7 +561,7 @@ Model 选择是显式的。可以在 `backend.runner.model` 设置项目级选�
 
 <div class="notice danger">
 
-提交到仓库的示例必须保持脱敏。真实 endpoint 和 key 应放在本地未跟踪配置或环境变量中。
+提交到仓库的示例必须保持脱敏。优先使用 `baseURLEnv` 和 `apiKeyEnv`，让真实 endpoint 和 key 留在环境变量中。
 
 </div>
 
