@@ -154,6 +154,8 @@ suzumio send yaml-tutorial pm P1 "Run the small Ramsey example and submit a shor
 
 `start` and `send` can run scheduler ticks directly, so they need the same provider/proxy environment as the server.
 
+The packaged WebUI is served from `http://127.0.0.1:39400`. When working on WebUI code, run `npm run webui:dev` in another terminal and open `http://127.0.0.1:5173`; Vite proxies `/api` and `/health` to the backend on `39400`.
+
 ## 6. Inspect The Run
 
 ```bash

@@ -227,6 +227,6 @@ Fetches an HTTP(S) URL from inside the Docker runner container. `format: "text"`
 
 ## WebUI
 
-The root path `/` serves the Preact-based WebUI built from `webui/`. It calls the API routes above and refreshes periodically. The control room includes project selection, status actions, message composition, agent roster, messages, activations, tool calls, event timeline, resolved YAML, and submitted report views.
+The root path `/` serves the Preact-based WebUI built from `webui/`. It calls the API routes above and refreshes periodically. For WebUI development, run `npm run webui:dev` and open `http://127.0.0.1:5173`; Vite proxies `/api` and `/health` to the backend on `39400`. The control room includes project selection, status actions, message composition, agent roster, messages, activations, tool calls, event timeline, resolved YAML, and submitted report views.
 
 <div class="footer">Next: <a href="roadmap.html">Roadmap</a>.</div>

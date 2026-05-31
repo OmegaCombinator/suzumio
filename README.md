@@ -41,6 +41,14 @@ suzumio serve --host 127.0.0.1 --port 39400
 
 Open `http://127.0.0.1:39400` for the WebUI.
 
+For WebUI development, keep the backend on `39400` and run the Vite dev server on a separate port:
+
+```bash
+npm run webui:dev
+```
+
+Open `http://127.0.0.1:5173`; `/api` and `/health` are proxied to `http://127.0.0.1:39400`.
+
 ## Configuration
 
 Suzumio config is YAML. A scalar field whose whole value is `@import(path)` is replaced with the imported file. YAML, JSON, and text files are supported. Top-level `extends` performs object deep-merge after imports are resolved.

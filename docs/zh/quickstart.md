@@ -154,6 +154,8 @@ suzumio send yaml-tutorial pm P1 "Run the small Ramsey example and submit a shor
 
 `start` 和 `send` 可能直接运行 scheduler tick，所以它们也需要和 server 相同的 provider/proxy 环境。
 
+打包后的 WebUI 由 `http://127.0.0.1:39400` 提供。开发 WebUI 时，在另一个终端运行 `npm run webui:dev` 并打开 `http://127.0.0.1:5173`；Vite 会把 `/api` 和 `/health` 代理到 `39400` 上的 backend。
+
 ## 6. 检查运行结果
 
 ```bash
