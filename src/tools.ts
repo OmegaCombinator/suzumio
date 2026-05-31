@@ -281,13 +281,13 @@ async function messagesSendSupport({ store, agent, activationId }: ControllerCon
 function waitForSignalDefinition(): ToolDefinition {
   return {
     name: "coordination.wait_for_signal",
-    description: "Declare that useful progress now depends on future signals. Call this after sending required messages, not instead of reporting. Non-PM agents notify pm by default; pm records a wait state without self-waking. If you already sent pm your result in this activation, set notifyPm:false to avoid a duplicate wake-up.",
+    description: "Declare that useful progress now depends on future signals. Call this after sending required messages, not instead of reporting. Non-PM agents notify pm by default only when a pm agent exists; pm records a wait state without self-waking. If you already sent the coordinator your result in this activation, set notifyPm:false to avoid a duplicate wake-up.",
     inputSchema: {
       type: "object",
       properties: {
         reason: { type: "string", description: "What future signal or external response you are waiting for." },
         pm: { type: "string", description: "Coordinator agent id to notify. Defaults to pm." },
-        notifyPm: { type: "boolean", description: "Whether to send a direct message to the coordinator. Defaults to true for non-PM agents and false for the PM. Use false after you already sent the coordinator your current result." },
+        notifyPm: { type: "boolean", description: "Whether to send a direct message to the coordinator when that agent exists. Defaults to true for non-PM agents and false for the PM. Use false after you already sent the coordinator your current result." },
       },
       additionalProperties: false,
     },

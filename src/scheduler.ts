@@ -55,25 +55,30 @@ function renderActivationPrompt(config: ProjectConfig, agent: AgentRecord, agent
     renderActivationHistory(activations),
     "# New Signals",
     ...signals.map(renderSignal),
-    renderToolAndReportingContract(agent),
+    renderToolAndReportingContract(agent, agents),
     renderActivationRule(),
   ]
     .filter(Boolean)
     .join("\n\n");
 }
 
-function renderToolAndReportingContract(agent: AgentRecord): string {
+function renderToolAndReportingContract(agent: AgentRecord, agents: AgentRecord[]): string {
+  const hasPm = agents.some((item) => item.id === "pm");
+  const defaultRecipient = hasPm ? "`pm`" : "the requested recipient, a configured channel, or `user`";
   return [
     "# Tool And Reporting Contract",
     `Available tools for you: ${agent.tools.length ? agent.tools.join(", ") : "none"}.`,
     "New Signals are your current assignments. Use the newest direct assignment unless a higher-priority signal blocks it.",
     "Use `shell.exec` only for inspection, file writing, and verification commands. Shell output and files are private until you report them.",
+    "Use `/workspace` for mutable working files. Use `/artifacts/<agent-id>` for published handoff snapshots and do not modify an artifact snapshot after you announce it.",
     "Before ending every activation, create one externally visible effect with the appropriate tool.",
-    "If you completed work or hit a blocker, call `messages.send`. Use the requested recipient; if none is specified and you are not `pm`, send to `pm`.",
+    `If you completed work or hit a blocker, call \`messages.send\`. Use the requested recipient; if none is specified and you are not \`pm\`, send to ${defaultRecipient}.`,
     "If you are `pm` and you handled the signal by delegating work, call `messages.send` to the target agent or `user`.",
     "If you already reported and are waiting, call `coordination.wait_for_signal` with `notifyPm:false`.",
     "Only the PM should call `completion.submit`, and only for the final project report.",
-    "If the task, recipient, or required tool is unclear, call `messages.send` with a blocker to `pm`, or to `user` if you are `pm`. Do not end silently.",
+    hasPm
+      ? "If the task, recipient, or required tool is unclear, call `messages.send` with a blocker to `pm`, or to `user` if you are `pm`. Do not end silently."
+      : "If the task, recipient, or required tool is unclear, call `messages.send` with a blocker to the requested recipient, a configured channel, or `user`. Do not end silently.",
   ].join("\n");
 }
 
@@ -98,7 +103,7 @@ function renderAgentRoster(agents: AgentRecord[]): string {
 function renderSharedArtifacts(agent: AgentRecord, agents: AgentRecord[]): string {
   return [
     "# Shared Artifacts",
-    "Use these filesystem paths for durable files. Your directory is writable; other agent directories are read-only. Use shell commands to organize, filter, or summarize files as needed.",
+    "Use `/workspace` for mutable work across activations. Use these artifact paths for durable published snapshots. Your artifact directory is writable; other agent directories are read-only. Treat announced artifact subdirectories as immutable handoff records.",
     ...agents.map((item) => `- /artifacts/${item.id} (${item.id === agent.id ? "read-write, yours" : "read-only"})`),
   ].join("\n");
 }

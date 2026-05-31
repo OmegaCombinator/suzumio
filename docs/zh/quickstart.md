@@ -33,7 +33,7 @@ npm run build
 docker build -t suzumio-runner:dev .
 ```
 
-默认 runner image 包含 Node.js、`python3` 和 `curl`。
+默认 runner image 包含 Node.js、`python3`、`curl` 和 `git`。
 
 ## 2. 编写 YAML
 

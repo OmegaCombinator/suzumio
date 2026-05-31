@@ -1,7 +1,7 @@
 FROM node:24-bookworm
 
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends python3 curl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends python3 curl git && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json* ./
 RUN npm install
 COPY tsconfig.json ./

@@ -72,10 +72,10 @@ The default scheduler is `nonpreemptive-signals`. `nonpreemptive-mailbox` remain
 - Messages and coordination events become pending signals.
 - Idle agents with pending signals are started for exactly one activation.
 - Idle agents without pending signals remain quiet.
-- Activations with no useful effect receive one no-effect nudge unless they were already nudge-driven.
+- Activations with no useful effect receive one self-directed no-effect nudge unless they were already nudge-driven.
 - Use `coordination.wait_for_signal` when an agent intentionally has to wait for future signals.
 
-Each activation also gets shared artifact directories under `/artifacts/<agent-id>`. The current agent's directory is writable and other agents' directories are read-only, so agents can use ordinary shell commands to write scripts, logs, notes, and experiment outputs.
+Each activation also gets a persistent mutable `/workspace` for the current agent and shared artifact directories under `/artifacts/<agent-id>`. Agents should do mutable work in `/workspace`, then publish immutable handoff snapshots under their own artifact directory. Other agents' artifact directories are read-only.
 
 ## Secrets
 

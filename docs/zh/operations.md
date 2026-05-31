@@ -87,7 +87,7 @@ Runner backend 会把配置中引用、且创建 activation 的进程环境里�
 
 ## 代理和 Runner 工具
 
-默认 runner 镜像包含 `python3` 和 `curl`，所以拥有 `shell.exec` 的 agent 可以在 Docker 内运行小脚本和命令行网络探测。
+默认 runner 镜像包含 `python3`、`curl` 和 `git`，所以拥有 `shell.exec` 的 agent 可以在 Docker 内运行小脚本、命令行网络探测和本地仓库流程。
 
 Suzumio 会把标准代理变量传入 runner 容器：`HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NO_PROXY` 及其小写形式。如果代理值指向 `127.0.0.1`、`localhost` 或 `::1`，Suzumio 会在传给 bridge-network 容器时把 host 改写成 `host.docker.internal`。
 

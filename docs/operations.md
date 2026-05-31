@@ -87,7 +87,7 @@ The runner backend passes configured provider key environment variables into con
 
 ## Proxies And Runner Tools
 
-The default runner image includes `python3` and `curl`, so agents with `shell.exec` can run small scripts and command-line network probes inside Docker.
+The default runner image includes `python3`, `curl`, and `git`, so agents with `shell.exec` can run small scripts, command-line network probes, and local repository workflows inside Docker.
 
 Suzumio passes standard proxy variables into runner containers when they exist: `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`, and lowercase variants. If a proxy value points at `127.0.0.1`, `localhost`, or `::1`, Suzumio rewrites that host to `host.docker.internal` for bridge-network containers.
 

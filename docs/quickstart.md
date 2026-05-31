@@ -33,7 +33,7 @@ npm run build
 docker build -t suzumio-runner:dev .
 ```
 
-The default runner image includes Node.js, `python3`, and `curl`.
+The default runner image includes Node.js, `python3`, `curl`, and `git`.
 
 ## 2. Write The YAML
 
