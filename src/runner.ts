@@ -19,6 +19,7 @@ type FetchWithDispatcher = (url: Parameters<typeof fetch>[0], init?: RequestInit
 
 const fetchWithDispatcher = undiciFetch as unknown as FetchWithDispatcher;
 const webProxyDispatchers = new Map<string, ProxyAgent>();
+const EFFECTIVELY_UNBOUNDED_STEPS = 1_000_000;
 
 type RunnerToolContext = {
   project: string;
@@ -82,7 +83,7 @@ async function runAiWithModel(input: RunnerActivationInput, resolved: ResolvedRu
     abortSignal: abortController.signal,
     maxRetries: 0,
   } as Record<string, unknown>;
-  if (input.runner.maxIterations !== undefined) request.stopWhen = stepCountIs(input.runner.maxIterations);
+  request.stopWhen = stepCountIs(input.runner.maxIterations ?? EFFECTIVELY_UNBOUNDED_STEPS);
   const result = streamText(request as never) as any;
   const output = (toolOutput?: string): RunnerActivationOutput => ({ text: text.trim() || toolOutput || "(model returned no text)", usage: { selectedModel: resolved.selectedPresetId, model: resolved.presetId, apiModel: resolved.apiModel } });
   try {
