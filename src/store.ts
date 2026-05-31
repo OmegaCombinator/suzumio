@@ -159,14 +159,30 @@ export class ProjectStore {
           message: "Your previous activation produced no externally visible effect. Send a message, publish an artifact, submit completion, or report a blocker.",
         },
       });
+    } else if (usefulEffects === 0) {
+      this.notifyPmOfAgentIssue({
+        agentId: activation.agentId,
+        activationId,
+        priority: "P1",
+        title: "Agent produced no useful effect after a scheduler nudge",
+        details: "The agent was already woken by scheduler.no_effect_nudge, but the activation still ended without messages, completion, wait-for-signal, or another useful signal. Please inspect the activation and either send a direct recovery instruction, reassign the work, or stop the agent.",
+      });
     }
   }
 
   failActivation(activationId: string, error: string): void {
     const activation = this.activation(activationId);
+    if (activation.status === "completed" || activation.status === "failed" || activation.status === "cancelled") return;
     this.db.prepare("UPDATE activations SET status = ?, completed_at = ?, error = ? WHERE id = ? AND project = ?").run("failed", nowIso(), error, activationId, this.project);
     this.setAgentStatus(activation.agentId, "failed", null);
     this.appendEvent("activation.failed", { activationId, agentId: activation.agentId, error });
+    this.notifyPmOfAgentIssue({
+      agentId: activation.agentId,
+      activationId,
+      priority: "P0",
+      title: "Agent activation failed",
+      details: truncate(error, 4000),
+    });
   }
 
   activation(activationId: string): ActivationRecord {
@@ -275,6 +291,25 @@ export class ProjectStore {
   private activationWasNoEffectNudge(activationId: string): boolean {
     const row = this.db.prepare("SELECT id FROM signals WHERE project = ? AND delivered_activation_id = ? AND kind = 'scheduler.no_effect_nudge' LIMIT 1").get(this.project, activationId) as { id: string } | undefined;
     return row !== undefined;
+  }
+
+  private notifyPmOfAgentIssue(input: { agentId: string; activationId: string; priority: MessagePriority; title: string; details: string }): void {
+    if (input.agentId === "pm") {
+      this.appendEvent("pm.notification.skipped", { agentId: input.agentId, activationId: input.activationId, reason: "source-is-pm", title: input.title });
+      return;
+    }
+    if (!this.listAgents().some((agent) => agent.id === "pm")) {
+      this.appendEvent("pm.notification.skipped", { agentId: input.agentId, activationId: input.activationId, reason: "pm-not-found", title: input.title });
+      return;
+    }
+    this.sendMessage({
+      sender: "system",
+      recipient: "pm",
+      priority: input.priority,
+      sourceAgent: input.agentId,
+      sourceActivation: input.activationId,
+      body: [`${input.title}.`, "", `Agent: ${input.agentId}`, `Activation: ${input.activationId}`, "", input.details].join("\n"),
+    });
   }
 
   private signalTargets(input: { sourceAgent?: string; targetAgent?: string; targetChannel?: string }): Array<{ targetAgent?: string; targetChannel?: string }> {
@@ -429,6 +464,10 @@ function defaultUsefulEffect(kind: string, status: SignalRecord["status"]): bool
   if (kind === "scheduler.no_effect_nudge") return false;
   if (status === "pending") return true;
   return kind === "message.created" || kind === "completion.submitted" || kind === "coordination.wait_for_signal";
+}
+
+function truncate(value: string, max: number): string {
+  return value.length <= max ? value : `${value.slice(0, max)}\n...[truncated]`;
 }
 
 const SCHEMA = `
