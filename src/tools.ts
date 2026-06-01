@@ -253,14 +253,14 @@ const BUILTIN_TOOLPACKS: Record<string, BuiltinToolpack> = {
 function messagesSendDefinition(): ToolDefinition {
   return {
     name: "messages.send",
-    description: "Send a Markdown message to another agent, the user, or a configured project channel. This is the normal way to make work externally visible and finish an activation after shell/file work.",
+    description: "Send a Markdown message to another agent, the user, or a configured project channel. This is the normal way to make substantive work externally visible and finish an activation after shell/file work. Delivery is immediate; do not send ACK-only messages or request confirmation of receipt.",
     inputSchema: {
       type: "object",
       properties: {
         recipient: { type: "string", description: "Direct recipient agent id, or user. Non-PM agents usually report to pm unless the signal names another recipient." },
         channel: { type: "string", description: "Project channel such as #project. Use either recipient or channel." },
         priority: { type: "string", enum: ["P0", "P1", "P2", "P3"], default: "P2" },
-        body: { type: "string", description: "Markdown body containing results, exact artifact paths, exact commands/results, next action requested, or blocker." },
+        body: { type: "string", description: "Markdown body containing results, exact artifact paths, exact commands/results, next action requested, or blocker. Do not use this for ACK-only text such as received/noted/standing by." },
       },
       required: ["body"],
       additionalProperties: false,
@@ -275,7 +275,7 @@ async function messagesSendSupport({ store, agent, activationId }: ControllerCon
   const recipient = optionalString(args.recipient);
   const channel = optionalString(args.channel);
   const message = store.sendMessage({ sender: agent.id, recipient, channel, priority, body, sourceAgent: agent.id, sourceActivation: activationId });
-  return { title: "message sent", output: `Message sent: ${message.id}`, metadata: { messageId: message.id } };
+  return { title: "message sent", output: `Message sent and delivered: ${message.id}`, metadata: { messageId: message.id } };
 }
 
 function waitForSignalDefinition(): ToolDefinition {

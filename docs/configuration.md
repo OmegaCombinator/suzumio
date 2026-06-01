@@ -495,6 +495,8 @@ The backend object deep-merges, so `backend.image` remains from the profile whil
 
 Most projects should omit `scheduler`. The default is signal-driven and non-preemptive: idle agents wake for pending signals, and running agents are not interrupted. Advanced projects may set `scheduler.kind` or `scheduler.maxSignalsPerActivation`; the default signal batch size is 20.
 
+Activation prompts include bounded continuity context instead of replaying the entire project log. By default Suzumio includes up to 30 recent visible messages, 6 previous activation outputs for that agent, 3000 characters per history message, and 6000 characters per activation excerpt. Override `scheduler.messageHistoryLimit`, `scheduler.activationHistoryLimit`, `scheduler.maxHistoryMessageChars`, or `scheduler.maxHistoryActivationChars` only for projects that need more context and have enough model window.
+
 ## Backend Config
 
     backend:

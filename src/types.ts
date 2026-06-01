@@ -35,6 +35,10 @@ export interface SchedulerConfig {
   kind: "nonpreemptive-mailbox" | "nonpreemptive-signals";
   maxSignalsPerActivation: number;
   maxPromptMessages?: number;
+  messageHistoryLimit?: number;
+  activationHistoryLimit?: number;
+  maxHistoryMessageChars?: number;
+  maxHistoryActivationChars?: number;
 }
 
 export interface BackendConfig {

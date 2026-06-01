@@ -18,8 +18,12 @@ const SchedulerSchema = z.preprocess(
     .object({
       kind: z.enum(["nonpreemptive-mailbox", "nonpreemptive-signals"]).default("nonpreemptive-signals"),
       maxSignalsPerActivation: z.number().int().positive().default(20),
+      messageHistoryLimit: z.number().int().nonnegative().default(30),
+      activationHistoryLimit: z.number().int().nonnegative().default(6),
+      maxHistoryMessageChars: z.number().int().positive().default(3000),
+      maxHistoryActivationChars: z.number().int().positive().default(6000),
     })
-    .default({ kind: "nonpreemptive-signals", maxSignalsPerActivation: 20 }),
+    .default({ kind: "nonpreemptive-signals", maxSignalsPerActivation: 20, messageHistoryLimit: 30, activationHistoryLimit: 6, maxHistoryMessageChars: 3000, maxHistoryActivationChars: 6000 }),
 );
 
 const ProviderSchema = z.object({
@@ -320,6 +324,10 @@ function externalizeProjectConfig(config: ProjectConfig): unknown {
   if (isPlainObject(scheduler)) {
     if (scheduler.kind === "nonpreemptive-signals") delete scheduler.kind;
     if (scheduler.maxSignalsPerActivation === 20) delete scheduler.maxSignalsPerActivation;
+    if (scheduler.messageHistoryLimit === 30) delete scheduler.messageHistoryLimit;
+    if (scheduler.activationHistoryLimit === 6) delete scheduler.activationHistoryLimit;
+    if (scheduler.maxHistoryMessageChars === 3000) delete scheduler.maxHistoryMessageChars;
+    if (scheduler.maxHistoryActivationChars === 6000) delete scheduler.maxHistoryActivationChars;
     if (Object.keys(scheduler).length === 0) delete out.scheduler;
   }
   return out;

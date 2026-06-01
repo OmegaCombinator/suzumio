@@ -495,6 +495,8 @@ Suzumio 会拒绝循环 import 和过深的 import 链，避免项目意外无�
 
 多数项目应省略 `scheduler`。默认行为是 signal-driven 且非抢占：idle agent 会因 pending signal 醒来，running agent 不会被打断。高级项目可以设置 `scheduler.kind` 或 `scheduler.maxSignalsPerActivation`；默认每次 activation 最多投递 20 个 pending signals。
 
+Activation prompt 会包含有界的连续上下文，而不是重放整个项目日志。默认最多包含 30 条最近可见消息、该 agent 的 6 次历史 activation 输出、每条历史消息 3000 字符、每段 activation 摘要 6000 字符。只有在项目确实需要更多上下文且模型窗口足够时，才覆盖 `scheduler.messageHistoryLimit`、`scheduler.activationHistoryLimit`、`scheduler.maxHistoryMessageChars` 或 `scheduler.maxHistoryActivationChars`。
+
 ## Backend Config
 
     backend:
