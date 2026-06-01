@@ -495,7 +495,7 @@ The backend object deep-merges, so `backend.image` remains from the profile whil
 
 Most projects should omit `scheduler`. The default is signal-driven and non-preemptive: idle agents wake for pending signals, and running agents are not interrupted. Advanced projects may set `scheduler.kind` or `scheduler.maxSignalsPerActivation`; the default signal batch size is 20.
 
-Activation prompts include bounded continuity context instead of replaying the entire project log. By default Suzumio includes up to 30 recent visible messages, 6 previous activation outputs for that agent, 3000 characters per history message, and 6000 characters per activation excerpt. Override `scheduler.messageHistoryLimit`, `scheduler.activationHistoryLimit`, `scheduler.maxHistoryMessageChars`, or `scheduler.maxHistoryActivationChars` only for projects that need more context and have enough model window.
+The Docker chat runner keeps per-agent session context in `/workspace/.suzumio/session-context.json` by default. The first full activation prompt remains anchored at the front of the model message list; each later activation appends the new prompt and recent assistant/tool records. When the estimated context grows too large, the runner summarizes older records, keeps the anchored first prompt, keeps the summary, and preserves recent records plus the new prompt. If `backend.runner.sessionContext.enabled` is set to `false`, scheduler-side bounded history is used instead: up to 30 recent visible messages, 6 previous activation outputs, 3000 characters per history message, and 6000 characters per activation excerpt.
 
 ## Backend Config
 
@@ -560,6 +560,8 @@ Activation prompts include bounded continuity context instead of replaying the e
                 - pm-main
 
 Model selection is explicit. Set `backend.runner.model` for a project-level selection, or set `agents.*.model` per agent. Presets with `model-list` expand to an ordered fallback list; the runner tries each concrete preset in order. In most configs, `model` is also the provider model id. Use `apiModel` only when you want the local preset name to differ from the provider-facing model id.
+
+Runner session context can be tuned with `backend.runner.sessionContext`. It is enabled by default. Supported fields are `enabled`, `compactAtTokens`, `keepRecentRecords`, `maxRecordChars`, and `maxSummaryChars`. If `compactAtTokens` is omitted, Suzumio uses 60% of the selected preset's `contextLimit`, or a conservative fallback when no context limit is configured.
 
 <div class="notice danger">
 

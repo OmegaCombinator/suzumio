@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { ProxyAgent, fetch as undiciFetch, type Dispatcher } from "undici";
@@ -16,10 +16,21 @@ type ToolCallLimiter = () => void;
 type EndActivationCallback = (output: string) => void;
 type ActivationEnded = () => boolean;
 type FetchWithDispatcher = (url: Parameters<typeof fetch>[0], init?: RequestInit & { dispatcher: Dispatcher }) => ReturnType<typeof fetch>;
+type SessionContextRecord = { role: "user" | "assistant"; content: string; createdAt: string };
+type SessionContextState = { version: 1; originalPrompt: string; summary?: string; records: SessionContextRecord[]; updatedAt?: string };
+type PreparedSessionContext = { enabled: boolean; state?: SessionContextState; firstPrompt: boolean };
 
 const fetchWithDispatcher = undiciFetch as unknown as FetchWithDispatcher;
 const webProxyDispatchers = new Map<string, ProxyAgent>();
 const EFFECTIVELY_UNBOUNDED_STEPS = 1_000_000;
+const SESSION_CONTEXT_VERSION = 1;
+const SESSION_CONTEXT_DIR = ".suzumio";
+const SESSION_CONTEXT_FILE = "session-context.json";
+const DEFAULT_SESSION_COMPACT_AT_TOKENS = 120_000;
+const DEFAULT_SESSION_KEEP_RECENT_RECORDS = 8;
+const DEFAULT_SESSION_MAX_RECORD_CHARS = 12_000;
+const DEFAULT_SESSION_MAX_SUMMARY_CHARS = 12_000;
+const SUMMARY_OUTPUT_TOKENS = 4_000;
 
 type RunnerToolContext = {
   project: string;
@@ -58,6 +69,8 @@ async function runAiWithModel(input: RunnerActivationInput, resolved: ResolvedRu
   const abortController = new AbortController();
   let activationEnded = false;
   let endActivationOutput: string | undefined;
+  const sessionContext = await prepareSessionContext(input, resolved);
+  const toolTranscript: string[] = [];
   const tools = await toAiTools(input, () => {
     toolCalls += 1;
     if (input.runner.maxToolCalls !== undefined && toolCalls > input.runner.maxToolCalls) throw new Error(`Exceeded maxToolCalls: ${input.runner.maxToolCalls}`);
@@ -65,8 +78,12 @@ async function runAiWithModel(input: RunnerActivationInput, resolved: ResolvedRu
     activationEnded = true;
     endActivationOutput = output;
     abortController.abort();
-  }, () => activationEnded);
-  const messages: ModelMessage[] = [{ role: "user", content: input.activation.prompt }];
+  }, () => activationEnded, (toolName, result) => {
+    toolTranscript.push(renderToolTranscript(toolName, result));
+  });
+  const messages = sessionContext.enabled && sessionContext.state
+    ? sessionMessages(input, sessionContext.state, sessionContext.firstPrompt)
+    : [{ role: "user", content: input.activation.prompt } satisfies ModelMessage];
   let text = "";
   const request = {
     model: resolved.languageModel as never,
@@ -86,20 +103,164 @@ async function runAiWithModel(input: RunnerActivationInput, resolved: ResolvedRu
   request.stopWhen = stepCountIs(input.runner.maxIterations ?? EFFECTIVELY_UNBOUNDED_STEPS);
   const result = streamText(request as never) as any;
   const output = (toolOutput?: string): RunnerActivationOutput => ({ text: text.trim() || toolOutput || "(model returned no text)", usage: { selectedModel: resolved.selectedPresetId, model: resolved.presetId, apiModel: resolved.apiModel } });
+  const finish = async (toolOutput?: string): Promise<RunnerActivationOutput> => {
+    const completed = output(toolOutput);
+    if (sessionContext.enabled && sessionContext.state) await saveSessionTurn(input, resolved, sessionContext.state, sessionContext.firstPrompt, completed.text, toolTranscript);
+    return completed;
+  };
   try {
     for await (const event of result.fullStream as AsyncIterable<any>) {
       if (event.type === "text-delta") text += event.text;
       if (event.type === "error") {
-        if (activationEnded && isAbortError(event.error)) return output(endActivationOutput);
+        if (activationEnded && isAbortError(event.error)) return await finish(endActivationOutput);
         throw event.error;
       }
-      if (endActivationOutput !== undefined) return output(endActivationOutput);
+      if (endActivationOutput !== undefined) return await finish(endActivationOutput);
     }
   } catch (error) {
-    if (activationEnded && isAbortError(error)) return output(endActivationOutput);
+    if (activationEnded && isAbortError(error)) return await finish(endActivationOutput);
     throw error;
   }
-  return output();
+  return await finish();
+}
+
+async function prepareSessionContext(input: RunnerActivationInput, resolved: ResolvedRunnerModel): Promise<PreparedSessionContext> {
+  if (input.runner.sessionContext?.enabled === false) return { enabled: false, firstPrompt: false };
+  const state = await compactSessionContext(input, resolved, await loadSessionContext(input), input.activation.prompt);
+  return { enabled: true, state, firstPrompt: isFirstPrompt(state, input.activation.prompt) };
+}
+
+async function loadSessionContext(input: RunnerActivationInput): Promise<SessionContextState> {
+  try {
+    const parsed = JSON.parse(await readFile(sessionContextPath(input), "utf8")) as Partial<SessionContextState>;
+    if (parsed.version === SESSION_CONTEXT_VERSION && typeof parsed.originalPrompt === "string" && Array.isArray(parsed.records)) {
+      return {
+        version: SESSION_CONTEXT_VERSION,
+        originalPrompt: parsed.originalPrompt,
+        summary: optionalString(parsed.summary),
+        records: parsed.records.filter(isSessionContextRecord),
+        updatedAt: optionalString(parsed.updatedAt),
+      };
+    }
+  } catch (error) {
+    if (!(error instanceof Error) || !errorMessage(error).includes("ENOENT")) throw error;
+  }
+  return { version: SESSION_CONTEXT_VERSION, originalPrompt: input.activation.prompt, records: [] };
+}
+
+async function saveSessionTurn(input: RunnerActivationInput, resolved: ResolvedRunnerModel, state: SessionContextState, firstPrompt: boolean, assistantText: string, toolTranscript: string[]): Promise<void> {
+  const records = [...state.records];
+  if (!firstPrompt) records.push({ role: "user", content: trimChars(input.activation.prompt, maxRecordChars(input)), createdAt: new Date().toISOString() });
+  records.push({ role: "assistant", content: trimChars(renderAssistantRecord(assistantText, toolTranscript), maxRecordChars(input)), createdAt: new Date().toISOString() });
+  await writeSessionContext(input, await compactSessionContext(input, resolved, { ...state, records, updatedAt: new Date().toISOString() }));
+}
+
+async function compactSessionContext(input: RunnerActivationInput, resolved: ResolvedRunnerModel, state: SessionContextState, currentPrompt?: string): Promise<SessionContextState> {
+  if (estimateSessionTokens(state, currentPrompt) <= compactAtTokens(input, resolved)) return state;
+  const keep = keepRecentRecords(input);
+  const head = keep === 0 ? state.records : state.records.slice(0, -keep);
+  const tail = keep === 0 ? [] : state.records.slice(-keep);
+  if (head.length === 0) return { ...state, records: tail };
+  return {
+    ...state,
+    summary: trimChars(await summarizeSessionContext(input, resolved, state.summary, head), maxSummaryChars(input)),
+    records: tail,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+async function summarizeSessionContext(input: RunnerActivationInput, resolved: ResolvedRunnerModel, previousSummary: string | undefined, records: SessionContextRecord[]): Promise<string> {
+  const prompt = [
+    "You are compacting a long-running autonomous agent session for future continuation.",
+    "Preserve the exact project goal, user constraints, current task, important decisions, file paths, commands, errors, artifact paths, verification facts, blockers, and next steps.",
+    "Remove chatter, acknowledgements, duplicated attempts, obsolete plans, and low-value tool noise. Do not mention that compaction happened.",
+    previousSummary ? `<previous-summary>\n${previousSummary}\n</previous-summary>` : undefined,
+    "<records>",
+    ...records.map((record) => `## ${record.role} ${record.createdAt}\n${record.content}`),
+    "</records>",
+  ].filter(Boolean).join("\n\n");
+  let text = "";
+  const result = streamText({
+    model: resolved.languageModel as never,
+    messages: [{ role: "user", content: prompt }],
+    temperature: resolved.preset.temperature,
+    topP: resolved.preset.topP,
+    topK: resolved.preset.topK,
+    maxOutputTokens: Math.min(resolved.preset.maxOutputTokens ?? SUMMARY_OUTPUT_TOKENS, SUMMARY_OUTPUT_TOKENS),
+    providerOptions: providerOptionsFor(resolved) as never,
+    headers: resolved.preset.headers,
+    maxRetries: 0,
+  } as never) as any;
+  for await (const event of result.fullStream as AsyncIterable<any>) {
+    if (event.type === "text-delta") text += event.text;
+    if (event.type === "error") throw event.error;
+  }
+  return text.trim() || previousSummary || "No durable session facts were recovered.";
+}
+
+function sessionMessages(input: RunnerActivationInput, state: SessionContextState, firstPrompt: boolean): ModelMessage[] {
+  const messages: ModelMessage[] = [{ role: "user", content: state.originalPrompt }];
+  if (state.summary) messages.push({ role: "user", content: `# Compacted Session Summary\n\n${state.summary}` });
+  for (const record of state.records) messages.push({ role: record.role, content: record.content });
+  if (!firstPrompt) messages.push({ role: "user", content: input.activation.prompt });
+  return messages;
+}
+
+async function writeSessionContext(input: RunnerActivationInput, state: SessionContextState): Promise<void> {
+  await mkdir(path.dirname(sessionContextPath(input)), { recursive: true });
+  await writeFile(sessionContextPath(input), JSON.stringify(state, null, 2) + "\n", "utf8");
+}
+
+function sessionContextPath(input: RunnerActivationInput): string {
+  return path.join(input.workspace, SESSION_CONTEXT_DIR, SESSION_CONTEXT_FILE);
+}
+
+function isSessionContextRecord(value: unknown): value is SessionContextRecord {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return (record.role === "user" || record.role === "assistant") && typeof record.content === "string" && typeof record.createdAt === "string";
+}
+
+function isFirstPrompt(state: SessionContextState, prompt: string): boolean {
+  return state.records.length === 0 && !state.summary && state.originalPrompt === prompt;
+}
+
+function estimateSessionTokens(state: SessionContextState, currentPrompt?: string): number {
+  return estimateTokens([state.originalPrompt, state.summary, ...state.records.map((record) => record.content), currentPrompt].filter(Boolean).join("\n"));
+}
+
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 4);
+}
+
+function compactAtTokens(input: RunnerActivationInput, resolved: ResolvedRunnerModel): number {
+  return input.runner.sessionContext?.compactAtTokens ?? (resolved.preset.contextLimit ? Math.floor(resolved.preset.contextLimit * 0.6) : DEFAULT_SESSION_COMPACT_AT_TOKENS);
+}
+
+function keepRecentRecords(input: RunnerActivationInput): number {
+  return input.runner.sessionContext?.keepRecentRecords ?? DEFAULT_SESSION_KEEP_RECENT_RECORDS;
+}
+
+function maxRecordChars(input: RunnerActivationInput): number {
+  return input.runner.sessionContext?.maxRecordChars ?? DEFAULT_SESSION_MAX_RECORD_CHARS;
+}
+
+function maxSummaryChars(input: RunnerActivationInput): number {
+  return input.runner.sessionContext?.maxSummaryChars ?? DEFAULT_SESSION_MAX_SUMMARY_CHARS;
+}
+
+function trimChars(text: string, maxChars: number): string {
+  const trimmed = text.trim();
+  if (trimmed.length <= maxChars) return trimmed;
+  return `${trimmed.slice(0, maxChars).trimEnd()}\n\n[truncated ${trimmed.length - maxChars} chars]`;
+}
+
+function renderAssistantRecord(text: string, toolTranscript: string[]): string {
+  return [text.trim(), toolTranscript.length ? ["# Tool Activity", ...toolTranscript].join("\n\n") : undefined].filter(Boolean).join("\n\n");
+}
+
+function renderToolTranscript(toolName: string, result: ToolResult): string {
+  return trimChars([`## ${toolName}${result.title ? `: ${result.title}` : ""}`, result.output].join("\n"), DEFAULT_SESSION_MAX_RECORD_CHARS);
 }
 
 function providerOptionsFor(resolved: ResolvedRunnerModel): JsonObject {
@@ -136,7 +297,7 @@ async function submitActivationOutput(input: RunnerActivationInput, output: Runn
   if (!response.ok) throw new Error((await response.text()) || `Activation output submit failed: ${response.status}`);
 }
 
-async function toAiTools(input: RunnerActivationInput, limitToolCall: ToolCallLimiter, endActivation: EndActivationCallback, activationEnded: ActivationEnded): Promise<Record<string, unknown>> {
+async function toAiTools(input: RunnerActivationInput, limitToolCall: ToolCallLimiter, endActivation: EndActivationCallback, activationEnded: ActivationEnded, recordToolResult?: (toolName: string, result: ToolResult) => void): Promise<Record<string, unknown>> {
   const result: Record<string, unknown> = {};
   const tools = await loadRunnerTools(input);
   const seenSafeNames = new Map<string, string>();
@@ -152,7 +313,9 @@ async function toAiTools(input: RunnerActivationInput, limitToolCall: ToolCallLi
         if (activationEnded()) return { title: "activation ended", output: "Activation already ended; tool call ignored." };
         limitToolCall();
         if (activationEnded()) return { title: "activation ended", output: "Activation already ended; tool call ignored." };
-        return callTool(input, registered, args, endActivation);
+        const toolResult = await callTool(input, registered, args, endActivation);
+        recordToolResult?.(registered.definition.name, toolResult);
+        return toolResult;
       },
     } as never);
   }

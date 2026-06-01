@@ -495,7 +495,7 @@ Suzumio 会拒绝循环 import 和过深的 import 链，避免项目意外无�
 
 多数项目应省略 `scheduler`。默认行为是 signal-driven 且非抢占：idle agent 会因 pending signal 醒来，running agent 不会被打断。高级项目可以设置 `scheduler.kind` 或 `scheduler.maxSignalsPerActivation`；默认每次 activation 最多投递 20 个 pending signals。
 
-Activation prompt 会包含有界的连续上下文，而不是重放整个项目日志。默认最多包含 30 条最近可见消息、该 agent 的 6 次历史 activation 输出、每条历史消息 3000 字符、每段 activation 摘要 6000 字符。只有在项目确实需要更多上下文且模型窗口足够时，才覆盖 `scheduler.messageHistoryLimit`、`scheduler.activationHistoryLimit`、`scheduler.maxHistoryMessageChars` 或 `scheduler.maxHistoryActivationChars`。
+Docker chat runner 默认在 `/workspace/.suzumio/session-context.json` 保存每个 agent 的 session context。第一次完整 activation prompt 会固定保留在模型消息列表最前面；之后每次 activation 只追加新的 prompt 和最近的 assistant/tool 记录。当估算 context 过大时，runner 会总结较旧记录，并保留固定的第一条 prompt、summary、最近记录和新的 prompt。如果把 `backend.runner.sessionContext.enabled` 设为 `false`，才回退到 scheduler 侧有界历史：最近 30 条可见消息、6 次历史 activation 输出、每条历史消息 3000 字符、每段 activation 摘要 6000 字符。
 
 ## Backend Config
 
@@ -560,6 +560,8 @@ Activation prompt 会包含有界的连续上下文，而不是重放整个项�
                 - pm-main
 
 Model 选择是显式的。可以在 `backend.runner.model` 设置项目级选择，或在 `agents.*.model` 为每个 agent 设置。带 `model-list` 的 preset 会展开成有序 fallback 列表；runner 会按顺序尝试其中的 concrete preset。多数配置里，`model` 同时也是 provider-facing model id。只有当本地 preset 名称需要和 provider API 模型名不同时，才使用 `apiModel`。
+
+Runner session context 可通过 `backend.runner.sessionContext` 调整，默认开启。支持字段包括 `enabled`、`compactAtTokens`、`keepRecentRecords`、`maxRecordChars` 和 `maxSummaryChars`。如果省略 `compactAtTokens`，Suzumio 会使用所选 preset 的 `contextLimit` 的 60%；没有配置 context limit 时使用保守 fallback。
 
 <div class="notice danger">
 

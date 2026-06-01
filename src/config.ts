@@ -100,6 +100,15 @@ const RunnerSchema = z
     maxToolCalls: z.number().int().positive().optional(),
     finalPrompt: z.string().optional(),
     models: ModelsSchema.optional(),
+    sessionContext: z
+      .object({
+        enabled: z.boolean().optional(),
+        compactAtTokens: z.number().int().positive().optional(),
+        keepRecentRecords: z.number().int().nonnegative().optional(),
+        maxRecordChars: z.number().int().positive().optional(),
+        maxSummaryChars: z.number().int().positive().optional(),
+      })
+      .optional(),
   })
   .default({ mode: "ai" });
 
