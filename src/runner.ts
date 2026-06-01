@@ -523,14 +523,16 @@ async function runShellExec(workspace: string, rawArgs: unknown): Promise<ToolRe
   const timeoutMs = boundedNumber(args.timeoutMs, 60_000, 300_000);
   const maxOutputBytes = boundedNumber(args.maxOutputBytes, 40_000, 200_000);
   return new Promise((resolve, reject) => {
-    const child = spawn("bash", ["-lc", command], { cwd, env: process.env });
+    const child = spawn("bash", ["-lc", command], { cwd, env: process.env, detached: true });
     let stdout = "";
     let stderr = "";
     let truncated = false;
     let timedOut = false;
+    let killTimer: NodeJS.Timeout | undefined;
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill("SIGTERM");
+      killShellProcessGroup(child.pid, "SIGTERM", child);
+      killTimer = setTimeout(() => killShellProcessGroup(child.pid, "SIGKILL", child), 2_000);
     }, timeoutMs);
     const append = (kind: "stdout" | "stderr", chunk: Buffer) => {
       const used = Buffer.byteLength(stdout) + Buffer.byteLength(stderr);
@@ -549,10 +551,24 @@ async function runShellExec(workspace: string, rawArgs: unknown): Promise<ToolRe
     child.on("error", reject);
     child.on("close", (exitCode, signal) => {
       clearTimeout(timer);
+      if (killTimer) clearTimeout(killTimer);
       const output = [`$ ${command}`, stdout.trim() ? `\n[stdout]\n${stdout.trimEnd()}` : "", stderr.trim() ? `\n[stderr]\n${stderr.trimEnd()}` : "", truncated ? "\n[truncated]" : ""].join("");
       resolve({ title: "shell exec", output, metadata: { exitCode, signal, cwd, timedOut, truncated } });
     });
   });
+}
+
+function killShellProcessGroup(pid: number | undefined, signal: NodeJS.Signals, child: ReturnType<typeof spawn>): void {
+  if (!pid) {
+    child.kill(signal);
+    return;
+  }
+  try {
+    process.kill(-pid, signal);
+  } catch (error) {
+    const code = error && typeof error === "object" && "code" in error ? String((error as { code?: unknown }).code) : "";
+    if (code !== "ESRCH") child.kill(signal);
+  }
 }
 
 async function runWebFetch(rawArgs: unknown): Promise<ToolResult> {
