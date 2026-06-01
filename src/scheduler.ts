@@ -65,8 +65,8 @@ function renderActivationPrompt(config: ProjectConfig, agent: AgentRecord, agent
     isFirstActivation ? renderBootstrapContext(config, agent, mountedInputs) : renderContinueContext(),
     isFirstActivation ? renderAgentRoster(agents) : undefined,
     isFirstActivation ? renderSharedArtifacts(agent, agents) : undefined,
-    useRunnerSessionContext(config) && !isFirstActivation ? undefined : renderConversationHistory(config, messages),
-    useRunnerSessionContext(config) && !isFirstActivation ? undefined : renderActivationHistory(config, activations),
+    !isFirstActivation ? undefined : renderConversationHistory(config, messages),
+    !isFirstActivation ? undefined : renderActivationHistory(config, activations),
     "# New Signals",
     ...signals.map(renderSignal),
     renderToolAndReportingContract(agent, agents),
@@ -208,10 +208,6 @@ function agentSpec(config: ProjectConfig, agent: AgentRecord): AgentConfig | und
 
 function signalsPerActivation(config: ProjectConfig): number {
   return config.scheduler.maxSignalsPerActivation ?? config.scheduler.maxPromptMessages ?? 20;
-}
-
-function useRunnerSessionContext(config: ProjectConfig): boolean {
-  return config.backend.runner.sessionContext?.enabled !== false;
 }
 
 function messageHistoryLimit(config: ProjectConfig): number {

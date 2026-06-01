@@ -16,9 +16,9 @@ type ToolCallLimiter = () => void;
 type EndActivationCallback = (output: string) => void;
 type ActivationEnded = () => boolean;
 type FetchWithDispatcher = (url: Parameters<typeof fetch>[0], init?: RequestInit & { dispatcher: Dispatcher }) => ReturnType<typeof fetch>;
-type SessionContextRecord = { role: "user" | "assistant"; content: string; createdAt: string };
-type SessionContextState = { version: 1; originalPrompt: string; summary?: string; records: SessionContextRecord[]; updatedAt?: string };
-type PreparedSessionContext = { enabled: boolean; state?: SessionContextState; firstPrompt: boolean };
+type TokenUsage = { input?: number; output?: number; total?: number; reasoning?: number; cacheRead?: number; cacheWrite?: number };
+type SessionContextTurn = { userPrompt?: string; assistant: string; toolActivity?: string[]; usage?: TokenUsage; createdAt: string };
+type SessionContextState = { version: 1; originalPrompt: string; summary?: string; turns: SessionContextTurn[]; updatedAt?: string };
 
 const fetchWithDispatcher = undiciFetch as unknown as FetchWithDispatcher;
 const webProxyDispatchers = new Map<string, ProxyAgent>();
@@ -26,11 +26,49 @@ const EFFECTIVELY_UNBOUNDED_STEPS = 1_000_000;
 const SESSION_CONTEXT_VERSION = 1;
 const SESSION_CONTEXT_DIR = ".suzumio";
 const SESSION_CONTEXT_FILE = "session-context.json";
-const DEFAULT_SESSION_COMPACT_AT_TOKENS = 120_000;
-const DEFAULT_SESSION_KEEP_RECENT_RECORDS = 8;
-const DEFAULT_SESSION_MAX_RECORD_CHARS = 12_000;
-const DEFAULT_SESSION_MAX_SUMMARY_CHARS = 12_000;
+const DEFAULT_CONTEXT_LIMIT = 120_000;
+const COMPACTION_BUFFER = 20_000;
+const DEFAULT_TAIL_TURNS = 2;
+const MAX_TURN_CHARS = 20_000;
+const MAX_TOOL_CHARS = 2_000;
+const MAX_SUMMARY_CHARS = 20_000;
 const SUMMARY_OUTPUT_TOKENS = 4_000;
+const SUMMARY_TEMPLATE = `Output exactly the Markdown structure shown inside <template> and keep the section order unchanged. Do not include the <template> tags in your response.
+<template>
+## Goal
+- [single-sentence task summary]
+
+## Constraints & Preferences
+- [user constraints, preferences, specs, or "(none)"]
+
+## Progress
+### Done
+- [completed work or "(none)"]
+
+### In Progress
+- [current work or "(none)"]
+
+### Blocked
+- [blockers or "(none)"]
+
+## Key Decisions
+- [decision and why, or "(none)"]
+
+## Next Steps
+- [ordered next actions or "(none)"]
+
+## Critical Context
+- [important technical facts, errors, open questions, or "(none)"]
+
+## Relevant Files
+- [file or directory path: why it matters, or "(none)"]
+</template>
+
+Rules:
+- Keep every section, even when empty.
+- Use terse bullets, not prose paragraphs.
+- Preserve exact file paths, commands, error strings, and identifiers when known.
+- Do not mention the summary process or that context was compacted.`;
 
 type RunnerToolContext = {
   project: string;
@@ -69,7 +107,8 @@ async function runAiWithModel(input: RunnerActivationInput, resolved: ResolvedRu
   const abortController = new AbortController();
   let activationEnded = false;
   let endActivationOutput: string | undefined;
-  const sessionContext = await prepareSessionContext(input, resolved);
+  const sessionContext = await loadSessionContext(input);
+  const firstPrompt = isFirstPrompt(sessionContext, input.activation.prompt);
   const toolTranscript: string[] = [];
   const tools = await toAiTools(input, () => {
     toolCalls += 1;
@@ -81,10 +120,9 @@ async function runAiWithModel(input: RunnerActivationInput, resolved: ResolvedRu
   }, () => activationEnded, (toolName, result) => {
     toolTranscript.push(renderToolTranscript(toolName, result));
   });
-  const messages = sessionContext.enabled && sessionContext.state
-    ? sessionMessages(input, sessionContext.state, sessionContext.firstPrompt)
-    : [{ role: "user", content: input.activation.prompt } satisfies ModelMessage];
+  const messages = sessionMessages(input, sessionContext, firstPrompt);
   let text = "";
+  let usage: TokenUsage | undefined;
   const request = {
     model: resolved.languageModel as never,
     messages,
@@ -102,15 +140,17 @@ async function runAiWithModel(input: RunnerActivationInput, resolved: ResolvedRu
   } as Record<string, unknown>;
   request.stopWhen = stepCountIs(input.runner.maxIterations ?? EFFECTIVELY_UNBOUNDED_STEPS);
   const result = streamText(request as never) as any;
-  const output = (toolOutput?: string): RunnerActivationOutput => ({ text: text.trim() || toolOutput || "(model returned no text)", usage: { selectedModel: resolved.selectedPresetId, model: resolved.presetId, apiModel: resolved.apiModel } });
+  const output = (toolOutput?: string): RunnerActivationOutput => ({ text: text.trim() || toolOutput || "(model returned no text)", usage: { selectedModel: resolved.selectedPresetId, model: resolved.presetId, apiModel: resolved.apiModel, ...(usage ? { tokens: usage as unknown as JsonObject } : {}) } });
   const finish = async (toolOutput?: string): Promise<RunnerActivationOutput> => {
     const completed = output(toolOutput);
-    if (sessionContext.enabled && sessionContext.state) await saveSessionTurn(input, resolved, sessionContext.state, sessionContext.firstPrompt, completed.text, toolTranscript);
+    await saveSessionTurn(input, resolved, sessionContext, firstPrompt, completed.text, toolTranscript, usage);
     return completed;
   };
   try {
     for await (const event of result.fullStream as AsyncIterable<any>) {
       if (event.type === "text-delta") text += event.text;
+      if (event.type === "finish-step") usage = parseUsage(event.usage) ?? usage;
+      if (event.type === "finish") usage = parseUsage(event.totalUsage) ?? usage;
       if (event.type === "error") {
         if (activationEnded && isAbortError(event.error)) return await finish(endActivationOutput);
         throw event.error;
@@ -124,61 +164,74 @@ async function runAiWithModel(input: RunnerActivationInput, resolved: ResolvedRu
   return await finish();
 }
 
-async function prepareSessionContext(input: RunnerActivationInput, resolved: ResolvedRunnerModel): Promise<PreparedSessionContext> {
-  if (input.runner.sessionContext?.enabled === false) return { enabled: false, firstPrompt: false };
-  const state = await compactSessionContext(input, resolved, await loadSessionContext(input), input.activation.prompt);
-  return { enabled: true, state, firstPrompt: isFirstPrompt(state, input.activation.prompt) };
-}
-
 async function loadSessionContext(input: RunnerActivationInput): Promise<SessionContextState> {
   try {
     const parsed = JSON.parse(await readFile(sessionContextPath(input), "utf8")) as Partial<SessionContextState>;
-    if (parsed.version === SESSION_CONTEXT_VERSION && typeof parsed.originalPrompt === "string" && Array.isArray(parsed.records)) {
+    if (parsed.version === SESSION_CONTEXT_VERSION && typeof parsed.originalPrompt === "string" && Array.isArray(parsed.turns)) {
       return {
         version: SESSION_CONTEXT_VERSION,
         originalPrompt: parsed.originalPrompt,
         summary: optionalString(parsed.summary),
-        records: parsed.records.filter(isSessionContextRecord),
+        turns: parsed.turns.filter(isSessionContextTurn),
         updatedAt: optionalString(parsed.updatedAt),
       };
     }
   } catch (error) {
     if (!(error instanceof Error) || !errorMessage(error).includes("ENOENT")) throw error;
   }
-  return { version: SESSION_CONTEXT_VERSION, originalPrompt: input.activation.prompt, records: [] };
+  return { version: SESSION_CONTEXT_VERSION, originalPrompt: input.activation.prompt, turns: [] };
 }
 
-async function saveSessionTurn(input: RunnerActivationInput, resolved: ResolvedRunnerModel, state: SessionContextState, firstPrompt: boolean, assistantText: string, toolTranscript: string[]): Promise<void> {
-  const records = [...state.records];
-  if (!firstPrompt) records.push({ role: "user", content: trimChars(input.activation.prompt, maxRecordChars(input)), createdAt: new Date().toISOString() });
-  records.push({ role: "assistant", content: trimChars(renderAssistantRecord(assistantText, toolTranscript), maxRecordChars(input)), createdAt: new Date().toISOString() });
-  await writeSessionContext(input, await compactSessionContext(input, resolved, { ...state, records, updatedAt: new Date().toISOString() }));
+async function saveSessionTurn(input: RunnerActivationInput, resolved: ResolvedRunnerModel, state: SessionContextState, firstPrompt: boolean, assistantText: string, toolTranscript: string[], usage: TokenUsage | undefined): Promise<void> {
+  const next: SessionContextState = {
+    ...state,
+    turns: [
+      ...state.turns,
+      {
+        userPrompt: firstPrompt ? undefined : trimChars(input.activation.prompt, MAX_TURN_CHARS),
+        assistant: trimChars(assistantText, MAX_TURN_CHARS),
+        toolActivity: toolTranscript.length ? toolTranscript.map((item) => trimChars(item, MAX_TOOL_CHARS)) : undefined,
+        usage,
+        createdAt: new Date().toISOString(),
+      },
+    ],
+    updatedAt: new Date().toISOString(),
+  };
+  await writeSessionContext(input, usage && isOverflow(usage, resolved) ? await compactSessionContext(input, resolved, next) : next);
 }
 
-async function compactSessionContext(input: RunnerActivationInput, resolved: ResolvedRunnerModel, state: SessionContextState, currentPrompt?: string): Promise<SessionContextState> {
-  if (estimateSessionTokens(state, currentPrompt) <= compactAtTokens(input, resolved)) return state;
-  const keep = keepRecentRecords(input);
-  const head = keep === 0 ? state.records : state.records.slice(0, -keep);
-  const tail = keep === 0 ? [] : state.records.slice(-keep);
-  if (head.length === 0) return { ...state, records: tail };
+async function compactSessionContext(input: RunnerActivationInput, resolved: ResolvedRunnerModel, state: SessionContextState): Promise<SessionContextState> {
+  const head = state.turns.slice(0, -DEFAULT_TAIL_TURNS);
+  const tail = state.turns.slice(-DEFAULT_TAIL_TURNS);
+  if (head.length === 0) return { ...state, turns: tail };
   return {
     ...state,
-    summary: trimChars(await summarizeSessionContext(input, resolved, state.summary, head), maxSummaryChars(input)),
-    records: tail,
+    summary: trimChars(await summarizeSessionContext(input, resolved, state.summary, state.originalPrompt, head), MAX_SUMMARY_CHARS),
+    turns: tail,
     updatedAt: new Date().toISOString(),
   };
 }
 
-async function summarizeSessionContext(input: RunnerActivationInput, resolved: ResolvedRunnerModel, previousSummary: string | undefined, records: SessionContextRecord[]): Promise<string> {
+async function summarizeSessionContext(input: RunnerActivationInput, resolved: ResolvedRunnerModel, previousSummary: string | undefined, originalPrompt: string, turns: SessionContextTurn[]): Promise<string> {
+  const anchor = previousSummary
+    ? [
+        "Update the anchored summary below using the conversation history above.",
+        "Preserve still-true details, remove stale details, and merge in the new facts.",
+        "<previous-summary>",
+        previousSummary,
+        "</previous-summary>",
+      ].join("\n")
+    : "Create a new anchored summary from the conversation history above.";
   const prompt = [
     "You are compacting a long-running autonomous agent session for future continuation.",
-    "Preserve the exact project goal, user constraints, current task, important decisions, file paths, commands, errors, artifact paths, verification facts, blockers, and next steps.",
-    "Remove chatter, acknowledgements, duplicated attempts, obsolete plans, and low-value tool noise. Do not mention that compaction happened.",
-    previousSummary ? `<previous-summary>\n${previousSummary}\n</previous-summary>` : undefined,
-    "<records>",
-    ...records.map((record) => `## ${record.role} ${record.createdAt}\n${record.content}`),
-    "</records>",
-  ].filter(Boolean).join("\n\n");
+    "Preserve the exact target, constraints, proof state, important lemmas, computations, file paths, commands, errors, artifact paths, verification facts, blockers, and next steps. Remove chatter and duplicated attempts.",
+    anchor,
+    SUMMARY_TEMPLATE,
+    "# Original Prompt",
+    originalPrompt,
+    "# Conversation History",
+    ...turns.map(renderTurnForSummary),
+  ].join("\n\n");
   let text = "";
   const result = streamText({
     model: resolved.languageModel as never,
@@ -201,7 +254,10 @@ async function summarizeSessionContext(input: RunnerActivationInput, resolved: R
 function sessionMessages(input: RunnerActivationInput, state: SessionContextState, firstPrompt: boolean): ModelMessage[] {
   const messages: ModelMessage[] = [{ role: "user", content: state.originalPrompt }];
   if (state.summary) messages.push({ role: "user", content: `# Compacted Session Summary\n\n${state.summary}` });
-  for (const record of state.records) messages.push({ role: record.role, content: record.content });
+  for (const turn of state.turns) {
+    if (turn.userPrompt) messages.push({ role: "user", content: turn.userPrompt });
+    messages.push({ role: "assistant", content: renderTurnAssistant(turn) });
+  }
   if (!firstPrompt) messages.push({ role: "user", content: input.activation.prompt });
   return messages;
 }
@@ -215,38 +271,50 @@ function sessionContextPath(input: RunnerActivationInput): string {
   return path.join(input.workspace, SESSION_CONTEXT_DIR, SESSION_CONTEXT_FILE);
 }
 
-function isSessionContextRecord(value: unknown): value is SessionContextRecord {
+function isSessionContextTurn(value: unknown): value is SessionContextTurn {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const record = value as Record<string, unknown>;
-  return (record.role === "user" || record.role === "assistant") && typeof record.content === "string" && typeof record.createdAt === "string";
+  const turn = value as Record<string, unknown>;
+  return (turn.userPrompt === undefined || typeof turn.userPrompt === "string") && typeof turn.assistant === "string" && typeof turn.createdAt === "string" && (turn.toolActivity === undefined || Array.isArray(turn.toolActivity));
 }
 
 function isFirstPrompt(state: SessionContextState, prompt: string): boolean {
-  return state.records.length === 0 && !state.summary && state.originalPrompt === prompt;
+  return state.turns.length === 0 && !state.summary && state.originalPrompt === prompt;
 }
 
-function estimateSessionTokens(state: SessionContextState, currentPrompt?: string): number {
-  return estimateTokens([state.originalPrompt, state.summary, ...state.records.map((record) => record.content), currentPrompt].filter(Boolean).join("\n"));
+function isOverflow(usage: TokenUsage, resolved: ResolvedRunnerModel): boolean {
+  return totalTokens(usage) >= usableContextTokens(resolved);
 }
 
-function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4);
+function usableContextTokens(resolved: ResolvedRunnerModel): number {
+  const context = resolved.preset.contextLimit ?? DEFAULT_CONTEXT_LIMIT;
+  const reserved = Math.min(COMPACTION_BUFFER, resolved.preset.maxOutputTokens ?? SUMMARY_OUTPUT_TOKENS);
+  return Math.max(0, context - reserved);
 }
 
-function compactAtTokens(input: RunnerActivationInput, resolved: ResolvedRunnerModel): number {
-  return input.runner.sessionContext?.compactAtTokens ?? (resolved.preset.contextLimit ? Math.floor(resolved.preset.contextLimit * 0.6) : DEFAULT_SESSION_COMPACT_AT_TOKENS);
+function totalTokens(usage: TokenUsage): number {
+  return usage.total ?? (usage.input ?? 0) + (usage.output ?? 0) + (usage.reasoning ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0);
 }
 
-function keepRecentRecords(input: RunnerActivationInput): number {
-  return input.runner.sessionContext?.keepRecentRecords ?? DEFAULT_SESSION_KEEP_RECENT_RECORDS;
-}
-
-function maxRecordChars(input: RunnerActivationInput): number {
-  return input.runner.sessionContext?.maxRecordChars ?? DEFAULT_SESSION_MAX_RECORD_CHARS;
-}
-
-function maxSummaryChars(input: RunnerActivationInput): number {
-  return input.runner.sessionContext?.maxSummaryChars ?? DEFAULT_SESSION_MAX_SUMMARY_CHARS;
+function parseUsage(value: unknown): TokenUsage | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const item = value as {
+    inputTokens?: number;
+    outputTokens?: number;
+    totalTokens?: number;
+    reasoningTokens?: number;
+    cachedInputTokens?: number;
+    inputTokenDetails?: { cacheReadTokens?: number; cacheWriteTokens?: number };
+    outputTokenDetails?: { reasoningTokens?: number };
+  };
+  const usage = {
+    input: item.inputTokens,
+    output: item.outputTokens,
+    total: item.totalTokens,
+    reasoning: item.outputTokenDetails?.reasoningTokens ?? item.reasoningTokens,
+    cacheRead: item.inputTokenDetails?.cacheReadTokens ?? item.cachedInputTokens,
+    cacheWrite: item.inputTokenDetails?.cacheWriteTokens,
+  } satisfies TokenUsage;
+  return Object.values(usage).some((item) => item !== undefined) ? usage : undefined;
 }
 
 function trimChars(text: string, maxChars: number): string {
@@ -255,12 +323,22 @@ function trimChars(text: string, maxChars: number): string {
   return `${trimmed.slice(0, maxChars).trimEnd()}\n\n[truncated ${trimmed.length - maxChars} chars]`;
 }
 
-function renderAssistantRecord(text: string, toolTranscript: string[]): string {
-  return [text.trim(), toolTranscript.length ? ["# Tool Activity", ...toolTranscript].join("\n\n") : undefined].filter(Boolean).join("\n\n");
+function renderTurnAssistant(turn: SessionContextTurn): string {
+  return [turn.assistant, turn.toolActivity?.length ? ["# Tool Activity", ...turn.toolActivity].join("\n\n") : undefined].filter(Boolean).join("\n\n");
+}
+
+function renderTurnForSummary(turn: SessionContextTurn): string {
+  return [
+    `## Turn ${turn.createdAt}`,
+    turn.userPrompt ? `### User\n${turn.userPrompt}` : undefined,
+    `### Assistant\n${turn.assistant}`,
+    turn.toolActivity?.length ? ["### Tool Activity", ...turn.toolActivity].join("\n\n") : undefined,
+    turn.usage ? `### Token Usage\n${JSON.stringify(turn.usage)}` : undefined,
+  ].filter(Boolean).join("\n\n");
 }
 
 function renderToolTranscript(toolName: string, result: ToolResult): string {
-  return trimChars([`## ${toolName}${result.title ? `: ${result.title}` : ""}`, result.output].join("\n"), DEFAULT_SESSION_MAX_RECORD_CHARS);
+  return trimChars([`## ${toolName}${result.title ? `: ${result.title}` : ""}`, result.output].join("\n"), MAX_TOOL_CHARS);
 }
 
 function providerOptionsFor(resolved: ResolvedRunnerModel): JsonObject {

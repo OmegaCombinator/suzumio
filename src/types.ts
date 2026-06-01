@@ -71,15 +71,6 @@ export interface RunnerConfig {
   maxToolCalls?: number;
   finalPrompt?: string;
   models?: ModelRegistryConfig;
-  sessionContext?: RunnerSessionContextConfig;
-}
-
-export interface RunnerSessionContextConfig {
-  enabled?: boolean;
-  compactAtTokens?: number;
-  keepRecentRecords?: number;
-  maxRecordChars?: number;
-  maxSummaryChars?: number;
 }
 
 export interface ModelRegistryConfig {
