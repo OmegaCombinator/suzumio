@@ -46,6 +46,7 @@ The current API is intended for local or trusted-network use. User-facing API au
 | `GET`  | `/api/projects/:project/messages?limit=100`   | Recent messages.                                               |
 | `GET`  | `/api/projects/:project/events?limit=200`     | Recent events.                                                 |
 | `GET`  | `/api/projects/:project/activations?limit=100` | Recent activations.                                            |
+| `GET`  | `/api/projects/:project/activations/:id/context` | Scheduler prompt plus the model message context snapshot for one activation. |
 | `GET`  | `/api/projects/:project/tool-calls?limit=100` | Recent tool calls.                                             |
 | `GET`  | `/api/projects/:project/config/resolved`      | Resolved YAML config as plain text.                            |
 | `GET`  | `/api/projects/:project/report`               | Final report text if submitted, otherwise a short placeholder. |
@@ -85,6 +86,7 @@ The Docker runner presents all model-facing tools. The controller provides suppo
 | `POST` | `/runner/tool-calls/finish`           | Mark a tool call completed or failed after verifying it belongs to this agent activation.                  |
 | `POST` | `/runner/signals`                     | Let runner-side or local toolpack code create a pending signal or closed effect.                     |
 | `POST` | `/toolpacks/:toolpackId/support`      | Dispatch controller-side support for built-in or local toolpacks.                                    |
+| `POST` | `/activation-context`                 | Submit the model message context snapshot for a running activation.                                  |
 | `POST` | `/activation-output`                  | Submit final activation text and usage metadata.                                                        |
 
 Support requests include `project`, `agentId`, `activationId`, and the agent private `token`. Toolpack support also includes the tool name and input:
@@ -170,6 +172,10 @@ The first example creates pending work for `pm`. The second records a closed use
 
 The backend marks the activation complete only after this authenticated submission. `/activation/input.json` is a read-only input/debug contract; activation output is not read from a container-writable file.
 
+### `POST /activation-context`
+
+The Docker chat runner submits a context snapshot immediately before the main model call. The public activation context API uses this to show exactly what messages were sent to the model. Older activations that predate this field fall back to the scheduler activation prompt.
+
 ## Core Tool Inputs
 
 ### `messages.send`
@@ -227,6 +233,6 @@ Fetches an HTTP(S) URL from inside the Docker runner container. `format: "text"`
 
 ## WebUI
 
-The root path `/` serves the Preact-based WebUI built from `webui/`. It calls the API routes above and refreshes periodically. For WebUI development, run `npm run webui:dev` and open `http://127.0.0.1:5173`; Vite proxies `/api` and `/health` to the backend on `39400`. The control room includes project selection, status actions, message composition, agent roster, messages, activations, tool calls, event timeline, resolved YAML, and submitted report views.
+The root path `/` serves the Preact-based WebUI built from `webui/`. It calls the API routes above and refreshes periodically. For WebUI development, run `npm run webui:dev` and open `http://127.0.0.1:5173`; Vite proxies `/api` and `/health` to the backend on `39400`. The control room includes project selection, status actions, message composition, agent roster, messages, activations, per-activation model context snapshots, tool calls, event timeline, resolved YAML, and submitted report views. The project overview refreshes as a lightweight summary; large logs, config, events, tool calls, and context payloads are loaded on demand.
 
 <div class="footer">Next: <a href="roadmap.html">Roadmap</a>.</div>

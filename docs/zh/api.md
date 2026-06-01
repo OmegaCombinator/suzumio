@@ -46,6 +46,7 @@ lead: "HTTP server 暴露项目观测、用户控制动作、SSE 事件流，以
 | `GET` | `/api/projects/:project/messages?limit=100`   | 近期消息。                                      |
 | `GET` | `/api/projects/:project/events?limit=200`     | 近期事件。                                      |
 | `GET` | `/api/projects/:project/activations?limit=100` | 近期 activation。                               |
+| `GET` | `/api/projects/:project/activations/:id/context` | 单个 activation 的 scheduler prompt 和模型消息上下文快照。 |
 | `GET` | `/api/projects/:project/tool-calls?limit=100` | 近期工具调用。                                  |
 | `GET` | `/api/projects/:project/config/resolved`      | Resolved YAML config，plain text。              |
 | `GET` | `/api/projects/:project/report`               | Submitted final report 文本；未提交时返回提示。 |
@@ -85,6 +86,7 @@ Docker runner 把所有模型可见工具展示给模型。Controller 提供 sup
 | `POST` | `/runner/tool-calls/finish`           | 校验 tool call 属于当前 agent activation，然后标记 completed 或 failed。                    |
 | `POST` | `/runner/signals`                     | 允许 runner-side 或 local toolpack 代码创建 pending signal 或 closed effect。         |
 | `POST` | `/toolpacks/:toolpackId/support`      | 分发 built-in 或 local toolpack 的 controller-side support。                          |
+| `POST` | `/activation-context`                 | 提交 running activation 的模型消息上下文快照。                                        |
 | `POST` | `/activation-output`                  | 提交最终 activation 文本和 usage metadata。                                           |
 
 Support 请求包含 `project`、`agentId`、`activationId` 和 agent private `token`。Toolpack support 还包含工具名和 input：
@@ -170,6 +172,10 @@ Local runner module 和 controller module 都会收到带 `recordSignal` 的 con
 
 Backend 只有在收到这个已鉴权提交后才把 activation 标记为完成。`/activation/input.json` 是只读输入和调试 contract；activation output 不再从容器可写文件读取。
 
+### `POST /activation-context`
+
+Docker chat runner 会在主模型调用前提交 context snapshot。公开的 activation context API 用它展示实际发送给模型的 messages。旧 activation 没有该字段时，会回退显示 scheduler activation prompt。
+
 ## Core Tool Inputs
 
 ### `messages.send`
@@ -227,6 +233,6 @@ Backend 只有在收到这个已鉴权提交后才把 activation 标记为完成
 
 ## WebUI
 
-根路径 `/` 提供由 `webui/` 构建的 Preact WebUI。它调用上面的 API routes 并定期刷新。开发 WebUI 时，运行 `npm run webui:dev` 并打开 `http://127.0.0.1:5173`；Vite 会把 `/api` 和 `/health` 代理到 `39400` 上的 backend。Control room 包含项目选择、状态操作、消息编辑、agent roster、messages、activations、tool calls、event timeline、resolved YAML 和 submitted report 视图。
+根路径 `/` 提供由 `webui/` 构建的 Preact WebUI。它调用上面的 API routes 并定期刷新。开发 WebUI 时，运行 `npm run webui:dev` 并打开 `http://127.0.0.1:5173`；Vite 会把 `/api` 和 `/health` 代理到 `39400` 上的 backend。Control room 包含项目选择、状态操作、消息编辑、agent roster、messages、activations、单次 activation 的模型上下文快照、tool calls、event timeline、resolved YAML 和 submitted report 视图。项目 overview 只刷新轻量 summary；大型 logs、config、events、tool calls 和 context payload 都按需加载。
 
 <div class="footer">下一步：<a href="roadmap.html">路线图</a>。</div>

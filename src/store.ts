@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import YAML from "yaml";
 import { createId, nowIso } from "./id.js";
 import { agentPaths, ensureProjectDirs, projectPaths, suzumioRoot, type ProjectPaths } from "./paths.js";
-import type { ActivationRecord, AgentRecord, JsonObject, MessagePriority, MessageRecord, ProjectConfig, ProjectStatus, RunnerActivationOutput, SignalRecord } from "./types.js";
+import type { ActivationContextSnapshot, ActivationRecord, AgentRecord, JsonObject, MessagePriority, MessageRecord, ProjectConfig, ProjectStatus, RunnerActivationOutput, SignalRecord } from "./types.js";
 
 export class ProjectStore {
   readonly paths: ProjectPaths;
@@ -164,6 +164,12 @@ export class ProjectStore {
     }
   }
 
+  setActivationContext(activationId: string, context: ActivationContextSnapshot): void {
+    const activation = this.activation(activationId);
+    this.db.prepare("UPDATE activations SET context_json = ? WHERE id = ? AND project = ?").run(JSON.stringify(context), activationId, this.project);
+    this.appendEvent("activation.context_recorded", { activationId, agentId: activation.agentId, messageCount: context.messageCount, totalChars: context.totalChars });
+  }
+
   failActivation(activationId: string, error: string): void {
     const activation = this.activation(activationId);
     if (activation.status === "completed" || activation.status === "failed" || activation.status === "cancelled") return;
@@ -209,6 +215,16 @@ export class ProjectStore {
 
   listToolCalls(limit = 100): Record<string, unknown>[] {
     return this.db.prepare("SELECT * FROM tool_calls WHERE project = ? ORDER BY created_at DESC LIMIT ?").all(this.project, limit) as Record<string, unknown>[];
+  }
+
+  projectStats(): Record<string, number> {
+    const messageCount = countRows(this.db, "messages", this.project);
+    const activationCount = countRows(this.db, "activations", this.project);
+    const failedActivationCount = countRows(this.db, "activations", this.project, "status = 'failed'");
+    const runningActivationCount = countRows(this.db, "activations", this.project, "status = 'running'");
+    const toolCallCount = countRows(this.db, "tool_calls", this.project);
+    const eventCount = countRows(this.db, "events", this.project);
+    return { messageCount, activationCount, failedActivationCount, runningActivationCount, toolCallCount, eventCount };
   }
 
   recordSignal(input: { kind: string; sourceAgent?: string; sourceActivation?: string; targetAgent?: string; targetChannel?: string; priority?: MessagePriority; payload?: JsonObject; status?: "pending" | "closed"; usefulEffect?: boolean }): SignalRecord[] {
@@ -313,6 +329,7 @@ export class ProjectStore {
     if (this.columnExists("signals", "source_turn")) this.db.exec("UPDATE signals SET source_activation = source_turn WHERE source_activation IS NULL AND source_turn IS NOT NULL");
     this.addColumnIfMissing("signals", "delivered_activation_id", "TEXT");
     if (this.columnExists("signals", "delivered_turn_id")) this.db.exec("UPDATE signals SET delivered_activation_id = delivered_turn_id WHERE delivered_activation_id IS NULL AND delivered_turn_id IS NOT NULL");
+    this.addColumnIfMissing("activations", "context_json", "TEXT");
 
   }
 
@@ -397,10 +414,15 @@ function messageFromRow(row: DbMessage): MessageRecord {
   return { id: row.id, project: row.project, sender: row.sender, recipient: row.recipient ?? undefined, channel: row.channel ?? undefined, priority: row.priority, body: row.body, createdAt: row.created_at };
 }
 
-type DbActivation = { id: string; project: string; agent_id: string; status: ActivationRecord["status"]; prompt: string; input_path: string; output_path: string; container_name: string | null; started_at: string; completed_at: string | null; text: string | null; error: string | null; emitted_messages: number; usage_json: string | null };
+type DbActivation = { id: string; project: string; agent_id: string; status: ActivationRecord["status"]; prompt: string; input_path: string; output_path: string; container_name: string | null; started_at: string; completed_at: string | null; text: string | null; error: string | null; emitted_messages: number; usage_json: string | null; context_json: string | null };
 
 function activationFromRow(row: DbActivation): ActivationRecord {
-  return { id: row.id, project: row.project, agentId: row.agent_id, status: row.status, prompt: row.prompt, inputPath: row.input_path, outputPath: row.output_path, containerName: row.container_name ?? undefined, startedAt: row.started_at, completedAt: row.completed_at ?? undefined, text: row.text ?? undefined, error: row.error ?? undefined, emittedMessages: row.emitted_messages, usageJson: row.usage_json ?? undefined };
+  return { id: row.id, project: row.project, agentId: row.agent_id, status: row.status, prompt: row.prompt, inputPath: row.input_path, outputPath: row.output_path, containerName: row.container_name ?? undefined, startedAt: row.started_at, completedAt: row.completed_at ?? undefined, text: row.text ?? undefined, error: row.error ?? undefined, emittedMessages: row.emitted_messages, usageJson: row.usage_json ?? undefined, contextJson: row.context_json ?? undefined };
+}
+
+function countRows(db: DatabaseSync, table: string, project: string, where?: string): number {
+  const row = db.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE project = ?${where ? ` AND ${where}` : ""}`).get(project) as { count: number };
+  return row.count;
 }
 
 type DbSignal = { id: string; project: string; kind: string; source_agent: string | null; source_activation: string | null; target_agent: string | null; target_channel: string | null; priority: MessagePriority; payload_json: string; status: SignalRecord["status"]; useful_effect: number; created_at: string; delivered_at: string | null; delivered_activation_id: string | null };
@@ -486,7 +508,8 @@ CREATE TABLE IF NOT EXISTS activations (
   text TEXT,
   error TEXT,
   emitted_messages INTEGER NOT NULL DEFAULT 0,
-  usage_json TEXT
+  usage_json TEXT,
+  context_json TEXT
 );
 CREATE TABLE IF NOT EXISTS events (
   id TEXT PRIMARY KEY,

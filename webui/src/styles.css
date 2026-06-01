@@ -288,6 +288,13 @@ button {
   cursor: not-allowed;
 }
 
+.mini-button {
+  min-height: 1.75rem;
+  padding: 0.25rem 0.5rem;
+  margin-top: 0.625rem;
+  font-size: 0.75rem;
+}
+
 .error-banner {
   padding: 0.75rem 1rem;
   margin-top: 1rem;
@@ -623,6 +630,11 @@ textarea:focus {
   gap: 0.5rem;
 }
 
+.split-stack {
+  display: grid;
+  gap: 1rem;
+}
+
 .message-item,
 .activation-item,
 .tool-item {
@@ -741,6 +753,71 @@ textarea:focus {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 0.8125rem;
   line-height: 1.65;
+  white-space: pre-wrap;
+}
+
+.context-toolbar {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.context-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.context-stats span {
+  display: inline-flex;
+  padding: 0.25rem 0.5rem;
+  color: #334155;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.75rem;
+}
+
+.context-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.context-message {
+  overflow: hidden;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+}
+
+.context-message summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 0.875rem;
+  color: #0f172a;
+  background: #f8fafc;
+  cursor: pointer;
+}
+
+.context-message summary small {
+  color: #94a3b8;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.context-message pre {
+  max-height: 58vh;
+  margin: 0;
+  padding: 1rem;
+  overflow: auto;
+  color: #334155;
+  background: #ffffff;
+  border-top: 1px solid #e2e8f0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.8125rem;
+  line-height: 1.6;
   white-space: pre-wrap;
 }
 

@@ -24,13 +24,17 @@ export interface Message {
 
 export interface Activation {
   id: string;
+  project?: string;
   agentId: string;
   status: ActivationStatus;
+  containerName?: string;
   startedAt: string;
   completedAt?: string;
   text?: string;
   error?: string;
   emittedMessages: number;
+  usageJson?: string;
+  hasContext?: boolean;
 }
 
 export interface EventRecord {
@@ -60,6 +64,14 @@ export interface Project {
   task: string;
   created_at: string;
   updated_at: string;
+  stats?: {
+    messageCount: number;
+    activationCount: number;
+    failedActivationCount: number;
+    runningActivationCount: number;
+    toolCallCount: number;
+    eventCount: number;
+  };
   agents: Agent[];
   recentMessages: Message[];
   recentActivations: Activation[];
@@ -73,6 +85,31 @@ export interface ProjectDetails {
   toolCalls: ToolCall[];
   report: string;
   config: string;
+}
+
+export interface ActivationContextMessage {
+  role: string;
+  content: string;
+  chars: number;
+}
+
+export interface ActivationContextSnapshot {
+  version: 1;
+  kind: "model-context";
+  recordedAt: string;
+  selectedModel?: string;
+  model?: string;
+  apiModel?: string;
+  firstPrompt?: boolean;
+  messageCount: number;
+  totalChars: number;
+  messages: ActivationContextMessage[];
+}
+
+export interface ActivationContextResponse {
+  activation: Activation;
+  activationPrompt: string;
+  context: ActivationContextSnapshot;
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -93,6 +130,38 @@ function projectPath(project: string, suffix = ""): string {
 
 export function listProjects(): Promise<Project[]> {
   return request("/api/projects");
+}
+
+export function loadProjectSummary(project: string): Promise<Project> {
+  return request<Project>(projectPath(project));
+}
+
+export function loadMessages(project: string, limit = 100): Promise<Message[]> {
+  return request<Message[]>(projectPath(project, `/messages?limit=${limit}`));
+}
+
+export function loadActivations(project: string, limit = 100): Promise<Activation[]> {
+  return request<Activation[]>(projectPath(project, `/activations?limit=${limit}`));
+}
+
+export function loadEvents(project: string, limit = 120): Promise<EventRecord[]> {
+  return request<EventRecord[]>(projectPath(project, `/events?limit=${limit}`));
+}
+
+export function loadToolCalls(project: string, limit = 100): Promise<ToolCall[]> {
+  return request<ToolCall[]>(projectPath(project, `/tool-calls?limit=${limit}`));
+}
+
+export function loadReport(project: string): Promise<string> {
+  return requestText(projectPath(project, "/report"));
+}
+
+export function loadConfig(project: string): Promise<string> {
+  return requestText(projectPath(project, "/config/resolved"));
+}
+
+export function loadActivationContext(project: string, activationId: string): Promise<ActivationContextResponse> {
+  return request<ActivationContextResponse>(projectPath(project, `/activations/${encodeURIComponent(activationId)}/context`));
 }
 
 export async function loadProjectDetails(project: string): Promise<ProjectDetails> {

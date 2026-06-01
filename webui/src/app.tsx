@@ -2,16 +2,23 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import {
   listProjects,
-  loadProjectDetails,
+  loadActivationContext,
+  loadActivations,
+  loadConfig,
+  loadEvents,
+  loadMessages,
+  loadProjectSummary,
+  loadReport,
+  loadToolCalls,
   sendMessage,
   updateProject,
   type Activation,
+  type ActivationContextResponse,
   type Agent,
   type EventRecord,
   type Message,
   type Priority,
   type Project,
-  type ProjectDetails,
   type ProjectStatus,
   type ToolCall,
 } from "./api";
@@ -21,7 +28,7 @@ type View = "overview" | "messages" | "activations" | "tools" | "events" | "conf
 const viewLabels: Record<View, string> = {
   overview: "Overview",
   messages: "Messages",
-  activations: "Activations",
+  activations: "Activations + context",
   tools: "Tool calls",
   events: "Timeline",
   config: "Resolved YAML",
@@ -31,24 +38,40 @@ const viewLabels: Record<View, string> = {
 export function App() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [selected, setSelected] = useState("");
+  const [project, setProject] = useState<Project>();
   const selectedRef = useRef("");
-  const [details, setDetails] = useState<ProjectDetails>();
-  const [view, setView] = useState<View>("overview");
+  const viewRef = useRef<View>("overview");
+  const [view, setViewState] = useState<View>("overview");
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [activations, setActivations] = useState<Activation[]>([]);
+  const [events, setEvents] = useState<EventRecord[]>([]);
+  const [toolCalls, setToolCalls] = useState<ToolCall[]>([]);
+  const [report, setReport] = useState("No report loaded.");
+  const [config, setConfig] = useState("No config loaded.");
   const [loading, setLoading] = useState(true);
+  const [panelLoading, setPanelLoading] = useState(false);
   const [error, setError] = useState("");
   const [lastUpdated, setLastUpdated] = useState<Date>();
 
-  async function refreshProjects(preferred?: string) {
+  function setView(next: View) {
+    viewRef.current = next;
+    setViewState(next);
+  }
+
+  async function refreshProjects(preferred?: string, refreshPanel = false) {
     try {
       const nextProjects = await listProjects();
       const nextSelected = preferred || selectedRef.current || nextProjects[0]?.id || "";
+      const nextProject = nextProjects.find((item) => item.id === nextSelected) ?? nextProjects[0];
+      const nextId = nextProject?.id ?? "";
+      const nextSummary = nextId ? await loadProjectSummary(nextId) : undefined;
       setProjects(nextProjects);
-      setSelected(nextSelected);
-      selectedRef.current = nextSelected;
-      if (nextSelected) setDetails(await loadProjectDetails(nextSelected));
-      else setDetails(undefined);
+      setSelected(nextId);
+      setProject(nextSummary ?? nextProject);
+      selectedRef.current = nextId;
       setError("");
       setLastUpdated(new Date());
+      if (refreshPanel && nextId) await loadPanel(nextId, viewRef.current);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -56,11 +79,30 @@ export function App() {
     }
   }
 
-  async function selectProject(project: string) {
-    setSelected(project);
-    selectedRef.current = project;
+  async function loadPanel(projectId: string, nextView: View) {
+    if (nextView === "overview") return;
+    setPanelLoading(true);
+    try {
+      if (nextView === "messages") setMessages(await loadMessages(projectId, 100));
+      if (nextView === "activations") setActivations(await loadActivations(projectId, 100));
+      if (nextView === "tools") setToolCalls(await loadToolCalls(projectId, 100));
+      if (nextView === "events") setEvents(await loadEvents(projectId, 120));
+      if (nextView === "config") setConfig(await loadConfig(projectId));
+      if (nextView === "report") setReport(await loadReport(projectId));
+      setError("");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setPanelLoading(false);
+    }
+  }
+
+  async function selectProject(projectId: string) {
+    setSelected(projectId);
+    selectedRef.current = projectId;
+    setProject(projects.find((item) => item.id === projectId));
     setLoading(true);
-    await refreshProjects(project);
+    await refreshProjects(projectId, true);
   }
 
   async function act(action: "start" | "stop" | "approve") {
@@ -68,7 +110,7 @@ export function App() {
     setLoading(true);
     try {
       await updateProject(selected, action);
-      await refreshProjects(selected);
+      await refreshProjects(selected, true);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
       setLoading(false);
@@ -81,26 +123,30 @@ export function App() {
     return () => window.clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    if (selected) void loadPanel(selected, view);
+  }, [selected, view]);
+
   return (
     <div class="shell">
       <Sidebar projects={projects} selected={selected} onSelect={selectProject} />
       <main class="workspace">
-        <Topbar loading={loading} lastUpdated={lastUpdated} onRefresh={() => void refreshProjects()} />
+        <Topbar loading={loading || panelLoading} lastUpdated={lastUpdated} onRefresh={() => void refreshProjects(selected, true)} />
         {error && <div class="error-banner">{error}</div>}
-        {!details ? (
+        {!project ? (
           <EmptyState loading={loading} />
         ) : (
           <>
-            <ProjectHero project={details.project} onAction={act} />
+            <ProjectHero project={project} onAction={act} />
             <ViewTabs view={view} setView={setView} />
             <div class="content-area">
-              {view === "overview" && <Overview details={details} onSent={() => refreshProjects(selected)} />}
-              {view === "messages" && <MessagesPanel messages={details.messages} />}
-              {view === "activations" && <ActivationsPanel activations={details.activations} />}
-              {view === "tools" && <ToolsPanel calls={details.toolCalls} />}
-              {view === "events" && <EventsPanel events={details.events} />}
-              {view === "config" && <CodePanel title="Resolved project configuration" text={details.config} />}
-              {view === "report" && <CodePanel title="Submitted report" text={details.report} />}
+              {view === "overview" && <Overview project={project} onSent={() => refreshProjects(selected, true)} />}
+              {view === "messages" && <MessagesPanel messages={messages} loading={panelLoading} />}
+              {view === "activations" && <ActivationsPanel projectId={project.id} activations={activations} loading={panelLoading} />}
+              {view === "tools" && <ToolsPanel calls={toolCalls} loading={panelLoading} />}
+              {view === "events" && <EventsPanel events={events} loading={panelLoading} />}
+              {view === "config" && <CodePanel title="Resolved project configuration" text={config} />}
+              {view === "report" && <CodePanel title="Submitted report" text={report} />}
             </div>
           </>
         )}
@@ -121,17 +167,15 @@ function Sidebar({ projects, selected, onSelect }: { projects: Project[]; select
       </div>
       <div class="sidebar-label">Projects <span>{projects.length}</span></div>
       <div class="project-list">
-        {projects.map((project) => (
-          <button class={`project-link ${project.id === selected ? "active" : ""}`} onClick={() => onSelect(project.id)}>
-            <span class={`project-orb status-${project.status}`} />
-            <span class="project-link-main"><strong>{project.name}</strong><small>{project.id}</small></span>
-            <StatusPill status={project.status} compact />
+        {projects.map((item) => (
+          <button class={`project-link ${item.id === selected ? "active" : ""}`} onClick={() => onSelect(item.id)}>
+            <span class={`project-orb status-${item.status}`} />
+            <span class="project-link-main"><strong>{item.name}</strong><small>{item.id}</small></span>
+            <StatusPill status={item.status} compact />
           </button>
         ))}
       </div>
-      <div class="sidebar-footer">
-        <span class="pulse-dot" /> Live refresh every 5s
-      </div>
+      <div class="sidebar-footer"><span class="pulse-dot" /> Summary refresh every 5s</div>
     </aside>
   );
 }
@@ -172,24 +216,24 @@ function ViewTabs({ view, setView }: { view: View; setView: (view: View) => void
   return <nav class="tabs">{Object.entries(viewLabels).map(([id, label]) => <button class={view === id ? "active" : ""} onClick={() => setView(id as View)}>{label}</button>)}</nav>;
 }
 
-function Overview({ details, onSent }: { details: ProjectDetails; onSent: () => Promise<void> }) {
-  const failed = details.activations.filter((activation) => activation.status === "failed").length;
-  const running = details.project.agents.filter((agent) => agent.status === "running").length;
+function Overview({ project, onSent }: { project: Project; onSent: () => Promise<void> }) {
+  const stats = project.stats;
+  const running = project.agents.filter((agent) => agent.status === "running").length;
   return (
     <>
       <section class="metric-grid">
-        <Metric label="Agents" value={details.project.agents.length} sub={`${running} running now`} tone="fern" />
-        <Metric label="Messages" value={details.messages.length} sub="visible conversation items" tone="amber" />
-        <Metric label="Activations" value={details.activations.length} sub={`${failed} failed`} tone={failed ? "coral" : "sky"} />
-        <Metric label="Tool calls" value={details.toolCalls.length} sub="audited runner actions" tone="violet" />
+        <Metric label="Agents" value={project.agents.length} sub={`${running} running now`} tone="fern" />
+        <Metric label="Messages" value={stats?.messageCount ?? project.recentMessages.length} sub="total recorded" tone="amber" />
+        <Metric label="Activations" value={stats?.activationCount ?? project.recentActivations.length} sub={`${stats?.failedActivationCount ?? 0} failed`} tone={stats?.failedActivationCount ? "coral" : "sky"} />
+        <Metric label="Tool calls" value={stats?.toolCallCount ?? 0} sub={`${stats?.eventCount ?? 0} events`} tone="violet" />
       </section>
       <section class="dashboard-grid">
         <Panel title="Agent roster" subtitle="Durable roles and current states" className="span-7">
-          <div class="agent-grid">{details.project.agents.map((agent) => <AgentCard agent={agent} />)}</div>
+          <div class="agent-grid">{project.agents.map((agent) => <AgentCard agent={agent} />)}</div>
         </Panel>
-        <Panel title="Send a signal" subtitle="Message an agent and wake it when idle" className="span-5"><Composer project={details.project} onSent={onSent} /></Panel>
-        <Panel title="Recent messages" subtitle="Conversation history across the team" className="span-7"><MessageList messages={details.messages.slice(-7).reverse()} /></Panel>
-        <Panel title="Activation pulse" subtitle="Latest Docker-backed work cycles" className="span-5"><ActivationList activations={details.activations.slice(-7).reverse()} /></Panel>
+        <Panel title="Send a signal" subtitle="Message an agent and wake it when idle" className="span-5"><Composer project={project} onSent={onSent} /></Panel>
+        <Panel title="Recent messages" subtitle="Lightweight project summary" className="span-7"><MessageList messages={[...project.recentMessages].reverse()} /></Panel>
+        <Panel title="Activation pulse" subtitle="Latest work cycles" className="span-5"><ActivationList activations={[...project.recentActivations].reverse()} /></Panel>
       </section>
     </>
   );
@@ -221,6 +265,7 @@ function Composer({ project, onSent }: { project: Project; onSent: () => Promise
       setSending(false);
     }
   }
+
   return (
     <form class="composer" onSubmit={submit}>
       <div class="form-row">
@@ -234,11 +279,75 @@ function Composer({ project, onSent }: { project: Project; onSent: () => Promise
   );
 }
 
-function MessagesPanel({ messages }: { messages: Message[] }) { return <Panel title="Messages" subtitle={`${messages.length} visible conversation items`}><MessageList messages={[...messages].reverse()} verbose /></Panel>; }
-function ActivationsPanel({ activations }: { activations: Activation[] }) { return <Panel title="Activations" subtitle={`${activations.length} Docker-backed work cycles`}><ActivationList activations={[...activations].reverse()} verbose /></Panel>; }
-function ToolsPanel({ calls }: { calls: ToolCall[] }) { return <Panel title="Tool calls" subtitle={`${calls.length} audited runner actions`}><div class="stack-list">{calls.map((call) => <ToolCallItem call={call} />)}</div></Panel>; }
-function EventsPanel({ events }: { events: EventRecord[] }) { return <Panel title="Project timeline" subtitle={`${events.length} recorded events`}><div class="timeline">{events.map((event) => <EventItem event={event} />)}</div></Panel>; }
-function CodePanel({ title, text }: { title: string; text: string }) { return <Panel title={title} subtitle="Read-only runtime record"><pre class="code-panel">{text}</pre></Panel>; }
+function MessagesPanel({ messages, loading }: { messages: Message[]; loading: boolean }) {
+  return <Panel title="Messages" subtitle={loading ? "Loading..." : `${messages.length} recent conversation items`}><MessageList messages={[...messages].reverse()} verbose /></Panel>;
+}
+
+function ActivationsPanel({ projectId, activations, loading }: { projectId: string; activations: Activation[]; loading: boolean }) {
+  const [context, setContext] = useState<ActivationContextResponse>();
+  const [contextLoading, setContextLoading] = useState(false);
+  const [contextError, setContextError] = useState("");
+
+  async function openContext(activationId: string) {
+    setContextLoading(true);
+    setContextError("");
+    try {
+      setContext(await loadActivationContext(projectId, activationId));
+    } catch (cause) {
+      setContextError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setContextLoading(false);
+    }
+  }
+
+  return (
+    <div class="split-stack">
+      <Panel title="Activations" subtitle={loading ? "Loading..." : `${activations.length} recent work cycles`}>
+        <ActivationList activations={[...activations].reverse()} verbose onContext={openContext} />
+      </Panel>
+      {contextError && <div class="error-banner">{contextError}</div>}
+      {contextLoading && <Panel title="Model context" subtitle="Loading context snapshot"><Blank label="Loading context..." /></Panel>}
+      {context && !contextLoading && <ActivationContextPanel context={context} onClose={() => setContext(undefined)} />}
+    </div>
+  );
+}
+
+function ToolsPanel({ calls, loading }: { calls: ToolCall[]; loading: boolean }) {
+  return <Panel title="Tool calls" subtitle={loading ? "Loading..." : `${calls.length} recent runner actions`}><div class="stack-list">{calls.map((call) => <ToolCallItem call={call} />)}</div></Panel>;
+}
+
+function EventsPanel({ events, loading }: { events: EventRecord[]; loading: boolean }) {
+  return <Panel title="Project timeline" subtitle={loading ? "Loading..." : `${events.length} recent events`}><div class="timeline">{events.map((event) => <EventItem event={event} />)}</div></Panel>;
+}
+
+function CodePanel({ title, text }: { title: string; text: string }) {
+  return <Panel title={title} subtitle="Read-only runtime record"><pre class="code-panel">{text}</pre></Panel>;
+}
+
+function ActivationContextPanel({ context, onClose }: { context: ActivationContextResponse; onClose: () => void }) {
+  const snapshot = context.context;
+  return (
+    <Panel title="Model context window" subtitle={`${context.activation.agentId} / ${context.activation.id}`}>
+      <div class="context-toolbar">
+        <div class="context-stats">
+          <span>{snapshot.messageCount} messages</span>
+          <span>{snapshot.totalChars.toLocaleString()} chars</span>
+          <span>{snapshot.selectedModel ?? snapshot.model ?? "model unknown"}</span>
+          <span>{snapshot.recordedAt ? `recorded ${formatRelative(snapshot.recordedAt)}` : "recorded time unknown"}</span>
+        </div>
+        <button class="ghost-button" onClick={onClose}>Close</button>
+      </div>
+      <div class="context-list">
+        {snapshot.messages.map((message, index) => (
+          <details class="context-message" open={index === snapshot.messages.length - 1 || snapshot.messages.length <= 3}>
+            <summary><strong>{index + 1}. {message.role}</strong><small>{message.chars.toLocaleString()} chars</small></summary>
+            <pre>{message.content}</pre>
+          </details>
+        ))}
+      </div>
+    </Panel>
+  );
+}
 
 function Panel({ title, subtitle, className = "", children }: { title: string; subtitle?: string; className?: string; children: ComponentChildren }) {
   return <section class={`panel ${className}`}><header class="panel-heading"><div><h3>{title}</h3>{subtitle && <p>{subtitle}</p>}</div></header>{children}</section>;
@@ -257,14 +366,29 @@ function MessageList({ messages, verbose = false }: { messages: Message[]; verbo
   return <div class="stack-list">{messages.map((message) => <article class={`message-item priority-${message.priority.toLowerCase()}`}><div class="item-title"><strong>{message.sender} <span>-&gt;</span> {message.recipient ?? message.channel}</strong><small>{formatRelative(message.createdAt)}</small></div><p class={verbose ? "expanded" : ""}>{message.body}</p><span class="mini-label">{message.priority}</span></article>)}</div>;
 }
 
-function ActivationList({ activations, verbose = false }: { activations: Activation[]; verbose?: boolean }) {
+function ActivationList({ activations, verbose = false, onContext }: { activations: Activation[]; verbose?: boolean; onContext?: (activationId: string) => void }) {
   if (!activations.length) return <Blank label="No activations yet" />;
-  return <div class="stack-list">{activations.map((activation) => <article class="activation-item"><div class="item-title"><strong>{activation.agentId}</strong><StatusPill status={activation.status} compact /></div><small>{formatRelative(activation.startedAt)} - {activation.emittedMessages} emitted messages</small>{verbose && <p class="expanded">{activation.error || activation.text || "No result text recorded."}</p>}</article>)}</div>;
+  return (
+    <div class="stack-list">
+      {activations.map((activation) => (
+        <article class="activation-item">
+          <div class="item-title"><strong>{activation.agentId}</strong><StatusPill status={activation.status} compact /></div>
+          <small>{formatRelative(activation.startedAt)} - {activation.emittedMessages} emitted messages{activation.hasContext ? " - context recorded" : ""}</small>
+          {verbose && <p class="expanded">{activation.error || activation.text || "No result text recorded."}</p>}
+          {onContext && <button class="ghost-button mini-button" onClick={() => onContext(activation.id)}>View context</button>}
+        </article>
+      ))}
+    </div>
+  );
 }
 
-function ToolCallItem({ call }: { call: ToolCall }) { return <article class="tool-item"><div class="item-title"><strong>{call.tool}</strong><StatusPill status={call.status} compact /></div><small>{call.agent_id} - {formatRelative(call.created_at)}</small>{call.error && <p class="error-text">{call.error}</p>}</article>; }
+function ToolCallItem({ call }: { call: ToolCall }) {
+  return <article class="tool-item"><div class="item-title"><strong>{call.tool}</strong><StatusPill status={call.status} compact /></div><small>{call.agent_id} - {formatRelative(call.created_at)}</small>{call.error && <p class="error-text">{call.error}</p>}</article>;
+}
 
-function EventItem({ event }: { event: EventRecord }) { return <article class="timeline-item"><span class="timeline-pin" /><div><div class="item-title"><strong>{event.type}</strong><small>{formatTime(event.created_at)}</small></div><p>{summarizeJson(event.data_json)}</p></div></article>; }
+function EventItem({ event }: { event: EventRecord }) {
+  return <article class="timeline-item"><span class="timeline-pin" /><div><div class="item-title"><strong>{event.type}</strong><small>{formatTime(event.created_at)}</small></div><p>{summarizeJson(event.data_json)}</p></div></article>;
+}
 
 function StatusPill({ status, compact = false }: { status: ProjectStatus | Agent["status"] | Activation["status"] | ToolCall["status"]; compact?: boolean }) { return <span class={`status-pill status-${status} ${compact ? "compact" : ""}`}>{status}</span>; }
 function Blank({ label }: { label: string }) { return <div class="blank">{label}</div>; }

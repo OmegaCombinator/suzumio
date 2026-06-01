@@ -181,6 +181,20 @@ export interface ActivationRecord {
   error?: string;
   emittedMessages: number;
   usageJson?: string;
+  contextJson?: string;
+}
+
+export interface ActivationContextSnapshot {
+  version: 1;
+  kind: "model-context";
+  recordedAt: string;
+  selectedModel?: string;
+  model?: string;
+  apiModel?: string;
+  firstPrompt?: boolean;
+  messageCount: number;
+  totalChars: number;
+  messages: Array<{ role: string; content: string; chars: number }>;
 }
 
 export interface SignalRecord {

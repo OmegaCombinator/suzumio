@@ -7,7 +7,7 @@ import { ProxyAgent, fetch as undiciFetch, type Dispatcher } from "undici";
 import { jsonSchema, stepCountIs, streamText, tool as aiTool, type ModelMessage } from "ai";
 import { resolveRunnerModels, type ResolvedRunnerModel } from "./runner-model.js";
 import { assertNodeFetchProxySupported, proxyForUrl } from "./proxy.js";
-import type { JsonObject, RunnerActivationInput, RunnerActivationOutput, RunnerToolpackSpec, ToolDefinition } from "./types.js";
+import type { ActivationContextSnapshot, JsonObject, RunnerActivationInput, RunnerActivationOutput, RunnerToolpackSpec, ToolDefinition } from "./types.js";
 
 type ToolResult = { title?: string; output: string; metadata?: JsonObject };
 type RunnerToolHandler = (input: unknown) => Promise<ToolResult>;
@@ -121,6 +121,7 @@ async function runAiWithModel(input: RunnerActivationInput, resolved: ResolvedRu
     toolTranscript.push(renderToolTranscript(toolName, result));
   });
   const messages = sessionMessages(input, sessionContext, firstPrompt);
+  await submitActivationContext(input, resolved, messages, firstPrompt).catch((error) => console.warn("activation context submit failed", errorMessage(error)));
   let text = "";
   let usage: TokenUsage | undefined;
   const request = {
@@ -373,6 +374,41 @@ async function submitActivationOutput(input: RunnerActivationInput, output: Runn
     throw controllerConnectionError(error);
   }
   if (!response.ok) throw new Error((await response.text()) || `Activation output submit failed: ${response.status}`);
+}
+
+async function submitActivationContext(input: RunnerActivationInput, resolved: ResolvedRunnerModel, messages: ModelMessage[], firstPrompt: boolean): Promise<void> {
+  const snapshot: ActivationContextSnapshot = {
+    version: 1,
+    kind: "model-context",
+    recordedAt: new Date().toISOString(),
+    selectedModel: resolved.selectedPresetId,
+    model: resolved.presetId,
+    apiModel: resolved.apiModel,
+    firstPrompt,
+    messageCount: messages.length,
+    totalChars: messages.reduce((sum, message) => sum + modelMessageText(message).length, 0),
+    messages: messages.map((message) => {
+      const content = modelMessageText(message);
+      return { role: String(message.role), content, chars: content.length };
+    }),
+  };
+  let response: Response;
+  try {
+    response = await fetch(new URL("/activation-context", input.controllerUrl), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ project: input.project, agentId: input.agent.id, activationId: input.activation.id, token: input.token, context: snapshot }),
+    });
+  } catch (error) {
+    throw controllerConnectionError(error);
+  }
+  if (!response.ok) throw new Error((await response.text()) || `Activation context submit failed: ${response.status}`);
+}
+
+function modelMessageText(message: ModelMessage): string {
+  const content = (message as { content?: unknown }).content;
+  if (typeof content === "string") return content;
+  return JSON.stringify(content ?? "");
 }
 
 async function toAiTools(input: RunnerActivationInput, limitToolCall: ToolCallLimiter, endActivation: EndActivationCallback, activationEnded: ActivationEnded, recordToolResult?: (toolName: string, result: ToolResult) => void): Promise<Record<string, unknown>> {
