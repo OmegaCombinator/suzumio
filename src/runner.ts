@@ -5,6 +5,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { ProxyAgent, fetch as undiciFetch, type Dispatcher } from "undici";
 import { jsonSchema, stepCountIs, streamText, tool as aiTool, type ModelMessage } from "ai";
+import { MAX_SUMMARY_CHARS, fallbackAgentHistorySummary, renderHistoryMessageForModel, retryTailMessageCount, trimChars, trimHistoryForSummary } from "./history-compaction.js";
 import { resolveRunnerModels, type ResolvedRunnerModel } from "./runner-model.js";
 import { assertNodeFetchProxySupported, proxyForUrl } from "./proxy.js";
 import type { ActivationContextSnapshot, AgentHistoryMessage, JsonObject, RunnerActivationInput, RunnerActivationOutput, RunnerToolpackSpec, ToolDefinition } from "./types.js";
@@ -23,10 +24,6 @@ const fetchWithDispatcher = undiciFetch as unknown as FetchWithDispatcher;
 const webProxyDispatchers = new Map<string, ProxyAgent>();
 const EFFECTIVELY_UNBOUNDED_STEPS = 1_000_000;
 const CONTEXT_OVERFLOW_RETRIES = 1;
-const DEFAULT_TAIL_MESSAGES = 12;
-const MAX_TURN_CHARS = 20_000;
-const MAX_SUMMARY_CHARS = 20_000;
-const MAX_SUMMARY_HISTORY_CHARS = 140_000;
 const SUMMARY_OUTPUT_TOKENS = 4_000;
 const SUMMARY_TEMPLATE = `Output exactly the Markdown structure shown inside <template> and keep the section order unchanged. Do not include the <template> tags in your response.
 <template>
@@ -170,15 +167,28 @@ async function runAiRequestWithHistory(input: RunnerActivationInput, resolved: R
 }
 
 async function compactHistoryForContextOverflow(input: RunnerActivationInput, resolved: ResolvedRunnerModel, history: AgentHistoryMessage[], error: unknown): Promise<AgentHistoryMessage[]> {
-  if (history.length <= DEFAULT_TAIL_MESSAGES) throw error;
-  const summary = await summarizeAgentHistory(resolved, history.slice(0, -DEFAULT_TAIL_MESSAGES), undefined);
+  const keepTail = retryTailMessageCount(history);
+  if (history.length <= keepTail) throw error;
+  const archived = history.slice(0, -keepTail);
+  const summary = await summarizeAgentHistory(resolved, archived, undefined).catch((summaryError) => {
+    console.warn(`history summary failed; using deterministic fallback for activation ${input.activation.id}: ${errorMessage(summaryError)}`);
+    return fallbackAgentHistorySummary({
+      agentId: input.agent.id,
+      history,
+      archived,
+      keepTail,
+      overflowError: errorMessage(error),
+      summaryError: errorMessage(summaryError),
+      selectedModel: resolved.selectedPresetId,
+    });
+  });
   const response = await postJson<{ history?: AgentHistoryMessage[] }>(new URL("/runner/history/compact", input.controllerUrl), {
     project: input.project,
     agentId: input.agent.id,
     activationId: input.activation.id,
     token: input.token,
     summary,
-    keepTail: DEFAULT_TAIL_MESSAGES,
+    keepTail,
     reason: "provider_context_overflow",
     selectedModel: resolved.selectedPresetId,
   });
@@ -223,13 +233,6 @@ function historyMessages(history: AgentHistoryMessage[]): ModelMessage[] {
   return messages.length ? messages : [{ role: "user", content: "Continue the assigned Suzumio activation." }];
 }
 
-function renderHistoryMessageForModel(item: AgentHistoryMessage): string {
-  if (item.role === "compaction") return `# Compacted Agent History\n\n${item.content}`;
-  if (item.role === "tool_call") return `# Tool Call Record\n\n${item.content}`;
-  if (item.role === "tool_result") return `# Tool Result Record\n\n${item.content}`;
-  return item.content;
-}
-
 function modelRole(item: AgentHistoryMessage): "user" | "assistant" {
   if (item.role === "assistant" || item.role === "tool_call") return "assistant";
   return "user";
@@ -237,23 +240,6 @@ function modelRole(item: AgentHistoryMessage): "user" | "assistant" {
 
 function isFirstActivationPrompt(history: AgentHistoryMessage[]): boolean {
   return history.filter((item) => item.kind === "activation_prompt").length <= 1;
-}
-
-function trimHistoryForSummary(history: AgentHistoryMessage[]): string {
-  let used = 0;
-  const rendered: string[] = [];
-  for (const item of history) {
-    const body = trimChars(renderHistoryForSummary(item), MAX_TURN_CHARS);
-    const remaining = MAX_SUMMARY_HISTORY_CHARS - used;
-    if (remaining <= 0) break;
-    rendered.push(body.length > remaining ? trimChars(body, remaining) : body);
-    used += body.length;
-  }
-  return rendered.join("\n\n");
-}
-
-function renderHistoryForSummary(item: AgentHistoryMessage): string {
-  return [`## ${item.sequence} ${item.role} ${item.kind}`, `Time: ${item.createdAt}`, item.activationId ? `Activation: ${item.activationId}` : undefined, item.compactionId ? `Archived by: ${item.compactionId}` : undefined, "", item.content].filter(Boolean).join("\n");
 }
 
 function parseUsage(value: unknown): TokenUsage | undefined {
@@ -276,12 +262,6 @@ function parseUsage(value: unknown): TokenUsage | undefined {
     cacheWrite: item.inputTokenDetails?.cacheWriteTokens,
   } satisfies TokenUsage;
   return Object.values(usage).some((item) => item !== undefined) ? usage : undefined;
-}
-
-function trimChars(text: string, maxChars: number): string {
-  const trimmed = text.trim();
-  if (trimmed.length <= maxChars) return trimmed;
-  return `${trimmed.slice(0, maxChars).trimEnd()}\n\n[truncated ${trimmed.length - maxChars} chars]`;
 }
 
 function providerOptionsFor(resolved: ResolvedRunnerModel): JsonObject {

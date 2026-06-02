@@ -12,6 +12,7 @@
     "build:server": "tsc",
     "build:webui": "vite build --config webui/vite.config.ts",
     "webui:dev": "vite --config webui/vite.config.ts",
+    "test": "npm run build:server && node --test test/*.test.mjs",
     "typecheck": "tsc --noEmit && tsc --noEmit -p webui/tsconfig.json",
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
