@@ -113,6 +113,12 @@ export class ProjectStore {
     return rows.reverse().map(messageFromRow);
   }
 
+  message(messageId: string): MessageRecord {
+    const row = this.db.prepare("SELECT * FROM messages WHERE project = ? AND id = ?").get(this.project, messageId) as DbMessage | undefined;
+    if (!row) throw new Error(`Unknown message: ${messageId}`);
+    return messageFromRow(row);
+  }
+
   agentMessageHistory(agentId: string, limit = 1000): MessageRecord[] {
     const rows = this.db.prepare(
       `SELECT * FROM messages

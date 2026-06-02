@@ -185,6 +185,10 @@ export function loadMessages(project: string, limit = 100): Promise<Message[]> {
   return request<Message[]>(projectPath(project, `/messages?limit=${limit}`));
 }
 
+export function loadMessage(project: string, messageId: string): Promise<Message> {
+  return request<Message>(projectPath(project, `/messages/${encodeURIComponent(messageId)}`));
+}
+
 export function loadActivations(project: string, limit = 100): Promise<Activation[]> {
   return request<Activation[]>(projectPath(project, `/activations?limit=${limit}`));
 }

@@ -62,6 +62,7 @@ async function handleRequest(
     if (request.method === "GET" && parts[3] === "agents" && parts[5] === "history-archive" && parts[4] && parts[6]) return json(response, await store.historyArchive(parts[6]));
     if (request.method === "GET" && parts.length === 3) return json(response, projectSummary(store));
     if (request.method === "GET" && parts[3] === "agents") return json(response, store.listAgents().map(publicAgent));
+    if (request.method === "GET" && parts[3] === "messages" && parts[4]) return json(response, publicMessageFull(store.message(parts[4])));
     if (request.method === "GET" && parts[3] === "messages") return json(response, store.listMessages(limit(url, 100)).map(publicMessage));
     if (request.method === "GET" && parts[3] === "events") return json(response, store.listEvents(limit(url, 200)).map(publicEvent));
     if (request.method === "GET" && parts[3] === "activations" && parts[4] && parts[5] === "context") return json(response, activationContext(store, parts[4]));
@@ -257,6 +258,10 @@ function publicAgent(agent: AgentRecord): Record<string, unknown> {
 
 function publicMessage(message: MessageRecord): Record<string, unknown> {
   return { ...message, body: truncateText(message.body, 12_000) };
+}
+
+function publicMessageFull(message: MessageRecord): Record<string, unknown> {
+  return { ...message };
 }
 
 function publicActivation(activation: ActivationRecord): Record<string, unknown> {

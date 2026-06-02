@@ -7,6 +7,7 @@ import {
   loadAgentHistory,
   loadAgentHistoryArchive,
   loadConfig,
+  loadMessage,
   loadEvents,
   loadMessages,
   loadProjectSummary,
@@ -27,10 +28,11 @@ import {
   type ToolCall,
 } from "./api";
 
-type View = "overview" | "history" | "messages" | "activations" | "tools" | "events" | "config" | "report";
+type View = "overview" | "loop" | "history" | "messages" | "activations" | "tools" | "events" | "config" | "report";
 
 const viewLabels: Record<View, string> = {
   overview: "Overview",
+  loop: "Agent loop",
   history: "Agent history",
   messages: "Messages",
   activations: "Activations + context",
@@ -88,6 +90,12 @@ export function App() {
     if (nextView === "overview" || nextView === "history") return;
     setPanelLoading(true);
     try {
+      if (nextView === "loop") {
+        const [nextActivations, nextToolCalls, nextMessages] = await Promise.all([loadActivations(projectId, 80), loadToolCalls(projectId, 120), loadMessages(projectId, 120)]);
+        setActivations(nextActivations);
+        setToolCalls(nextToolCalls);
+        setMessages(nextMessages);
+      }
       if (nextView === "messages") setMessages(await loadMessages(projectId, 100));
       if (nextView === "activations") setActivations(await loadActivations(projectId, 100));
       if (nextView === "tools") setToolCalls(await loadToolCalls(projectId, 100));
@@ -146,8 +154,9 @@ export function App() {
             <ViewTabs view={view} setView={setView} />
             <div class="content-area">
               {view === "overview" && <Overview project={project} onSent={() => refreshProjects(selected, true)} />}
+              {view === "loop" && <AgentLoopPanel project={project} activations={activations} toolCalls={toolCalls} messages={messages} loading={panelLoading} />}
               {view === "history" && <HistoryPanel project={project} />}
-              {view === "messages" && <MessagesPanel messages={messages} loading={panelLoading} />}
+              {view === "messages" && <MessagesPanel projectId={project.id} messages={messages} loading={panelLoading} />}
               {view === "activations" && <ActivationsPanel projectId={project.id} activations={activations} loading={panelLoading} />}
               {view === "tools" && <ToolsPanel calls={toolCalls} loading={panelLoading} />}
               {view === "events" && <EventsPanel events={events} loading={panelLoading} />}
@@ -238,7 +247,7 @@ function Overview({ project, onSent }: { project: Project; onSent: () => Promise
           <div class="agent-grid">{project.agents.map((agent) => <AgentCard agent={agent} />)}</div>
         </Panel>
         <Panel title="Send a signal" subtitle="Message an agent and wake it when idle" className="span-5"><Composer project={project} onSent={onSent} /></Panel>
-        <Panel title="Recent messages" subtitle="Lightweight project summary" className="span-7"><MessageList messages={[...project.recentMessages].reverse()} /></Panel>
+        <Panel title="Recent messages" subtitle="Lightweight project summary" className="span-7"><MessageList projectId={project.id} messages={[...project.recentMessages].reverse()} /></Panel>
         <Panel title="Activation pulse" subtitle="Latest work cycles" className="span-5"><ActivationList activations={[...project.recentActivations].reverse()} /></Panel>
       </section>
     </>
@@ -285,8 +294,57 @@ function Composer({ project, onSent }: { project: Project; onSent: () => Promise
   );
 }
 
-function MessagesPanel({ messages, loading }: { messages: Message[]; loading: boolean }) {
-  return <Panel title="Messages" subtitle={loading ? "Loading..." : `${messages.length} recent conversation items`}><MessageList messages={[...messages].reverse()} verbose /></Panel>;
+function MessagesPanel({ projectId, messages, loading }: { projectId: string; messages: Message[]; loading: boolean }) {
+  return <Panel title="Messages" subtitle={loading ? "Loading..." : `${messages.length} recent conversation items`}><MessageList projectId={projectId} messages={[...messages].reverse()} verbose /></Panel>;
+}
+
+function AgentLoopPanel({ project, activations, toolCalls, messages, loading }: { project: Project; activations: Activation[]; toolCalls: ToolCall[]; messages: Message[]; loading: boolean }) {
+  const recentActivations = [...activations].slice(-12).reverse();
+  return (
+    <div class="split-stack">
+      <Panel title="Agentic loop map" subtitle="How Suzumio turns signals into model-visible continuity">
+        <div class="loop-map">
+          <LoopStep index="1" title="Signal arrives" detail="P0 interrupts and restarts; P1 waits for a tool boundary; P2 waits for the next activation." />
+          <LoopStep index="2" title="Prompt appended" detail="The scheduler writes the wake-up prompt into the agent's append-only history." />
+          <LoopStep index="3" title="Model request" detail="The runner replays active history, records the exact context, and streams the model loop." />
+          <LoopStep index="4" title="Tools and delivery" detail="Tool calls/results are appended; newly delivered P1 signals are injected into the tool result." />
+          <LoopStep index="5" title="Sleep or compact" detail="Assistant output is appended, history may compact, then the next signal starts another cycle." />
+        </div>
+      </Panel>
+      <Panel title="Recent activation loops" subtitle={loading ? "Loading..." : `${recentActivations.length} recent cycles across ${project.agents.length} agents`}>
+        <div class="loop-lanes">
+          {recentActivations.length ? recentActivations.map((activation) => <ActivationLoopItem activation={activation} toolCalls={toolCalls.filter((call) => call.activation_id === activation.id)} messages={messages.filter((message) => message.sender === activation.agentId && message.createdAt >= activation.startedAt && (!activation.completedAt || message.createdAt <= activation.completedAt))} />) : <Blank label={loading ? "Loading loops..." : "No activation loops yet"} />}
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
+function LoopStep({ index, title, detail }: { index: string; title: string; detail: string }) {
+  return <article class="loop-step"><span>{index}</span><strong>{title}</strong><p>{detail}</p></article>;
+}
+
+function ActivationLoopItem({ activation, toolCalls, messages }: { activation: Activation; toolCalls: ToolCall[]; messages: Message[] }) {
+  const completed = activation.completedAt ? formatRelative(activation.completedAt) : "still running";
+  return (
+    <article class={`loop-lane loop-${activation.status}`}>
+      <div class="loop-lane-heading">
+        <div><strong>{activation.agentId}</strong><small>{activation.id}</small></div>
+        <StatusPill status={activation.status} compact />
+      </div>
+      <div class="loop-stages">
+        <LoopStage label="Wake" title={formatRelative(activation.startedAt)} detail="Activation prompt and delivered signals" tone="blue" />
+        <LoopStage label="Context" title={activation.hasContext ? "recorded" : "pending"} detail={activation.hasContext ? "Exact model messages available" : "No context snapshot yet"} tone="violet" />
+        <LoopStage label="Tools" title={`${toolCalls.length} calls`} detail={toolCalls.length ? toolCalls.map((call) => `${call.tool}:${call.status}`).join(" / ") : "No tool calls recorded"} tone="amber" />
+        <LoopStage label="Report" title={`${activation.emittedMessages} messages`} detail={messages.length ? messages.slice(0, 2).map((message) => `${message.sender} to ${messageTarget(message)}`).join(" / ") : "No report messages in this window"} tone="green" />
+        <LoopStage label="Next" title={activation.status} detail={activation.status === "running" ? "Loop is active now" : `Closed ${completed}`} tone={activation.status === "failed" || activation.status === "cancelled" ? "red" : "slate"} />
+      </div>
+    </article>
+  );
+}
+
+function LoopStage({ label, title, detail, tone }: { label: string; title: string; detail: string; tone: string }) {
+  return <div class={`loop-stage loop-stage-${tone}`}><span>{label}</span><strong>{title}</strong><p>{detail}</p></div>;
 }
 
 function HistoryPanel({ project }: { project: Project }) {
@@ -452,9 +510,61 @@ function AgentCard({ agent }: { agent: Agent }) {
   return <article class="agent-card"><div class="agent-avatar">{initials(agent.displayName || agent.id)}</div><div><div class="item-title"><strong>{agent.displayName}</strong><StatusPill status={agent.status} compact /></div><p>{agent.role}</p><small>{agent.id}{agent.activeActivationId ? ` - ${agent.activeActivationId}` : ""}</small></div></article>;
 }
 
-function MessageList({ messages, verbose = false }: { messages: Message[]; verbose?: boolean }) {
+function MessageList({ projectId, messages, verbose = false }: { projectId?: string; messages: Message[]; verbose?: boolean }) {
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [fullBodies, setFullBodies] = useState<Record<string, string>>({});
+  const [loadingId, setLoadingId] = useState("");
+  const [error, setError] = useState("");
+
+  async function toggle(message: Message) {
+    const nextExpanded = !expanded[message.id];
+    setExpanded((current) => ({ ...current, [message.id]: nextExpanded }));
+    if (!nextExpanded || !projectId || fullBodies[message.id] !== undefined) return;
+    setLoadingId(message.id);
+    setError("");
+    try {
+      const full = await loadMessage(projectId, message.id);
+      setFullBodies((current) => ({ ...current, [message.id]: full.body }));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setLoadingId("");
+    }
+  }
+
   if (!messages.length) return <Blank label="No messages yet" />;
-  return <div class="stack-list">{messages.map((message) => <article class={`message-item priority-${message.priority.toLowerCase()}`}><div class="item-title"><strong>{message.sender} <span>-&gt;</span> {message.recipient ?? message.channel}</strong><small>{formatRelative(message.createdAt)}</small></div><p class={verbose ? "expanded" : ""}>{message.body}</p><span class="mini-label">{message.priority}</span></article>)}</div>;
+  return (
+    <div class="stack-list message-list">
+      {error && <div class="form-error">{error}</div>}
+      {messages.map((message) => {
+        const isExpanded = expanded[message.id] === true;
+        const body = isExpanded ? fullBodies[message.id] ?? message.body : message.body;
+        const loading = loadingId === message.id;
+        return (
+          <article class={`message-item message-card priority-${message.priority.toLowerCase()} ${isExpanded ? "open" : ""}`}>
+            <div class="message-card-head">
+              <div class="message-route">
+                <MessageParty label="From" value={message.sender} tone="source" />
+                <span class="message-route-line"><span>to</span></span>
+                <MessageParty label={message.recipient ? "Recipient" : "Channel"} value={messageTarget(message)} tone="target" />
+              </div>
+              <div class="message-status"><small>{formatRelative(message.createdAt)}</small><span class={`priority-badge priority-badge-${message.priority.toLowerCase()}`}>{message.priority}</span></div>
+            </div>
+            <p class={`message-body ${isExpanded ? "expanded" : verbose ? "relaxed" : ""}`}>{body}</p>
+            <div class="message-actions">
+              <span>{message.id}</span>
+              <span>{body.length.toLocaleString()} chars</span>
+              <button class="ghost-button mini-button" disabled={loading} onClick={() => void toggle(message)}>{loading ? "Loading..." : isExpanded ? "Collapse" : "Expand full"}</button>
+            </div>
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
+function MessageParty({ label, value, tone }: { label: string; value: string; tone: string }) {
+  return <div class={`message-party message-party-${tone}`}><span>{label}</span><strong>{value}</strong></div>;
 }
 
 function ActivationList({ activations, verbose = false, onContext }: { activations: Activation[]; verbose?: boolean; onContext?: (activationId: string) => void }) {
@@ -487,5 +597,6 @@ function EmptyState({ loading }: { loading: boolean }) { return <section class="
 function initials(value: string): string { return value.split(/[\s_-]+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase(); }
 function formatTime(value: string): string { return new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }); }
 function formatRelative(value: string): string { const seconds = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 1000)); if (seconds < 60) return `${seconds}s ago`; if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`; if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`; return `${Math.floor(seconds / 86400)}d ago`; }
+function messageTarget(message: Message): string { return message.recipient ?? message.channel ?? "broadcast"; }
 function historyCompactionId(message: AgentHistoryMessage): string | undefined { const value = message.metadata?.compactionId ?? message.compactionId; return typeof value === "string" ? value : undefined; }
 function summarizeJson(value: string): string { try { const parsed = JSON.parse(value) as Record<string, unknown>; return Object.entries(parsed).slice(0, 4).map(([key, item]) => `${key}: ${typeof item === "string" ? item : JSON.stringify(item)}`).join(" - ") || "No payload"; } catch { return value; } }
