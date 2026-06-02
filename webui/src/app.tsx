@@ -4,6 +4,8 @@ import {
   listProjects,
   loadActivationContext,
   loadActivations,
+  loadAgentHistory,
+  loadAgentHistoryArchive,
   loadConfig,
   loadEvents,
   loadMessages,
@@ -15,6 +17,8 @@ import {
   type Activation,
   type ActivationContextResponse,
   type Agent,
+  type AgentHistoryArchiveResponse,
+  type AgentHistoryMessage,
   type EventRecord,
   type Message,
   type Priority,
@@ -23,10 +27,11 @@ import {
   type ToolCall,
 } from "./api";
 
-type View = "overview" | "messages" | "activations" | "tools" | "events" | "config" | "report";
+type View = "overview" | "history" | "messages" | "activations" | "tools" | "events" | "config" | "report";
 
 const viewLabels: Record<View, string> = {
   overview: "Overview",
+  history: "Agent history",
   messages: "Messages",
   activations: "Activations + context",
   tools: "Tool calls",
@@ -80,7 +85,7 @@ export function App() {
   }
 
   async function loadPanel(projectId: string, nextView: View) {
-    if (nextView === "overview") return;
+    if (nextView === "overview" || nextView === "history") return;
     setPanelLoading(true);
     try {
       if (nextView === "messages") setMessages(await loadMessages(projectId, 100));
@@ -141,6 +146,7 @@ export function App() {
             <ViewTabs view={view} setView={setView} />
             <div class="content-area">
               {view === "overview" && <Overview project={project} onSent={() => refreshProjects(selected, true)} />}
+              {view === "history" && <HistoryPanel project={project} />}
               {view === "messages" && <MessagesPanel messages={messages} loading={panelLoading} />}
               {view === "activations" && <ActivationsPanel projectId={project.id} activations={activations} loading={panelLoading} />}
               {view === "tools" && <ToolsPanel calls={toolCalls} loading={panelLoading} />}
@@ -270,7 +276,7 @@ function Composer({ project, onSent }: { project: Project; onSent: () => Promise
     <form class="composer" onSubmit={submit}>
       <div class="form-row">
         <label><span>Recipient</span><select value={recipient} onChange={(event) => setRecipient(event.currentTarget.value)}>{project.agents.map((agent) => <option value={agent.id}>{agent.displayName} / {agent.id}</option>)}</select></label>
-        <label><span>Priority</span><select value={priority} onChange={(event) => setPriority(event.currentTarget.value as Priority)}>{["P0", "P1", "P2", "P3"].map((value) => <option value={value}>{value}</option>)}</select></label>
+        <label><span>Priority</span><select value={priority} onChange={(event) => setPriority(event.currentTarget.value as Priority)}>{["P0", "P1", "P2"].map((value) => <option value={value}>{value}</option>)}</select></label>
       </div>
       <label><span>Message</span><textarea value={body} onInput={(event) => setBody(event.currentTarget.value)} placeholder="Delegate work, ask for evidence, or request a revision..." /></label>
       {error && <div class="form-error">{error}</div>}
@@ -281,6 +287,91 @@ function Composer({ project, onSent }: { project: Project; onSent: () => Promise
 
 function MessagesPanel({ messages, loading }: { messages: Message[]; loading: boolean }) {
   return <Panel title="Messages" subtitle={loading ? "Loading..." : `${messages.length} recent conversation items`}><MessageList messages={[...messages].reverse()} verbose /></Panel>;
+}
+
+function HistoryPanel({ project }: { project: Project }) {
+  const [agentId, setAgentId] = useState(project.agents[0]?.id ?? "");
+  const [messages, setMessages] = useState<AgentHistoryMessage[]>([]);
+  const [nextBefore, setNextBefore] = useState<number>();
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [archive, setArchive] = useState<AgentHistoryArchiveResponse>();
+
+  useEffect(() => {
+    if (!project.agents.some((agent) => agent.id === agentId)) setAgentId(project.agents[0]?.id ?? "");
+  }, [project.id, project.agents.length]);
+
+  useEffect(() => {
+    if (agentId) void loadPage(true);
+  }, [project.id, agentId]);
+
+  async function loadPage(reset = false) {
+    if (!agentId) return;
+    setLoading(true);
+    setError("");
+    try {
+      const page = await loadAgentHistory(project.id, agentId, { limit: 80, before: reset ? undefined : nextBefore, includeArchived: true });
+      setMessages((current) => reset ? page.messages : [...current, ...page.messages]);
+      setNextBefore(page.nextBefore);
+      if (reset) setArchive(undefined);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function openArchive(message: AgentHistoryMessage) {
+    const compactionId = historyCompactionId(message);
+    if (!compactionId) return;
+    setLoading(true);
+    setError("");
+    try {
+      setArchive(await loadAgentHistoryArchive(project.id, agentId, compactionId));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div class="split-stack">
+      <Panel title="Agent history" subtitle="Append-only model-visible history, paged by agent">
+        <div class="history-toolbar">
+          <label><span>Agent</span><select value={agentId} onChange={(event) => setAgentId(event.currentTarget.value)}>{project.agents.map((agent) => <option value={agent.id}>{agent.displayName} / {agent.id}</option>)}</select></label>
+          <button class="ghost-button" disabled={loading || !agentId} onClick={() => void loadPage(true)}>{loading ? "Loading" : "Reload"}</button>
+        </div>
+        {error && <div class="form-error">{error}</div>}
+        <div class="history-list">
+          {messages.length ? messages.map((message) => <HistoryItem message={message} onArchive={openArchive} />) : <Blank label={loading ? "Loading history..." : "No history for this agent yet"} />}
+        </div>
+        {nextBefore !== undefined && <button class="ghost-button full" disabled={loading} onClick={() => void loadPage(false)}>{loading ? "Loading" : "Load older history"}</button>}
+      </Panel>
+      {archive && (
+        <Panel title="Compaction archive" subtitle="Raw local snapshot saved before compaction">
+          <div class="context-toolbar"><div class="context-stats"><span>{String(archive.compaction.id ?? "archive")}</span><span>{String(archive.compaction.archivedMessageCount ?? "?")} messages</span><span>{String(archive.compaction.rawChars ?? "?")} chars</span></div><button class="ghost-button" onClick={() => setArchive(undefined)}>Close</button></div>
+          <pre class="code-panel">{JSON.stringify(archive.archive, null, 2)}</pre>
+        </Panel>
+      )}
+    </div>
+  );
+}
+
+function HistoryItem({ message, onArchive }: { message: AgentHistoryMessage; onArchive: (message: AgentHistoryMessage) => void }) {
+  const compactionId = historyCompactionId(message);
+  const title = `${message.sequence}. ${message.role} / ${message.kind}`;
+  return (
+    <article class={`history-item history-${message.role} ${message.archived ? "archived" : ""}`}>
+      <div class="item-title"><strong>{title}</strong><small>{formatRelative(message.createdAt)}</small></div>
+      <div class="history-meta"><span>{message.id}</span>{message.activationId && <span>{message.activationId}</span>}{message.archived && <span>archived</span>}</div>
+      <details open={message.role === "compaction" || message.role === "user"}>
+        <summary>{message.content.length.toLocaleString()} chars</summary>
+        <pre>{message.content}</pre>
+      </details>
+      {compactionId && message.role === "compaction" && <button class="ghost-button mini-button" onClick={() => onArchive(message)}>View raw archive</button>}
+    </article>
+  );
 }
 
 function ActivationsPanel({ projectId, activations, loading }: { projectId: string; activations: Activation[]; loading: boolean }) {
@@ -396,4 +487,5 @@ function EmptyState({ loading }: { loading: boolean }) { return <section class="
 function initials(value: string): string { return value.split(/[\s_-]+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase(); }
 function formatTime(value: string): string { return new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }); }
 function formatRelative(value: string): string { const seconds = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 1000)); if (seconds < 60) return `${seconds}s ago`; if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`; if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`; return `${Math.floor(seconds / 86400)}d ago`; }
+function historyCompactionId(message: AgentHistoryMessage): string | undefined { const value = message.metadata?.compactionId ?? message.compactionId; return typeof value === "string" ? value : undefined; }
 function summarizeJson(value: string): string { try { const parsed = JSON.parse(value) as Record<string, unknown>; return Object.entries(parsed).slice(0, 4).map(([key, item]) => `${key}: ${typeof item === "string" ? item : JSON.stringify(item)}`).join(" - ") || "No payload"; } catch { return value; } }

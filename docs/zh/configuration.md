@@ -350,7 +350,7 @@ agents:
 | 字段            | 是否必需 | 说明                                                                                          |
 |-----------------|----------|-----------------------------------------------------------------------------------------------|
 | `name`          | 是       | `SUZUMIO_ROOT` 下的项目 id 和运行目录名。                                                     |
-| `task`          | 是       | 持久任务描述，会渲染进每个 activation prompt。                                                |
+| `task`          | 是       | 持久任务描述，会渲染进第一次 activation prompt，并通过 agent history 延续。                    |
 | `agents`        | 是       | Agent id 到 agent config 的映射。至少需要一个 agent。                                         |
 | `tools`         | 否       | 项目注册的 toolpacks。默认包含 `core` 和 `web`；需要容器内 bash 和共享 artifact 文件时添加 `shell`。 |
 | `extends`       | 否       | 一个 profile object 或 profile object 列表，在本地字段之前合并。                              |
@@ -493,9 +493,9 @@ Suzumio 会拒绝循环 import 和过深的 import 链，避免项目意外无�
 
 ## Scheduler Defaults
 
-多数项目应省略 `scheduler`。默认行为是 signal-driven 且非抢占：idle agent 会因 pending signal 醒来，running agent 不会被打断。高级项目可以设置 `scheduler.kind` 或 `scheduler.maxSignalsPerActivation`；默认每次 activation 最多投递 20 个 pending signals。
+多数项目应省略 `scheduler`。默认行为是 signal-driven：idle agent 会因 pending signal 醒来，`P0` 会中断并重启 running agent，`P1` 会尽量在下一次 tool boundary 投递，`P2` 等待下一次 activation。高级项目可以设置 `scheduler.kind` 或 `scheduler.maxSignalsPerActivation`；默认每次 activation 最多投递 20 个 pending signals。
 
-Docker chat runner 会在 `/workspace/.suzumio/session-context.json` 保存每个 agent 的 session context。第一次完整 activation prompt 会固定保留在模型消息列表最前面；之后每次 activation 只追加新的 prompt 和最近的 assistant/tool 记录。当 provider 返回的 token usage 接近模型 context budget 时，runner 会总结较旧 turns，并保留固定的第一条 prompt、summary、最新 turns 和新的 prompt。Scheduler 侧历史只在第一次 activation 中包含。
+Suzumio 会在 SQLite 中保存每个 agent 的模型历史。每次 activation prompt、可见 assistant 输出、tool call、tool result 和 compaction marker 都会 append 到 history。Runner 下一次调用模型时会把 active history 重新传给模型。当模型 context budget 不够时，旧 history 会被总结成 compaction message，compact 前的完整 raw 范围会本地归档，供 WebUI 或人工查看。
 
 ## Backend Config
 
@@ -561,7 +561,7 @@ Docker chat runner 会在 `/workspace/.suzumio/session-context.json` 保存每�
 
 Model 选择是显式的。可以在 `backend.runner.model` 设置项目级选择，或在 `agents.*.model` 为每个 agent 设置。带 `model-list` 的 preset 会展开成有序 fallback 列表；runner 会按顺序尝试其中的 concrete preset。多数配置里，`model` 同时也是 provider-facing model id。只有当本地 preset 名称需要和 provider API 模型名不同时，才使用 `apiModel`。
 
-Runner session context 是 Docker chat prototype 的一部分，不再暴露成用户配置面。请在 model preset 上设置 `contextLimit`，runner 会根据 provider-reported usage 判断何时压缩旧 turns。
+Agent history compaction 是 Docker chat runner 的一部分，不暴露成用户配置面。请在 model preset 上设置 `contextLimit`，runner 会根据 provider-reported usage 判断何时压缩旧 history。
 
 <div class="notice danger">
 

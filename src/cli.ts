@@ -190,7 +190,7 @@ function numberFlag(args: string[], name: string, fallback: number): number {
 }
 
 function parsePriority(value: string): MessagePriority {
-  if (value === "P0" || value === "P1" || value === "P2" || value === "P3") return value;
+  if (value === "P0" || value === "P1" || value === "P2") return value;
   throw new Error(`Invalid priority: ${value}`);
 }
 
@@ -204,7 +204,7 @@ Commands:
   suzumio start <project> [--root dir]
   suzumio stop <project> [--root dir]
   suzumio approve <project> [--root dir]
-  suzumio send <project> <recipient> <P0|P1|P2|P3> <message...> [--root dir]
+  suzumio send <project> <recipient> <P0|P1|P2> <message...> [--root dir]
   suzumio status [project] [--root dir]
   suzumio messages <project> [--limit n] [--root dir]
   suzumio activations <project> [--limit n] [--root dir]

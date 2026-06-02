@@ -29,6 +29,7 @@ export class DockerChatBackend {
       runner: config.backend.runner,
       tools: runnerToolpacks.flatMap((toolpack) => toolpack.tools),
       toolpacks: runnerToolpacks,
+      history: store.activeAgentHistory(agent.id),
     };
     await writeFile(activation.inputPath, JSON.stringify(input, null, 2) + "\n", "utf8");
     const containerName = safeName(`suzumio_${store.project}_${agent.id}_${activation.id}`);
@@ -44,6 +45,21 @@ export class DockerChatBackend {
         next.close();
       }
     });
+  }
+
+  async stopActivation(activation: ActivationRecord): Promise<void> {
+    if (!activation.containerName) return;
+    const container = this.docker.getContainer(activation.containerName);
+    try {
+      await container.stop({ t: 2 });
+    } catch (error) {
+      if (dockerStatusCode(error) === 304 || dockerStatusCode(error) === 404) return;
+      try {
+        await container.kill();
+      } catch (killError) {
+        if (dockerStatusCode(killError) !== 304 && dockerStatusCode(killError) !== 404) throw killError;
+      }
+    }
   }
 
   private async createContainer(config: ProjectConfig, agent: AgentRecord, agents: AgentRecord[], activation: ActivationRecord, containerName: string, toolpacks: ResolvedToolpack[], artifactsRoot: string): Promise<Docker.Container> {
@@ -86,6 +102,7 @@ export class DockerChatBackend {
     const store = new ProjectStore(project, this.root);
     try {
       const activation = store.activation(activationId);
+      if (activation.status !== "running") return;
       if (result.StatusCode !== 0) {
         const logs = await container.logs({ stdout: true, stderr: true, tail: 200 }).catch(() => Buffer.from(""));
         store.failActivation(activationId, `Runner exited with ${result.StatusCode}\n${logs.toString("utf8")}`.trim());
@@ -97,6 +114,12 @@ export class DockerChatBackend {
       store.close();
     }
   }
+}
+
+function dockerStatusCode(error: unknown): number | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const value = (error as { statusCode?: unknown }).statusCode;
+  return typeof value === "number" ? value : undefined;
 }
 
 async function ensureArtifactDirs(artifactsRoot: string, agents: AgentRecord[]): Promise<void> {

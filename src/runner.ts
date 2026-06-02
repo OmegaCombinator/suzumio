@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { ProxyAgent, fetch as undiciFetch, type Dispatcher } from "undici";
 import { jsonSchema, stepCountIs, streamText, tool as aiTool, type ModelMessage } from "ai";
 import { resolveRunnerModels, type ResolvedRunnerModel } from "./runner-model.js";
 import { assertNodeFetchProxySupported, proxyForUrl } from "./proxy.js";
-import type { ActivationContextSnapshot, JsonObject, RunnerActivationInput, RunnerActivationOutput, RunnerToolpackSpec, ToolDefinition } from "./types.js";
+import type { ActivationContextSnapshot, AgentHistoryMessage, JsonObject, RunnerActivationInput, RunnerActivationOutput, RunnerToolpackSpec, ToolDefinition } from "./types.js";
 
 type ToolResult = { title?: string; output: string; metadata?: JsonObject };
 type RunnerToolHandler = (input: unknown) => Promise<ToolResult>;
@@ -17,21 +17,18 @@ type EndActivationCallback = (output: string) => void;
 type ActivationEnded = () => boolean;
 type FetchWithDispatcher = (url: Parameters<typeof fetch>[0], init?: RequestInit & { dispatcher: Dispatcher }) => ReturnType<typeof fetch>;
 type TokenUsage = { input?: number; output?: number; total?: number; reasoning?: number; cacheRead?: number; cacheWrite?: number };
-type SessionContextTurn = { userPrompt?: string; assistant: string; toolActivity?: string[]; usage?: TokenUsage; createdAt: string };
-type SessionContextState = { version: 1; originalPrompt: string; summary?: string; turns: SessionContextTurn[]; updatedAt?: string };
+type ToolCallFinishOutput = { status: "completed" | "failed"; deliveredSignals?: number; signalText?: string };
 
 const fetchWithDispatcher = undiciFetch as unknown as FetchWithDispatcher;
 const webProxyDispatchers = new Map<string, ProxyAgent>();
 const EFFECTIVELY_UNBOUNDED_STEPS = 1_000_000;
-const SESSION_CONTEXT_VERSION = 1;
-const SESSION_CONTEXT_DIR = ".suzumio";
-const SESSION_CONTEXT_FILE = "session-context.json";
 const DEFAULT_CONTEXT_LIMIT = 120_000;
 const COMPACTION_BUFFER = 20_000;
-const DEFAULT_TAIL_TURNS = 2;
+const DEFAULT_TAIL_MESSAGES = 12;
 const MAX_TURN_CHARS = 20_000;
 const MAX_TOOL_CHARS = 2_000;
 const MAX_SUMMARY_CHARS = 20_000;
+const MAX_SUMMARY_HISTORY_CHARS = 140_000;
 const SUMMARY_OUTPUT_TOKENS = 4_000;
 const SUMMARY_TEMPLATE = `Output exactly the Markdown structure shown inside <template> and keep the section order unchanged. Do not include the <template> tags in your response.
 <template>
@@ -107,8 +104,9 @@ async function runAiWithModel(input: RunnerActivationInput, resolved: ResolvedRu
   const abortController = new AbortController();
   let activationEnded = false;
   let endActivationOutput: string | undefined;
-  const sessionContext = await loadSessionContext(input);
-  const firstPrompt = isFirstPrompt(sessionContext, input.activation.prompt);
+  let history = input.history ?? [];
+  history = await compactHistoryBeforeRequest(input, resolved, history);
+  const firstPrompt = isFirstActivationPrompt(history);
   const toolTranscript: string[] = [];
   const tools = await toAiTools(input, () => {
     toolCalls += 1;
@@ -117,10 +115,10 @@ async function runAiWithModel(input: RunnerActivationInput, resolved: ResolvedRu
     activationEnded = true;
     endActivationOutput = output;
     abortController.abort();
-  }, () => activationEnded, (toolName, result) => {
-    toolTranscript.push(renderToolTranscript(toolName, result));
+  }, () => activationEnded, (toolName, args, result) => {
+    toolTranscript.push(renderToolTranscript(toolName, args, result));
   });
-  const messages = sessionMessages(input, sessionContext, firstPrompt);
+  const messages = historyMessages(history);
   await submitActivationContext(input, resolved, messages, firstPrompt).catch((error) => console.warn("activation context submit failed", errorMessage(error)));
   let text = "";
   let usage: TokenUsage | undefined;
@@ -144,7 +142,8 @@ async function runAiWithModel(input: RunnerActivationInput, resolved: ResolvedRu
   const output = (toolOutput?: string): RunnerActivationOutput => ({ text: text.trim() || toolOutput || "(model returned no text)", usage: { selectedModel: resolved.selectedPresetId, model: resolved.presetId, apiModel: resolved.apiModel, ...(usage ? { tokens: usage as unknown as JsonObject } : {}) } });
   const finish = async (toolOutput?: string): Promise<RunnerActivationOutput> => {
     const completed = output(toolOutput);
-    await saveSessionTurn(input, resolved, sessionContext, firstPrompt, completed.text, toolTranscript, usage);
+    await submitHistoryAssistant(input, completed, resolved, usage).catch((error) => console.warn("assistant history submit failed", errorMessage(error)));
+    await compactHistoryAfterResponse(input, resolved, history, completed.text, toolTranscript, usage).catch((error) => console.warn("history compaction failed", errorMessage(error)));
     return completed;
   };
   try {
@@ -165,74 +164,51 @@ async function runAiWithModel(input: RunnerActivationInput, resolved: ResolvedRu
   return await finish();
 }
 
-async function loadSessionContext(input: RunnerActivationInput): Promise<SessionContextState> {
-  try {
-    const parsed = JSON.parse(await readFile(sessionContextPath(input), "utf8")) as Partial<SessionContextState>;
-    if (parsed.version === SESSION_CONTEXT_VERSION && typeof parsed.originalPrompt === "string" && Array.isArray(parsed.turns)) {
-      return {
-        version: SESSION_CONTEXT_VERSION,
-        originalPrompt: parsed.originalPrompt,
-        summary: optionalString(parsed.summary),
-        turns: parsed.turns.filter(isSessionContextTurn),
-        updatedAt: optionalString(parsed.updatedAt),
-      };
-    }
-  } catch (error) {
-    if (!(error instanceof Error) || !errorMessage(error).includes("ENOENT")) throw error;
-  }
-  return { version: SESSION_CONTEXT_VERSION, originalPrompt: input.activation.prompt, turns: [] };
+async function compactHistoryBeforeRequest(input: RunnerActivationInput, resolved: ResolvedRunnerModel, history: AgentHistoryMessage[]): Promise<AgentHistoryMessage[]> {
+  if (!historyNeedsCompaction(history, resolved)) return history;
+  const summary = await summarizeAgentHistory(resolved, history.slice(0, -DEFAULT_TAIL_MESSAGES), undefined);
+  const response = await postJson<{ history?: AgentHistoryMessage[] }>(new URL("/runner/history/compact", input.controllerUrl), {
+    project: input.project,
+    agentId: input.agent.id,
+    activationId: input.activation.id,
+    token: input.token,
+    summary,
+    keepTail: DEFAULT_TAIL_MESSAGES,
+    reason: "pre_request_context_budget",
+    selectedModel: resolved.selectedPresetId,
+  });
+  return response.history?.length ? response.history : history;
 }
 
-async function saveSessionTurn(input: RunnerActivationInput, resolved: ResolvedRunnerModel, state: SessionContextState, firstPrompt: boolean, assistantText: string, toolTranscript: string[], usage: TokenUsage | undefined): Promise<void> {
-  const next: SessionContextState = {
-    ...state,
-    turns: [
-      ...state.turns,
-      {
-        userPrompt: firstPrompt ? undefined : trimChars(input.activation.prompt, MAX_TURN_CHARS),
-        assistant: trimChars(assistantText, MAX_TURN_CHARS),
-        toolActivity: toolTranscript.length ? toolTranscript.map((item) => trimChars(item, MAX_TOOL_CHARS)) : undefined,
-        usage,
-        createdAt: new Date().toISOString(),
-      },
-    ],
-    updatedAt: new Date().toISOString(),
-  };
-  await writeSessionContext(input, usage && isOverflow(usage, resolved) ? await compactSessionContext(input, resolved, next) : next);
+async function compactHistoryAfterResponse(input: RunnerActivationInput, resolved: ResolvedRunnerModel, history: AgentHistoryMessage[], assistantText: string, toolTranscript: string[], usage: TokenUsage | undefined): Promise<void> {
+  const synthetic = [
+    ...history,
+    ...toolTranscript.map((item, index) => syntheticHistoryMessage("tool_result", `tool_result_${index}`, item)),
+    syntheticHistoryMessage("assistant", "assistant_output", assistantText),
+  ];
+  if (!(usage && isOverflow(usage, resolved)) && !historyNeedsCompaction(synthetic, resolved)) return;
+  const summary = await summarizeAgentHistory(resolved, synthetic.slice(0, -DEFAULT_TAIL_MESSAGES), usage);
+  await postJson(new URL("/runner/history/compact", input.controllerUrl), {
+    project: input.project,
+    agentId: input.agent.id,
+    activationId: input.activation.id,
+    token: input.token,
+    summary,
+    keepTail: DEFAULT_TAIL_MESSAGES,
+    reason: usage && isOverflow(usage, resolved) ? "post_response_token_budget" : "post_response_context_budget",
+    selectedModel: resolved.selectedPresetId,
+  });
 }
 
-async function compactSessionContext(input: RunnerActivationInput, resolved: ResolvedRunnerModel, state: SessionContextState): Promise<SessionContextState> {
-  const head = state.turns.slice(0, -DEFAULT_TAIL_TURNS);
-  const tail = state.turns.slice(-DEFAULT_TAIL_TURNS);
-  if (head.length === 0) return { ...state, turns: tail };
-  return {
-    ...state,
-    summary: trimChars(await summarizeSessionContext(input, resolved, state.summary, state.originalPrompt, head), MAX_SUMMARY_CHARS),
-    turns: tail,
-    updatedAt: new Date().toISOString(),
-  };
-}
-
-async function summarizeSessionContext(input: RunnerActivationInput, resolved: ResolvedRunnerModel, previousSummary: string | undefined, originalPrompt: string, turns: SessionContextTurn[]): Promise<string> {
-  const anchor = previousSummary
-    ? [
-        "Update the anchored summary below using the conversation history above.",
-        "Preserve still-true details, remove stale details, and merge in the new facts.",
-        "<previous-summary>",
-        previousSummary,
-        "</previous-summary>",
-      ].join("\n")
-    : "Create a new anchored summary from the conversation history above.";
+async function summarizeAgentHistory(resolved: ResolvedRunnerModel, history: AgentHistoryMessage[], usage: TokenUsage | undefined): Promise<string> {
   const prompt = [
     "You are compacting a long-running autonomous agent session for future continuation.",
     "Preserve the exact target, constraints, proof state, important lemmas, computations, file paths, commands, errors, artifact paths, verification facts, blockers, and next steps. Remove chatter and duplicated attempts.",
-    anchor,
+    usage ? `Recent token usage: ${JSON.stringify(usage)}` : undefined,
     SUMMARY_TEMPLATE,
-    "# Original Prompt",
-    originalPrompt,
-    "# Conversation History",
-    ...turns.map(renderTurnForSummary),
-  ].join("\n\n");
+    "# Agent History To Compact",
+    trimHistoryForSummary(history),
+  ].filter(Boolean).join("\n\n");
   let text = "";
   const result = streamText({
     model: resolved.languageModel as never,
@@ -249,37 +225,59 @@ async function summarizeSessionContext(input: RunnerActivationInput, resolved: R
     if (event.type === "text-delta") text += event.text;
     if (event.type === "error") throw event.error;
   }
-  return text.trim() || previousSummary || "No durable session facts were recovered.";
+  return trimChars(text.trim() || "No durable session facts were recovered.", MAX_SUMMARY_CHARS);
 }
 
-function sessionMessages(input: RunnerActivationInput, state: SessionContextState, firstPrompt: boolean): ModelMessage[] {
-  const messages: ModelMessage[] = [{ role: "user", content: state.originalPrompt }];
-  if (state.summary) messages.push({ role: "user", content: `# Compacted Session Summary\n\n${state.summary}` });
-  for (const turn of state.turns) {
-    if (turn.userPrompt) messages.push({ role: "user", content: turn.userPrompt });
-    messages.push({ role: "assistant", content: renderTurnAssistant(turn) });
+function historyMessages(history: AgentHistoryMessage[]): ModelMessage[] {
+  const messages: ModelMessage[] = [];
+  for (const item of history) {
+    const content = renderHistoryMessageForModel(item);
+    if (!content.trim()) continue;
+    messages.push({ role: modelRole(item), content });
   }
-  if (!firstPrompt) messages.push({ role: "user", content: input.activation.prompt });
-  return messages;
+  return messages.length ? messages : [{ role: "user", content: "Continue the assigned Suzumio activation." }];
 }
 
-async function writeSessionContext(input: RunnerActivationInput, state: SessionContextState): Promise<void> {
-  await mkdir(path.dirname(sessionContextPath(input)), { recursive: true });
-  await writeFile(sessionContextPath(input), JSON.stringify(state, null, 2) + "\n", "utf8");
+function renderHistoryMessageForModel(item: AgentHistoryMessage): string {
+  if (item.role === "compaction") return `# Compacted Agent History\n\n${item.content}`;
+  if (item.role === "tool_call") return `# Tool Call Record\n\n${item.content}`;
+  if (item.role === "tool_result") return `# Tool Result Record\n\n${item.content}`;
+  return item.content;
 }
 
-function sessionContextPath(input: RunnerActivationInput): string {
-  return path.join(input.workspace, SESSION_CONTEXT_DIR, SESSION_CONTEXT_FILE);
+function modelRole(item: AgentHistoryMessage): "user" | "assistant" {
+  if (item.role === "assistant" || item.role === "tool_call") return "assistant";
+  return "user";
 }
 
-function isSessionContextTurn(value: unknown): value is SessionContextTurn {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const turn = value as Record<string, unknown>;
-  return (turn.userPrompt === undefined || typeof turn.userPrompt === "string") && typeof turn.assistant === "string" && typeof turn.createdAt === "string" && (turn.toolActivity === undefined || Array.isArray(turn.toolActivity));
+function isFirstActivationPrompt(history: AgentHistoryMessage[]): boolean {
+  return history.filter((item) => item.kind === "activation_prompt").length <= 1;
 }
 
-function isFirstPrompt(state: SessionContextState, prompt: string): boolean {
-  return state.turns.length === 0 && !state.summary && state.originalPrompt === prompt;
+function historyNeedsCompaction(history: AgentHistoryMessage[], resolved: ResolvedRunnerModel): boolean {
+  if (history.length <= DEFAULT_TAIL_MESSAGES) return false;
+  return history.reduce((sum, item) => sum + item.content.length, 0) >= usableContextTokens(resolved) * 3;
+}
+
+function trimHistoryForSummary(history: AgentHistoryMessage[]): string {
+  let used = 0;
+  const rendered: string[] = [];
+  for (const item of history) {
+    const body = trimChars(renderHistoryForSummary(item), MAX_TURN_CHARS);
+    const remaining = MAX_SUMMARY_HISTORY_CHARS - used;
+    if (remaining <= 0) break;
+    rendered.push(body.length > remaining ? trimChars(body, remaining) : body);
+    used += body.length;
+  }
+  return rendered.join("\n\n");
+}
+
+function renderHistoryForSummary(item: AgentHistoryMessage): string {
+  return [`## ${item.sequence} ${item.role} ${item.kind}`, `Time: ${item.createdAt}`, item.activationId ? `Activation: ${item.activationId}` : undefined, item.compactionId ? `Archived by: ${item.compactionId}` : undefined, "", item.content].filter(Boolean).join("\n");
+}
+
+function syntheticHistoryMessage(role: "assistant" | "tool_result", kind: string, content: string): AgentHistoryMessage {
+  return { id: kind, project: "", agentId: "", role, kind, content, sequence: 0, archived: false, createdAt: new Date().toISOString() };
 }
 
 function isOverflow(usage: TokenUsage, resolved: ResolvedRunnerModel): boolean {
@@ -324,22 +322,8 @@ function trimChars(text: string, maxChars: number): string {
   return `${trimmed.slice(0, maxChars).trimEnd()}\n\n[truncated ${trimmed.length - maxChars} chars]`;
 }
 
-function renderTurnAssistant(turn: SessionContextTurn): string {
-  return [turn.assistant, turn.toolActivity?.length ? ["# Tool Activity", ...turn.toolActivity].join("\n\n") : undefined].filter(Boolean).join("\n\n");
-}
-
-function renderTurnForSummary(turn: SessionContextTurn): string {
-  return [
-    `## Turn ${turn.createdAt}`,
-    turn.userPrompt ? `### User\n${turn.userPrompt}` : undefined,
-    `### Assistant\n${turn.assistant}`,
-    turn.toolActivity?.length ? ["### Tool Activity", ...turn.toolActivity].join("\n\n") : undefined,
-    turn.usage ? `### Token Usage\n${JSON.stringify(turn.usage)}` : undefined,
-  ].filter(Boolean).join("\n\n");
-}
-
-function renderToolTranscript(toolName: string, result: ToolResult): string {
-  return trimChars([`## ${toolName}${result.title ? `: ${result.title}` : ""}`, result.output].join("\n"), MAX_TOOL_CHARS);
+function renderToolTranscript(toolName: string, args: unknown, result: ToolResult): string {
+  return trimChars([`## ${toolName}${result.title ? `: ${result.title}` : ""}`, "### Input", JSON.stringify(args ?? {}, null, 2), "### Output", result.output].join("\n"), MAX_TOOL_CHARS);
 }
 
 function providerOptionsFor(resolved: ResolvedRunnerModel): JsonObject {
@@ -374,6 +358,19 @@ async function submitActivationOutput(input: RunnerActivationInput, output: Runn
     throw controllerConnectionError(error);
   }
   if (!response.ok) throw new Error((await response.text()) || `Activation output submit failed: ${response.status}`);
+}
+
+async function submitHistoryAssistant(input: RunnerActivationInput, output: RunnerActivationOutput, resolved: ResolvedRunnerModel, usage: TokenUsage | undefined): Promise<void> {
+  await postJson(new URL("/runner/history/messages", input.controllerUrl), {
+    project: input.project,
+    agentId: input.agent.id,
+    activationId: input.activation.id,
+    token: input.token,
+    role: "assistant",
+    kind: "assistant_output",
+    content: output.text,
+    metadata: { selectedModel: resolved.selectedPresetId, model: resolved.presetId, apiModel: resolved.apiModel, usage },
+  });
 }
 
 async function submitActivationContext(input: RunnerActivationInput, resolved: ResolvedRunnerModel, messages: ModelMessage[], firstPrompt: boolean): Promise<void> {
@@ -411,7 +408,7 @@ function modelMessageText(message: ModelMessage): string {
   return JSON.stringify(content ?? "");
 }
 
-async function toAiTools(input: RunnerActivationInput, limitToolCall: ToolCallLimiter, endActivation: EndActivationCallback, activationEnded: ActivationEnded, recordToolResult?: (toolName: string, result: ToolResult) => void): Promise<Record<string, unknown>> {
+async function toAiTools(input: RunnerActivationInput, limitToolCall: ToolCallLimiter, endActivation: EndActivationCallback, activationEnded: ActivationEnded, recordToolResult?: (toolName: string, args: unknown, result: ToolResult) => void): Promise<Record<string, unknown>> {
   const result: Record<string, unknown> = {};
   const tools = await loadRunnerTools(input);
   const seenSafeNames = new Map<string, string>();
@@ -428,7 +425,7 @@ async function toAiTools(input: RunnerActivationInput, limitToolCall: ToolCallLi
         limitToolCall();
         if (activationEnded()) return { title: "activation ended", output: "Activation already ended; tool call ignored." };
         const toolResult = await callTool(input, registered, args, endActivation);
-        recordToolResult?.(registered.definition.name, toolResult);
+        recordToolResult?.(registered.definition.name, args, toolResult);
         return toolResult;
       },
     } as never);
@@ -490,7 +487,8 @@ async function callTool(input: RunnerActivationInput, registered: RegisteredTool
     await finishToolCall(input, toolCall.toolCallId, "failed", undefined, message).catch(() => undefined);
     throw error;
   }
-  await finishToolCall(input, toolCall.toolCallId, "completed", result.output);
+  const finished = await finishToolCall(input, toolCall.toolCallId, "completed", result.output);
+  if (finished.signalText) result = { ...result, output: [result.output, finished.signalText].filter(Boolean).join("\n\n") };
   if (endsActivation(registered.definition.name)) endActivation(result.output);
   return result;
 }
@@ -503,8 +501,8 @@ function isAbortError(error: unknown): boolean {
   return error instanceof Error && (error.name === "AbortError" || error.message.toLowerCase().includes("abort"));
 }
 
-async function finishToolCall(input: RunnerActivationInput, toolCallId: string, status: "completed" | "failed", output?: string, error?: string): Promise<void> {
-  await postJson(new URL("/runner/tool-calls/finish", input.controllerUrl), {
+async function finishToolCall(input: RunnerActivationInput, toolCallId: string, status: "completed" | "failed", output?: string, error?: string): Promise<ToolCallFinishOutput> {
+  return postJson<ToolCallFinishOutput>(new URL("/runner/tool-calls/finish", input.controllerUrl), {
     project: input.project,
     agentId: input.agent.id,
     activationId: input.activation.id,

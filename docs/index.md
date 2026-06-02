@@ -25,7 +25,7 @@ Suzumio is a YAML-based multi-agent system. You do not start by writing orchestr
 - how agents should coordinate;
 - which Docker runner and model presets to use.
 
-The runtime then handles the boring coordination mechanics: storing state in SQLite, starting Docker activations, delivering messages as signals, preventing running agents from being interrupted, mounting shared files, and recording tool calls.
+The runtime then handles the boring coordination mechanics: storing state in SQLite, starting Docker activations, delivering messages as signals, applying priority rules, mounting shared files, and recording tool calls.
 
 ## A Tiny Project
 
@@ -72,7 +72,7 @@ suzumio send tiny-research pm P1 "Start."
 | `agents` | The roster and prompts | Each agent becomes a durable participant with its own workspace and shared artifact directory. |
 | `agents.<id>.tools` | The model-visible allowlist | A worker cannot call tools it was not given. |
 | `tools.toolpacks` | Which tool families exist | `core` gives messages/wait/submit; `shell` gives Python/bash; `web` gives HTTP fetch. |
-| `scheduler` | Signal delivery policy | Idle agents with pending signals get one activation; running agents are not interrupted. |
+| `scheduler` | Signal delivery policy | Idle agents with pending signals get one activation; `P0` can interrupt a running activation. |
 | `backend` | Docker/model/proxy settings | The runner image, controller URL, model presets, mounts, network, and proxy are resolved from YAML. |
 
 ## The Default Collaboration Loop

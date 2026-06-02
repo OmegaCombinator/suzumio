@@ -30,6 +30,7 @@ lead: "Suzumio separates orchestration from execution. The core process owns pro
       Runs AI mode
       Runs model-facing tools
       Calls Suzumio support routes for stateful tools
+      Appends docker-chat agent history through support routes
       POSTs /activation-output with final text
 
 ## Core Process
@@ -39,8 +40,8 @@ The core process is the authority for project-level records. If data should be v
 | Module         | Responsibility                                                                                                                          |
 |----------------|-----------------------------------------------------------------------------------------------------------------------------------------|
 | `config.ts`    | Loads YAML, resolves imports, applies `extends`, validates config, and renders final YAML.                                              |
-| `store.ts`     | Creates and queries SQLite tables for projects, agents, messages, signals, activations, events, and tool calls.                         |
-| `scheduler.ts` | Implements the signal-driven non-preemptive scheduling rule.                                                                            |
+| `store.ts`     | Creates and queries SQLite tables for projects, agents, messages, signals, agent history, activations, events, and tool calls.          |
+| `scheduler.ts` | Implements signal delivery, including `P0` interruption and `P1` tool-boundary delivery.                                                 |
 | `tools.ts`     | Resolves built-in and local toolpacks and serves controller support with token and allowlist checks.                                    |
 | `server.ts`    | HTTP API, SSE stream, controller support route, activation result route, and static WebUI asset serving.                                 |
 | `webui/`       | Preact + Vite project for the browser control room served at `/`.                                                                        |
@@ -61,6 +62,7 @@ The runner receives context through one read-only input file and reports complet
       runner: RunnerConfig
       tools: ToolDefinition[]
       toolpacks: RunnerToolpackSpec[]
+      history?: AgentHistoryMessage[]
     }
 
     type RunnerActivationOutput = {
@@ -95,9 +97,17 @@ Completed containers are currently kept for early debugging. Cleanup policy shou
 
 The model does not receive arbitrary host tools by default. Tools are configured per agent. `shell.exec` and `web.fetch` run inside the Docker runner; message, completion, and coordination tools use Suzumio support APIs.
 
+## Agent History
+
+Agent continuity is stored as append-only history rows in SQLite, not as a container-local session file. Before starting an activation, the backend snapshots the target agent's active history into `/activation/input.json`. The docker-chat runner turns that history into model messages, then appends visible assistant output and audited tool records through runner-internal support routes.
+
+Compaction is decided by the docker-chat runner when provider usage or configured context limits require it. The runner generates the summary, then calls a runner-internal persistence route so the Suzumio-side docker-chat support can archive the raw compacted range and append a compaction marker. The scheduler does not assign or decide compaction.
+
 ## Signal Delivery
 
-Agents do not poll for work. Suzumio renders pending signals into the next activation prompt and records which activation received each signal. This avoids polling loops and makes scheduling decisions auditable.
+Agents do not poll for work. Suzumio appends pending signals into the target agent history and records which activation received each signal. This avoids polling loops and makes scheduling decisions auditable.
+
+Priority controls when a pending signal becomes model-visible. `P0` cancels the current activation and restarts the agent with the new signal. `P1` is injected after the next completed tool call when possible, otherwise it waits for the next activation. `P2` waits until the current activation completes and is delivered at the next activation start.
 
 Messages create `message.created` signals. Shared artifact files are ordinary durable files and do not wake agents by themselves. Custom toolpacks can call `recordSignal` to create pending coordination work or closed useful effects.
 
@@ -111,12 +121,15 @@ Each project has one SQLite file. The container runner does not maintain the pro
 | `agents`        | Agent roster, prompts, tool allowlists, token, active activation.  |
 | `messages`      | Direct and channel messages.                                       |
 | `signals`       | Scheduler inputs, delivered signal records, and useful effects.    |
+| `agent_history_messages` | Per-agent model-visible history records.                  |
+| `agent_history_parts` | Structured text/tool/compaction parts for history records.     |
+| `agent_history_compactions` | Raw archive metadata for compacted history ranges.      |
 | `activations`   | Activation execution records and output text.                      |
 | `events`        | Append-style event timeline.                                       |
 | `tool_calls`    | Audited tool execution records.                                    |
 
 ## Why the Boundary Matters
 
-Keeping project truth in the core runtime makes agent execution disposable. A runner can fail, be replaced, or be upgraded while the project database, message history, shared artifact files, and user-control surface remain stable.
+Keeping project truth in the core runtime makes agent execution disposable. A runner can fail, be replaced, or be upgraded while the project database, agent histories, shared artifact files, and user-control surface remain stable.
 
 <div class="footer">Next: <a href="operations.html">Operations</a>.</div>

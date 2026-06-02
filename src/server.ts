@@ -5,7 +5,7 @@ import { readFile } from "node:fs/promises";
 import { ProjectStore } from "./store.js";
 import { ToolSupportHost } from "./tools.js";
 import { NonPreemptiveSignalScheduler } from "./scheduler.js";
-import type { ActivationContextSnapshot, ActivationRecord, AgentRecord, MessagePriority, MessageRecord, RunnerActivationOutput } from "./types.js";
+import type { ActivationContextSnapshot, ActivationRecord, AgentHistoryRole, AgentRecord, JsonObject, MessagePriority, MessageRecord, RunnerActivationOutput } from "./types.js";
 
 export type ServeOptions = {
   host: string;
@@ -46,6 +46,8 @@ async function handleRequest(
   if (request.method === "POST" && url.pathname === "/runner/tool-calls/start") return json(response, await ctx.toolSupport.startToolCall(await readBody(request)));
   if (request.method === "POST" && url.pathname === "/runner/tool-calls/finish") return json(response, await ctx.toolSupport.finishToolCall(await readBody(request)));
   if (request.method === "POST" && url.pathname === "/runner/signals") return json(response, await ctx.toolSupport.recordRunnerSignal(await readBody(request)));
+  if (request.method === "POST" && url.pathname === "/runner/history/messages") return json(response, await appendRunnerHistoryMessage(await readBody(request), ctx.root));
+  if (request.method === "POST" && url.pathname === "/runner/history/compact") return json(response, await compactRunnerHistory(await readBody(request), ctx.root));
   if (request.method === "POST" && parts[0] === "toolpacks" && parts[2] === "support") return json(response, await ctx.toolSupport.support(parts[1]!, await readBody(request)));
   if (request.method === "POST" && url.pathname === "/activation-context") return json(response, await submitActivationContext(await readBody(request), ctx.root));
   if (request.method === "POST" && url.pathname === "/activation-output") return json(response, await submitActivationOutput(await readBody(request), ctx.root));
@@ -56,6 +58,8 @@ async function handleRequest(
   const project = parts[2];
   const store = new ProjectStore(project, ctx.root);
   try {
+    if (request.method === "GET" && parts[3] === "agents" && parts[5] === "history" && parts[4]) return json(response, publicHistoryPage(store.listAgentHistory(parts[4], { limit: limit(url, 100), beforeSequence: optionalNumber(url.searchParams.get("before")), includeArchived: url.searchParams.get("includeArchived") !== "0" })));
+    if (request.method === "GET" && parts[3] === "agents" && parts[5] === "history-archive" && parts[4] && parts[6]) return json(response, await store.historyArchive(parts[6]));
     if (request.method === "GET" && parts.length === 3) return json(response, projectSummary(store));
     if (request.method === "GET" && parts[3] === "agents") return json(response, store.listAgents().map(publicAgent));
     if (request.method === "GET" && parts[3] === "messages") return json(response, store.listMessages(limit(url, 100)).map(publicMessage));
@@ -136,6 +140,61 @@ async function submitActivationContext(body: Record<string, unknown>, root?: str
   } finally {
     store.close();
   }
+}
+
+async function appendRunnerHistoryMessage(body: Record<string, unknown>, root?: string): Promise<Record<string, unknown>> {
+  const project = requiredString(body.project, "project");
+  const agentId = requiredString(body.agentId, "agentId");
+  const activationId = optionalString(body.activationId);
+  const token = requiredString(body.token, "token");
+  const store = new ProjectStore(project, root);
+  try {
+    authorizeRunner(store, agentId, token, activationId, { requireRunning: true });
+    const message = store.appendAgentHistoryMessage({
+      agentId,
+      activationId,
+      role: historyRole(requiredString(body.role, "role")),
+      kind: requiredString(body.kind, "kind"),
+      content: requiredString(body.content, "content"),
+      metadata: jsonObject(body.metadata),
+    });
+    return { status: "recorded", message };
+  } finally {
+    store.close();
+  }
+}
+
+async function compactRunnerHistory(body: Record<string, unknown>, root?: string): Promise<Record<string, unknown>> {
+  const project = requiredString(body.project, "project");
+  const agentId = requiredString(body.agentId, "agentId");
+  const activationId = optionalString(body.activationId);
+  const token = requiredString(body.token, "token");
+  const store = new ProjectStore(project, root);
+  try {
+    authorizeRunner(store, agentId, token, activationId, { requireRunning: true });
+    const result = await store.compactAgentHistory({
+      agentId,
+      activationId,
+      summary: requiredString(body.summary, "summary"),
+      keepTail: optionalNumber(body.keepTail),
+      reason: optionalString(body.reason),
+      selectedModel: optionalString(body.selectedModel),
+    });
+    return { status: result.compaction ? "compacted" : "unchanged", compaction: result.compaction, history: result.history };
+  } finally {
+    store.close();
+  }
+}
+
+function authorizeRunner(store: ProjectStore, agentId: string, token: string, activationId: string | undefined, options: { requireRunning?: boolean } = {}): AgentRecord {
+  const agent = store.requireAgent(agentId);
+  if (agent.token !== token) throw new Error("Invalid agent token");
+  if (activationId) {
+    const activation = store.activation(activationId);
+    if (activation.agentId !== agent.id) throw new Error(`Activation ${activationId} does not belong to ${agent.id}`);
+    if (options.requireRunning && activation.status !== "running") throw new Error(`Activation ${activationId} is ${activation.status}; history updates are not accepted`);
+  }
+  return agent;
 }
 
 function outputBody(value: unknown): RunnerActivationOutput {
@@ -223,6 +282,23 @@ function publicToolCall(call: Record<string, unknown>): Record<string, unknown> 
     input_json: truncateText(typeof call.input_json === "string" ? call.input_json : undefined, 8_000),
     output: truncateText(typeof call.output === "string" ? call.output : undefined, 8_000),
     error: truncateText(typeof call.error === "string" ? call.error : undefined, 8_000),
+  };
+}
+
+function publicHistoryPage(page: ReturnType<ProjectStore["listAgentHistory"]>): Record<string, unknown> {
+  return {
+    agentId: page.agentId,
+    nextBefore: page.nextBefore,
+    messages: page.messages.map((message) => ({
+      ...message,
+      content: truncateText(message.content, 40_000),
+      parts: message.parts?.map((part) => ({
+        ...part,
+        text: truncateText(part.text, 20_000),
+        output: truncateText(part.output, 20_000),
+        error: truncateText(part.error, 20_000),
+      })),
+    })),
   };
 }
 
@@ -327,8 +403,23 @@ function optionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value : undefined;
 }
 
+function optionalNumber(value: unknown): number | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? Math.floor(parsed) : undefined;
+}
+
+function jsonObject(value: unknown): JsonObject | undefined {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as JsonObject : undefined;
+}
+
+function historyRole(value: string): AgentHistoryRole {
+  if (value === "user" || value === "assistant" || value === "tool_call" || value === "tool_result" || value === "compaction") return value;
+  throw new Error(`Invalid history role: ${value}`);
+}
+
 function priority(value: string): MessagePriority {
-  if (value === "P0" || value === "P1" || value === "P2" || value === "P3") return value;
+  if (value === "P0" || value === "P1" || value === "P2") return value;
   throw new Error(`Invalid priority: ${value}`);
 }
 

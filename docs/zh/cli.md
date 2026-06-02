@@ -63,7 +63,7 @@ lead: "CLI 是初始化项目、渲染配置、发送任务、查看运行状态
     suzumio send demo pm P1 "Start the project."
     suzumio send demo worker-1 P2 "Review artifact art_..."
 
-`start` 将项目状态设为 `running` 并立即 tick 一次 scheduler；如果 agent 已有 pending signal，可能马上启动 activation。`send` 从虚拟 sender `user` 创建直接消息、创建 pending `message.created` signal，并 tick。优先级为 `P0`、`P1`、`P2`、`P3`；优先级不会打断 running agent。
+`start` 将项目状态设为 `running` 并立即 tick 一次 scheduler；如果 agent 已有 pending signal，可能马上启动 activation。`send` 从虚拟 sender `user` 创建直接消息、创建 pending `message.created` signal，并 tick。优先级为 `P0`、`P1`、`P2`：`P0` 会中断并重启 running target，`P1` 尽量在下一次 tool boundary 投递，`P2` 等下一次 activation。
 
 ## 查看命令
 

@@ -35,7 +35,7 @@ lead: "第一版验证了核心形状：Docker-first activations、SQLite projec
 
 ## Scheduler
 
-默认 scheduler 应保持非抢占式。未来可以在接口后添加其他 scheduler，但不能削弱默认安静语义。
+默认 scheduler 应保持安静，只有显式 `P0` 可以中断。未来可以在接口后添加其他 scheduler，但不能削弱默认 idle-agent 语义。
 
 - 暴露 scheduler decision log。
 - 加入 manual wake 和 manual cancel 操作。

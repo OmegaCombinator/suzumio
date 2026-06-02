@@ -1,7 +1,8 @@
 export type ProjectStatus = "initialized" | "running" | "submitted" | "completed" | "stopped" | "failed";
 export type AgentStatus = "quiet" | "ready" | "running" | "failed" | "stopped";
 export type ActivationStatus = "running" | "completed" | "failed" | "cancelled";
-export type Priority = "P0" | "P1" | "P2" | "P3";
+export type Priority = "P0" | "P1" | "P2";
+export type HistoryRole = "user" | "assistant" | "tool_call" | "tool_result" | "compaction";
 
 export interface Agent {
   id: string;
@@ -70,6 +71,8 @@ export interface Project {
     failedActivationCount: number;
     runningActivationCount: number;
     toolCallCount: number;
+    historyMessageCount?: number;
+    historyCompactionCount?: number;
     eventCount: number;
   };
   agents: Agent[];
@@ -110,6 +113,48 @@ export interface ActivationContextResponse {
   activation: Activation;
   activationPrompt: string;
   context: ActivationContextSnapshot;
+}
+
+export interface AgentHistoryPart {
+  id: string;
+  messageId: string;
+  activationId?: string;
+  partIndex: number;
+  type: "text" | "tool_call" | "tool_result" | "compaction";
+  text?: string;
+  toolCallId?: string;
+  toolName?: string;
+  inputJson?: string;
+  output?: string;
+  error?: string;
+  metadata?: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface AgentHistoryMessage {
+  id: string;
+  agentId: string;
+  activationId?: string;
+  role: HistoryRole;
+  kind: string;
+  content: string;
+  sequence: number;
+  compactionId?: string;
+  archived: boolean;
+  metadata?: Record<string, unknown>;
+  parts?: AgentHistoryPart[];
+  createdAt: string;
+}
+
+export interface AgentHistoryPage {
+  agentId: string;
+  messages: AgentHistoryMessage[];
+  nextBefore?: number;
+}
+
+export interface AgentHistoryArchiveResponse {
+  compaction: Record<string, unknown>;
+  archive: unknown;
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -162,6 +207,18 @@ export function loadConfig(project: string): Promise<string> {
 
 export function loadActivationContext(project: string, activationId: string): Promise<ActivationContextResponse> {
   return request<ActivationContextResponse>(projectPath(project, `/activations/${encodeURIComponent(activationId)}/context`));
+}
+
+export function loadAgentHistory(project: string, agentId: string, options: { limit?: number; before?: number; includeArchived?: boolean } = {}): Promise<AgentHistoryPage> {
+  const params = new URLSearchParams();
+  params.set("limit", String(options.limit ?? 80));
+  if (options.before !== undefined) params.set("before", String(options.before));
+  if (options.includeArchived === false) params.set("includeArchived", "0");
+  return request<AgentHistoryPage>(projectPath(project, `/agents/${encodeURIComponent(agentId)}/history?${params.toString()}`));
+}
+
+export function loadAgentHistoryArchive(project: string, agentId: string, compactionId: string): Promise<AgentHistoryArchiveResponse> {
+  return request<AgentHistoryArchiveResponse>(projectPath(project, `/agents/${encodeURIComponent(agentId)}/history-archive/${encodeURIComponent(compactionId)}`));
 }
 
 export async function loadProjectDetails(project: string): Promise<ProjectDetails> {

@@ -48,6 +48,12 @@ export type ToolCallFinishInput = {
   error?: string;
 };
 
+export type ToolCallFinishOutput = {
+  status: "completed" | "failed";
+  deliveredSignals?: number;
+  signalText?: string;
+};
+
 export type SignalInput = {
   project: string;
   agentId: string;
@@ -90,12 +96,14 @@ export class ToolSupportHost {
     }
   }
 
-  async finishToolCall(input: ToolCallFinishInput): Promise<{ status: string }> {
+  async finishToolCall(input: ToolCallFinishInput): Promise<ToolCallFinishOutput> {
     const store = new ProjectStore(input.project, this.root);
     try {
       const agent = this.authorize(store, input.agentId, input.token, input.activationId, { requireRunning: false });
       store.finishToolCallForActivation(input.toolCallId, agent.id, input.activationId, input.status, input.output, input.error);
-      return { status: input.status };
+      const activation = store.activation(input.activationId);
+      const delivered = input.status === "completed" && activation.status === "running" ? store.deliverToolBoundarySignals(agent.id, input.activationId) : { signals: [] };
+      return { status: input.status, deliveredSignals: delivered.signals.length || undefined, signalText: delivered.content };
     } finally {
       store.close();
     }
@@ -259,7 +267,7 @@ function messagesSendDefinition(): ToolDefinition {
       properties: {
         recipient: { type: "string", description: "Direct recipient agent id, or user. Non-PM agents usually report to pm unless the signal names another recipient." },
         channel: { type: "string", description: "Project channel such as #project. Use either recipient or channel." },
-        priority: { type: "string", enum: ["P0", "P1", "P2", "P3"], default: "P2" },
+        priority: { type: "string", enum: ["P0", "P1", "P2"], default: "P2" },
         body: { type: "string", description: "Markdown body containing results, exact artifact paths, exact commands/results, next action requested, or blocker. Do not use this for ACK-only text such as received/noted/standing by." },
       },
       required: ["body"],
@@ -386,7 +394,7 @@ function optionalBoolean(value: unknown): boolean | undefined {
 }
 
 function priorityArg(value: unknown): MessagePriority {
-  if (value === "P0" || value === "P1" || value === "P2" || value === "P3") return value;
+  if (value === "P0" || value === "P1" || value === "P2") return value;
   throw new Error(`Invalid priority: ${String(value)}`);
 }
 

@@ -35,7 +35,7 @@ lead: "The first version proves the shape: Docker-first activations, SQLite proj
 
 ## Scheduler
 
-The default scheduler should remain non-preemptive. Future schedulers can be added behind an interface, but they should not weaken the default quiet semantics.
+The default scheduler should remain quiet by default, with interruption limited to explicit `P0`. Future schedulers can be added behind an interface, but they should not weaken the default idle-agent semantics.
 
 - Expose a scheduler decision log.
 - Add manual wake and manual cancel operations.

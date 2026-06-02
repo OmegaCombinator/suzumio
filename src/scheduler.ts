@@ -1,11 +1,6 @@
-import type { ActivationRecord, AgentConfig, AgentRecord, DockerMountConfig, MessageRecord, ProjectConfig, SignalRecord } from "./types.js";
+import type { AgentConfig, AgentRecord, DockerMountConfig, ProjectConfig, SignalRecord } from "./types.js";
 import { DockerChatBackend } from "./backend.js";
 import { ProjectStore } from "./store.js";
-
-const DEFAULT_MESSAGE_HISTORY_LIMIT = 30;
-const DEFAULT_ACTIVATION_HISTORY_LIMIT = 6;
-const DEFAULT_HISTORY_MESSAGE_CHARS = 3000;
-const DEFAULT_HISTORY_ACTIVATION_CHARS = 6000;
 
 export class NonPreemptiveSignalScheduler {
   private readonly backend: DockerChatBackend;
@@ -31,26 +26,41 @@ export class NonPreemptiveSignalScheduler {
   }
 
   private async tickAgent(store: ProjectStore, agent: AgentRecord, agents: AgentRecord[]): Promise<void> {
-    if (agent.status === "running" || agent.status === "stopped" || agent.activeActivationId) return;
     const config = store.config();
-    const signals = store.pendingSignals(agent.id, signalsPerActivation(config));
+    if (agent.status === "stopped") return;
+    let restartSignals: SignalRecord[] | undefined;
+
+    if (agent.status === "running" || agent.activeActivationId) {
+      const pending = store.pendingSignals(agent.id, signalsPerActivation(config));
+      const p0 = pending.filter((signal) => signal.priority === "P0");
+      if (p0.length === 0) return;
+      restartSignals = pending.filter((signal) => signal.priority === "P0" || signal.priority === "P1");
+      if (agent.activeActivationId) {
+        const activation = store.activation(agent.activeActivationId);
+        store.cancelActivation(activation.id, `Interrupted by P0 signal ${p0[0]!.id}`);
+        await this.backend.stopActivation(activation).catch((error) => store.appendEvent("activation.stop_failed", { activationId: activation.id, agentId: agent.id, error: error instanceof Error ? error.message : String(error) }));
+      } else {
+        store.setAgentStatus(agent.id, "quiet", null);
+      }
+      agent = store.requireAgent(agent.id);
+    }
+
+    const signals = restartSignals ?? store.pendingSignals(agent.id, signalsPerActivation(config));
     if (signals.length === 0) {
       if (agent.status !== "quiet" && agent.status !== "failed") store.setAgentStatus(agent.id, "quiet", null);
       return;
     }
-    const currentMessageIds = signalMessageIds(signals);
-    const historyLimit = messageHistoryLimit(config);
-    const messages = historyLimit === 0
-      ? []
-      : store
-          .agentMessageHistory(agent.id, historyLimit + currentMessageIds.size)
-          .filter((message) => !currentMessageIds.has(message.id))
-          .slice(-historyLimit);
-    const activationLimit = activationHistoryLimit(config);
-    const recentActivations = store.agentActivationHistory(agent.id, Math.max(1, activationLimit));
-    const activations = activationLimit === 0 ? [] : recentActivations;
-    const prompt = renderActivationPrompt(config, agent, agents, signals, messages, activations, recentActivations.length > 0);
+    const hasPreviousActivations = store.agentActivationHistory(agent.id, 1).length > 0;
+    const prompt = renderActivationPrompt(config, agent, agents, signals, hasPreviousActivations);
     const activation = store.createActivation(agent, prompt);
+    store.appendAgentHistoryMessage({
+      agentId: agent.id,
+      activationId: activation.id,
+      role: "user",
+      kind: "activation_prompt",
+      content: prompt,
+      metadata: { delivery: "activation_start", signalIds: signals.map((signal) => signal.id), priorities: signals.map((signal) => signal.priority) },
+    });
     store.markSignalsDelivered(agent.id, signals, activation.id);
     await this.backend.startActivation(store, agent, activation, prompt);
   }
@@ -58,15 +68,13 @@ export class NonPreemptiveSignalScheduler {
 
 export class NonPreemptiveMailboxScheduler extends NonPreemptiveSignalScheduler {}
 
-function renderActivationPrompt(config: ProjectConfig, agent: AgentRecord, agents: AgentRecord[], signals: SignalRecord[], messages: MessageRecord[], activations: ActivationRecord[], hasPreviousActivations: boolean): string {
+function renderActivationPrompt(config: ProjectConfig, agent: AgentRecord, agents: AgentRecord[], signals: SignalRecord[], hasPreviousActivations: boolean): string {
   const isFirstActivation = !hasPreviousActivations;
   const mountedInputs = renderMountedInputs(config, agent);
   return [
     isFirstActivation ? renderBootstrapContext(config, agent, mountedInputs) : renderContinueContext(),
     isFirstActivation ? renderAgentRoster(agents) : undefined,
     isFirstActivation ? renderSharedArtifacts(agent, agents) : undefined,
-    !isFirstActivation ? undefined : renderConversationHistory(config, messages),
-    !isFirstActivation ? undefined : renderActivationHistory(config, activations),
     "# New Signals",
     ...signals.map(renderSignal),
     renderToolAndReportingContract(agent, agents),
@@ -100,7 +108,7 @@ function renderToolAndReportingContract(agent: AgentRecord, agents: AgentRecord[
 function renderActivationRule(): string {
   return [
     "# Activation Rule",
-    "Treat the bounded conversation history and your previous activation outputs as continuity only. New Signals are wake-up triggers and the only newly delivered items.",
+    "Treat earlier model messages in this agent session as continuity only. New Signals are wake-up triggers and the only newly delivered items for this activation.",
     "Work until you have a useful result, blocker, message to send, wait-for-signal declaration, or final submission.",
     "If a signal asks you to report to a specific recipient, you must call `messages.send` to that recipient in this activation.",
     "Calling `coordination.wait_for_signal` or `completion.submit` ends this activation. Do not poll for more work; new signals will be delivered in a later activation.",
@@ -136,38 +144,6 @@ function renderBootstrapContext(config: ProjectConfig, agent: AgentRecord, mount
 
 function renderContinueContext(): string {
   return "# Continue Existing Context\n\nContinue the same ongoing agent session. Do not restart the project, repeat static setup, or treat old messages as new requests.";
-}
-
-function renderConversationHistory(config: ProjectConfig, messages: MessageRecord[]): string | undefined {
-  if (messages.length === 0) return undefined;
-  return [
-    "# Conversation History",
-    "Bounded recent project messages. Current message signals are omitted here and shown under New Signals. Use history as continuity; do not treat every old message as a new request.",
-    ...messages.map((message) => renderHistoryMessage(config, message)),
-  ].join("\n\n");
-}
-
-function renderHistoryMessage(config: ProjectConfig, message: MessageRecord): string {
-  return [
-    `## ${message.id}`,
-    `Time: ${message.createdAt}`,
-    `From: ${message.sender}`,
-    message.recipient ? `To: ${message.recipient}` : `Channel: ${message.channel}`,
-    `Priority: ${message.priority}`,
-    "",
-    trimForPrompt(message.body, historyMessageChars(config)),
-  ].join("\n");
-}
-
-function renderActivationHistory(config: ProjectConfig, activations: ActivationRecord[]): string | undefined {
-  const completed = activations.filter((activation) => activation.text || activation.error);
-  if (completed.length === 0) return undefined;
-  return ["# Your Previous Activation Outputs", "Bounded excerpts of your own prior activation results. Use them as persistent memory for your role.", ...completed.map((activation) => renderHistoryActivation(config, activation))].join("\n\n");
-}
-
-function renderHistoryActivation(config: ProjectConfig, activation: ActivationRecord): string {
-  const body = activation.text ?? activation.error ?? "";
-  return [`## ${activation.id}`, `Status: ${activation.status}`, `Started: ${activation.startedAt}`, activation.completedAt ? `Completed: ${activation.completedAt}` : undefined, "", trimForPrompt(body, historyActivationChars(config))].filter(Boolean).join("\n");
 }
 
 function renderSignal(signal: SignalRecord): string {
@@ -208,37 +184,4 @@ function agentSpec(config: ProjectConfig, agent: AgentRecord): AgentConfig | und
 
 function signalsPerActivation(config: ProjectConfig): number {
   return config.scheduler.maxSignalsPerActivation ?? config.scheduler.maxPromptMessages ?? 20;
-}
-
-function messageHistoryLimit(config: ProjectConfig): number {
-  return config.scheduler.messageHistoryLimit ?? DEFAULT_MESSAGE_HISTORY_LIMIT;
-}
-
-function activationHistoryLimit(config: ProjectConfig): number {
-  return config.scheduler.activationHistoryLimit ?? DEFAULT_ACTIVATION_HISTORY_LIMIT;
-}
-
-function historyMessageChars(config: ProjectConfig): number {
-  return config.scheduler.maxHistoryMessageChars ?? DEFAULT_HISTORY_MESSAGE_CHARS;
-}
-
-function historyActivationChars(config: ProjectConfig): number {
-  return config.scheduler.maxHistoryActivationChars ?? DEFAULT_HISTORY_ACTIVATION_CHARS;
-}
-
-function signalMessageIds(signals: SignalRecord[]): Set<string> {
-  const ids = new Set<string>();
-  for (const signal of signals) {
-    if (signal.kind !== "message.created") continue;
-    const id = signal.payload.id;
-    if (typeof id === "string") ids.add(id);
-  }
-  return ids;
-}
-
-function trimForPrompt(value: string, maxChars: number): string {
-  const text = value.trim();
-  if (text.length <= maxChars) return text;
-  const omitted = text.length - maxChars;
-  return `${text.slice(0, maxChars).trimEnd()}\n\n[truncated ${omitted} chars from this history item]`;
 }

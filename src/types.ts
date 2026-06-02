@@ -4,7 +4,11 @@ export type AgentStatus = "quiet" | "ready" | "running" | "failed" | "stopped";
 
 export type ActivationStatus = "running" | "completed" | "failed" | "cancelled";
 
-export type MessagePriority = "P0" | "P1" | "P2" | "P3";
+export type MessagePriority = "P0" | "P1" | "P2";
+
+export type AgentHistoryRole = "user" | "assistant" | "tool_call" | "tool_result" | "compaction";
+
+export type AgentHistoryPartType = "text" | "tool_call" | "tool_result" | "compaction";
 
 export type JsonObject = Record<string, unknown>;
 
@@ -35,10 +39,6 @@ export interface SchedulerConfig {
   kind: "nonpreemptive-mailbox" | "nonpreemptive-signals";
   maxSignalsPerActivation: number;
   maxPromptMessages?: number;
-  messageHistoryLimit?: number;
-  activationHistoryLimit?: number;
-  maxHistoryMessageChars?: number;
-  maxHistoryActivationChars?: number;
 }
 
 export interface BackendConfig {
@@ -184,6 +184,63 @@ export interface ActivationRecord {
   contextJson?: string;
 }
 
+export interface AgentHistoryPart {
+  id: string;
+  project: string;
+  agentId: string;
+  messageId: string;
+  activationId?: string;
+  partIndex: number;
+  type: AgentHistoryPartType;
+  text?: string;
+  toolCallId?: string;
+  toolName?: string;
+  inputJson?: string;
+  output?: string;
+  error?: string;
+  metadata?: JsonObject;
+  createdAt: string;
+}
+
+export interface AgentHistoryMessage {
+  id: string;
+  project: string;
+  agentId: string;
+  activationId?: string;
+  role: AgentHistoryRole;
+  kind: string;
+  content: string;
+  sequence: number;
+  compactionId?: string;
+  archived: boolean;
+  metadata?: JsonObject;
+  parts?: AgentHistoryPart[];
+  createdAt: string;
+}
+
+export interface AgentHistoryCompaction {
+  id: string;
+  project: string;
+  agentId: string;
+  activationId?: string;
+  summaryMessageId: string;
+  archivePath: string;
+  startSequence: number;
+  endSequence: number;
+  archivedMessageCount: number;
+  rawChars: number;
+  summary: string;
+  reason?: string;
+  selectedModel?: string;
+  createdAt: string;
+}
+
+export interface AgentHistoryPage {
+  agentId: string;
+  messages: AgentHistoryMessage[];
+  nextBefore?: number;
+}
+
 export interface ActivationContextSnapshot {
   version: 1;
   kind: "model-context";
@@ -246,6 +303,7 @@ export interface RunnerActivationInput {
   runner: RunnerConfig;
   tools: ToolDefinition[];
   toolpacks: RunnerToolpackSpec[];
+  history?: AgentHistoryMessage[];
 }
 
 export interface RunnerActivationOutput {

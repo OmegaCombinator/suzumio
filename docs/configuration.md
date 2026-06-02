@@ -350,7 +350,7 @@ The example below shows the main fields in one file. Most projects should split 
 | Field           | Required | Description                                                                                                             |
 |-----------------|----------|-------------------------------------------------------------------------------------------------------------------------|
 | `name`          | Yes      | Project id and runtime directory name under `SUZUMIO_ROOT`.                                                             |
-| `task`          | Yes      | Durable task statement rendered into every activation prompt.                                                           |
+| `task`          | Yes      | Durable task statement rendered into the first activation prompt and preserved through agent history.                    |
 | `agents`        | Yes      | Map of agent ids to agent configs. At least one agent is required.                                                      |
 | `tools`         | No       | Toolpacks registered for the project. Defaults to `core` and `web`; add `shell` for container-local bash and shared artifact files. |
 | `extends`       | No       | One profile object or a list of profile objects to merge before local fields.                                           |
@@ -493,9 +493,9 @@ The backend object deep-merges, so `backend.image` remains from the profile whil
 
 ## Scheduler Defaults
 
-Most projects should omit `scheduler`. The default is signal-driven and non-preemptive: idle agents wake for pending signals, and running agents are not interrupted. Advanced projects may set `scheduler.kind` or `scheduler.maxSignalsPerActivation`; the default signal batch size is 20.
+Most projects should omit `scheduler`. The default is signal-driven: idle agents wake for pending signals, `P0` interrupts and restarts a running agent, `P1` is delivered at the next tool boundary when possible, and `P2` waits for the next activation. Advanced projects may set `scheduler.kind` or `scheduler.maxSignalsPerActivation`; the default signal batch size is 20.
 
-The Docker chat runner keeps per-agent session context in `/workspace/.suzumio/session-context.json`. The first full activation prompt remains anchored at the front of the model message list; each later activation appends the new prompt and recent assistant/tool records. When provider token usage reaches the model context budget, the runner summarizes older turns, keeps the anchored first prompt, keeps the summary, and preserves the latest turns plus the new prompt. Scheduler-side history is only included on the first activation.
+Suzumio keeps per-agent model history in SQLite. Each activation prompt, visible assistant output, tool call, tool result, and compaction marker is appended to that history. The runner sends the active history back to the model on the next call. When the model context budget is reached, older history is summarized into a compaction message and the full raw compacted range is archived locally for inspection.
 
 ## Backend Config
 
@@ -561,7 +561,7 @@ The Docker chat runner keeps per-agent session context in `/workspace/.suzumio/s
 
 Model selection is explicit. Set `backend.runner.model` for a project-level selection, or set `agents.*.model` per agent. Presets with `model-list` expand to an ordered fallback list; the runner tries each concrete preset in order. In most configs, `model` is also the provider model id. Use `apiModel` only when you want the local preset name to differ from the provider-facing model id.
 
-Runner session context is part of the Docker chat prototype rather than a user-facing config surface. Set `contextLimit` on model presets so the runner can decide when provider-reported usage is close enough to the budget to compact old turns.
+Agent history compaction is part of the Docker chat runner rather than a user-facing config surface. Set `contextLimit` on model presets so the runner can decide when provider-reported usage is close enough to the budget to compact old history.
 
 <div class="notice danger">
 

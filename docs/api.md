@@ -43,6 +43,8 @@ The current API is intended for local or trusted-network use. User-facing API au
 | Method | Path                                          | Description                                                    |
 |--------|-----------------------------------------------|----------------------------------------------------------------|
 | `GET`  | `/api/projects/:project/agents`               | Agent records with tokens redacted.                            |
+| `GET`  | `/api/projects/:project/agents/:agent/history?limit=100` | Paged per-agent model history.                         |
+| `GET`  | `/api/projects/:project/agents/:agent/history-archive/:compaction` | Raw local archive for one history compaction.     |
 | `GET`  | `/api/projects/:project/messages?limit=100`   | Recent messages.                                               |
 | `GET`  | `/api/projects/:project/events?limit=200`     | Recent events.                                                 |
 | `GET`  | `/api/projects/:project/activations?limit=100` | Recent activations.                                            |
@@ -85,6 +87,8 @@ The Docker runner presents all model-facing tools. The controller provides suppo
 | `POST` | `/runner/tool-calls/start`            | Authenticate agent/activation, verify tool membership and allowlist, and create a running `tool_calls` row. |
 | `POST` | `/runner/tool-calls/finish`           | Mark a tool call completed or failed after verifying it belongs to this agent activation.                  |
 | `POST` | `/runner/signals`                     | Let runner-side or local toolpack code create a pending signal or closed effect.                     |
+| `POST` | `/runner/history/messages`            | Append visible assistant/history records for the current activation.                                  |
+| `POST` | `/runner/history/compact`             | Archive old agent history and append a compaction summary marker.                                    |
 | `POST` | `/toolpacks/:toolpackId/support`      | Dispatch controller-side support for built-in or local toolpacks.                                    |
 | `POST` | `/activation-context`                 | Submit the model message context snapshot for a running activation.                                  |
 | `POST` | `/activation-output`                  | Submit final activation text and usage metadata.                                                        |
@@ -174,7 +178,13 @@ The backend marks the activation complete only after this authenticated submissi
 
 ### `POST /activation-context`
 
-The Docker chat runner submits a context snapshot immediately before the main model call. The public activation context API uses this to show exactly what messages were sent to the model. Older activations that predate this field fall back to the scheduler activation prompt.
+The Docker chat runner submits a context snapshot immediately before the main model call. The public activation context API uses this to show exactly what messages were sent to the model. Older activations that predate this field fall back to the activation prompt.
+
+### Agent History APIs
+
+`GET /api/projects/:project/agents/:agent/history` returns newest history rows first and accepts `limit`, `before`, and `includeArchived=0`. Each row includes role, kind, activation id, sequence number, metadata, and truncated content. Use `nextBefore` from the response to load older pages.
+
+Compaction rows include a `compactionId` in metadata. `GET /api/projects/:project/agents/:agent/history-archive/:compaction` loads the full raw archive saved before compaction. This endpoint is separate so the WebUI does not fetch large archived payloads during normal refresh.
 
 ## Core Tool Inputs
 
@@ -233,6 +243,6 @@ Fetches an HTTP(S) URL from inside the Docker runner container. `format: "text"`
 
 ## WebUI
 
-The root path `/` serves the Preact-based WebUI built from `webui/`. It calls the API routes above and refreshes periodically. For WebUI development, run `npm run webui:dev` and open `http://127.0.0.1:5173`; Vite proxies `/api` and `/health` to the backend on `39400`. The control room includes project selection, status actions, message composition, agent roster, messages, activations, per-activation model context snapshots, tool calls, event timeline, resolved YAML, and submitted report views. The project overview refreshes as a lightweight summary; large logs, config, events, tool calls, and context payloads are loaded on demand.
+The root path `/` serves the Preact-based WebUI built from `webui/`. It calls the API routes above and refreshes periodically. For WebUI development, run `npm run webui:dev` and open `http://127.0.0.1:5173`; Vite proxies `/api` and `/health` to the backend on `39400`. The control room includes project selection, status actions, message composition, agent roster, per-agent history, messages, activations, per-activation model context snapshots, tool calls, event timeline, resolved YAML, and submitted report views. The project overview refreshes as a lightweight summary; large logs, agent histories, config, events, tool calls, archives, and context payloads are loaded on demand.
 
 <div class="footer">Next: <a href="roadmap.html">Roadmap</a>.</div>

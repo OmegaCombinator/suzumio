@@ -2,7 +2,7 @@
 title: "Suzumio Core Concepts"
 eyebrow: "Core Concepts"
 heroTitle: "How Suzumio thinks about work"
-lead: "Suzumio models a project as durable messages, signals, and isolated activations. The scheduler is intentionally conservative: it starts work only when an agent has pending signals and leaves running agents alone."
+lead: "Suzumio models a project as durable messages, signals, per-agent histories, and isolated activations. The scheduler starts work only when an agent has pending signals, with explicit priority rules for interrupting or deferring work."
 ---
 
 ## Project
@@ -24,7 +24,7 @@ An agent is a configured participant with a role, prompt, model selection, works
 | State     | Meaning                                                            |
 |-----------|--------------------------------------------------------------------|
 | `quiet`   | Idle and no pending signals.                                       |
-| `running` | A Docker activation is active. The scheduler must not prompt this agent. |
+| `running` | A Docker activation is active. Only `P0` can interrupt and restart it. |
 | `failed`  | The last activation or backend operation failed.                         |
 | `stopped` | The agent is disabled.                                             |
 
@@ -51,7 +51,7 @@ Signals are the scheduler input and the effect ledger. A signal with `targetAgen
       sourceActivation?: string
       targetAgent?: string
       targetChannel?: string
-      priority: "P0" | "P1" | "P2" | "P3"
+      priority: "P0" | "P1" | "P2"
       status: "pending" | "delivered" | "closed"
       usefulEffect: boolean
       payload: Record<string, unknown>
@@ -59,11 +59,19 @@ Signals are the scheduler input and the effect ledger. A signal with `targetAgen
 
 | Status      | Meaning                                                                 |
 |-------------|-------------------------------------------------------------------------|
-| `pending`   | Waiting to be rendered into the target agent's next activation prompt.  |
-| `delivered` | Already rendered into an activation prompt. It will not be delivered again. |
+| `pending`   | Waiting to be delivered to the target agent at an activation start or tool boundary. |
+| `delivered` | Already appended to agent history for one activation. It will not be delivered again. |
 | `closed`    | Audit or effect record that does not participate in scheduling.         |
 
 Targeted signals cannot be explicitly closed. To wake an agent, create a pending signal. To record an effect without waking anyone, omit the target and create a closed signal.
+
+## Priority
+
+| Priority | Delivery rule                                                                 |
+|----------|-------------------------------------------------------------------------------|
+| `P0`     | Interrupt the current activation if the target is running, cancel it, and restart with the signal in agent history. |
+| `P1`     | Deliver at the next tool boundary when possible; otherwise deliver at the next activation start. |
+| `P2`     | Wait until the current activation finishes, then deliver at the next activation start. |
 
 ## Useful Effect
 
@@ -86,17 +94,24 @@ An activation is one isolated execution of one continuous agent. Suzumio creates
 
 An activation can send messages, publish artifacts, submit a report, or simply return text. The text is not treated as a message unless the agent uses `messages.send`.
 
+## Agent History
+
+Each agent has append-only model history stored in SQLite. Suzumio appends user prompts from delivered signals, visible assistant output, tool calls, tool results, and compaction markers. The runner sends the active history back to the model on the next call, so continuity lives in the core runtime rather than in a container-local file.
+
+When the active history grows too large, the runner asks the model for a compact summary. Suzumio archives the full raw compacted range locally, marks those messages archived, appends a compaction marker containing the summary, and keeps the latest tail messages verbatim.
+
 ## Signal Scheduler
 
 The default scheduler is `nonpreemptive-signals`. `nonpreemptive-mailbox` is still accepted as a compatibility name, but it runs the same signal-driven scheduler.
 
 1.  Skip projects that are not `running`.
-2.  Skip agents that are already `running`.
-3.  Fetch pending signals for each idle agent by priority and creation time.
+2.  For running agents, only act on pending `P0`: cancel the active activation and restart with the new signal.
+3.  For idle agents, fetch pending signals by priority and creation time.
 4.  If there are no pending signals, leave the agent quiet.
-5.  If there are pending signals, render one prompt and start one activation.
+5.  If there are pending signals, append one activation prompt to agent history and start one activation.
 6.  Mark those signals delivered when the activation is created.
-7.  If the activation completes with no useful effects, create one `scheduler.no_effect_nudge` signal unless that activation was itself created by such a nudge.
+7.  If a `P1` signal arrives during a running activation, deliver it at the next completed tool call when possible.
+8.  If the activation completes with no useful effects, create one `scheduler.no_effect_nudge` signal unless that activation was itself created by such a nudge.
 
 ## Tools
 
@@ -118,7 +133,7 @@ Tools are presented to the model by the Docker runner. Stateful tools call back 
 
 ## Shared Artifacts
 
-Every activation gets `/artifacts/<agent-id>` mounts. The current agent's directory is read-write, and other agents' directories are read-only. The first activation prompt lists the artifact paths; later activations rely on the agent's continuing context. This is the lightweight artifact workflow: agents with `shell.exec` can write scripts, outputs, notes, and data directly to their own shared directory, then send a message pointing other agents at the path.
+Every activation gets `/artifacts/<agent-id>` mounts. The current agent's directory is read-write, and other agents' directories are read-only. The first activation prompt lists the artifact paths; later activations rely on the agent's persisted history. This is the lightweight artifact workflow: agents with `shell.exec` can write scripts, outputs, notes, and data directly to their own shared directory, then send a message pointing other agents at the path.
 
 ## Event
 

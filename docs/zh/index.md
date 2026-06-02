@@ -25,7 +25,7 @@ Suzumio 是一个 YAML-based multi-agent system。你不是先写 orchestration 
 - agents 应该如何协作；
 - 使用哪个 Docker runner 和模型 presets。
 
-Runtime 负责协调细节：把状态存进 SQLite、启动 Docker activation、把消息变成 signal、避免打断 running agent、挂载共享文件，并记录 tool calls。
+Runtime 负责协调细节：把状态存进 SQLite、启动 Docker activation、把消息变成 signal、应用 priority 规则、挂载共享文件，并记录 tool calls。
 
 ## 一个最小项目
 
@@ -72,7 +72,7 @@ suzumio send tiny-research pm P1 "Start."
 | `agents` | roster 和 prompts | 每个 agent 都变成一个持久参与者，有自己的 workspace 和共享 artifact 目录。 |
 | `agents.<id>.tools` | 模型可见工具 allowlist | worker 不能调用未授权工具。 |
 | `tools.toolpacks` | 可用工具家族 | `core` 提供 messages/wait/submit；`shell` 提供 Python/bash；`web` 提供 HTTP fetch。 |
-| `scheduler` | signal 投递策略 | 有 pending signal 的 idle agent 会获得一次 activation；running agent 不会被打断。 |
+| `scheduler` | signal 投递策略 | 有 pending signal 的 idle agent 会获得一次 activation；`P0` 可以中断 running activation。 |
 | `backend` | Docker/model/proxy 设置 | runner image、controller URL、模型 presets、mounts、network 和 proxy 都从 YAML 解析。 |
 
 ## 默认协作循环

@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import YAML from "yaml";
 import { createId, nowIso } from "./id.js";
 import { agentPaths, ensureProjectDirs, projectPaths, suzumioRoot, type ProjectPaths } from "./paths.js";
-import type { ActivationContextSnapshot, ActivationRecord, AgentRecord, JsonObject, MessagePriority, MessageRecord, ProjectConfig, ProjectStatus, RunnerActivationOutput, SignalRecord } from "./types.js";
+import type { ActivationContextSnapshot, ActivationRecord, AgentHistoryCompaction, AgentHistoryMessage, AgentHistoryPage, AgentHistoryPart, AgentHistoryPartType, AgentHistoryRole, AgentRecord, JsonObject, MessagePriority, MessageRecord, ProjectConfig, ProjectStatus, RunnerActivationOutput, SignalRecord } from "./types.js";
 
 export class ProjectStore {
   readonly paths: ProjectPaths;
@@ -164,6 +164,22 @@ export class ProjectStore {
     }
   }
 
+  cancelActivation(activationId: string, reason: string): void {
+    const activation = this.activation(activationId);
+    if (activation.status === "completed" || activation.status === "failed" || activation.status === "cancelled") return;
+    this.db.prepare("UPDATE activations SET status = ?, completed_at = ?, error = ? WHERE id = ? AND project = ?").run("cancelled", nowIso(), reason, activationId, this.project);
+    this.setAgentStatus(activation.agentId, "quiet", null);
+    this.appendAgentHistoryMessage({
+      agentId: activation.agentId,
+      activationId,
+      role: "assistant",
+      kind: "activation_cancelled",
+      content: `Activation ${activationId} was interrupted and cancelled. Reason: ${reason}`,
+      metadata: { reason },
+    });
+    this.appendEvent("activation.cancelled", { activationId, agentId: activation.agentId, reason });
+  }
+
   setActivationContext(activationId: string, context: ActivationContextSnapshot): void {
     const activation = this.activation(activationId);
     this.db.prepare("UPDATE activations SET context_json = ? WHERE id = ? AND project = ?").run(JSON.stringify(context), activationId, this.project);
@@ -175,6 +191,14 @@ export class ProjectStore {
     if (activation.status === "completed" || activation.status === "failed" || activation.status === "cancelled") return;
     this.db.prepare("UPDATE activations SET status = ?, completed_at = ?, error = ? WHERE id = ? AND project = ?").run("failed", nowIso(), error, activationId, this.project);
     this.setAgentStatus(activation.agentId, "failed", null);
+    this.appendAgentHistoryMessage({
+      agentId: activation.agentId,
+      activationId,
+      role: "assistant",
+      kind: "activation_failed",
+      content: `Activation ${activationId} failed.\n\n${error}`,
+      metadata: { error },
+    });
     this.appendEvent("activation.failed", { activationId, agentId: activation.agentId, error });
   }
 
@@ -199,12 +223,32 @@ export class ProjectStore {
     const now = nowIso();
     this.db.prepare("INSERT INTO tool_calls (id, project, activation_id, agent_id, tool, input_json, status, output, error, created_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(id, this.project, input.activationId, input.agentId, input.tool, JSON.stringify(input.input ?? {}), input.status, input.output ?? null, input.error ?? null, now, input.status === "running" ? null : now);
     this.appendEvent("tool.called", { id, activationId: input.activationId, agentId: input.agentId, tool: input.tool, status: input.status });
+    this.appendAgentHistoryMessage({
+      agentId: input.agentId,
+      activationId: input.activationId,
+      role: "tool_call",
+      kind: "tool_call",
+      content: renderToolCallContent(input.tool, input.input),
+      metadata: { toolCallId: id, tool: input.tool, status: input.status },
+      parts: [{ type: "tool_call", toolCallId: id, toolName: input.tool, inputJson: JSON.stringify(input.input ?? {}) }],
+    });
     return id;
   }
 
   finishToolCall(id: string, status: "completed" | "failed", output?: string, error?: string): void {
+    const call = this.db.prepare("SELECT * FROM tool_calls WHERE id = ? AND project = ?").get(id, this.project) as DbToolCall | undefined;
+    if (!call) throw new Error(`Unknown tool call: ${id}`);
     this.db.prepare("UPDATE tool_calls SET status = ?, output = ?, error = ?, completed_at = ? WHERE id = ? AND project = ?").run(status, output ?? null, error ?? null, nowIso(), id, this.project);
     this.appendEvent(status === "completed" ? "tool.completed" : "tool.failed", { id, output, error });
+    this.appendAgentHistoryMessage({
+      agentId: call.agent_id,
+      activationId: call.activation_id,
+      role: "tool_result",
+      kind: status === "completed" ? "tool_result" : "tool_error",
+      content: renderToolResultContent(call.tool, status, output, error),
+      metadata: { toolCallId: id, tool: call.tool, status },
+      parts: [{ type: "tool_result", toolCallId: id, toolName: call.tool, output, error }],
+    });
   }
 
   finishToolCallForActivation(id: string, agentId: string, activationId: string, status: "completed" | "failed", output?: string, error?: string): void {
@@ -217,14 +261,138 @@ export class ProjectStore {
     return this.db.prepare("SELECT * FROM tool_calls WHERE project = ? ORDER BY created_at DESC LIMIT ?").all(this.project, limit) as Record<string, unknown>[];
   }
 
+  appendAgentHistoryMessage(input: { agentId: string; activationId?: string; role: AgentHistoryRole; kind: string; content: string; metadata?: JsonObject; parts?: AgentHistoryPartInput[] }): AgentHistoryMessage {
+    this.requireAgent(input.agentId);
+    const id = createId("hist");
+    const createdAt = nowIso();
+    const sequence = this.nextAgentHistorySequence(input.agentId);
+    const metadata = input.metadata ?? {};
+    this.db.prepare("INSERT INTO agent_history_messages (id, project, agent_id, activation_id, role, kind, content, sequence, metadata_json, compaction_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(id, this.project, input.agentId, input.activationId ?? null, input.role, input.kind, input.content, sequence, JSON.stringify(metadata), null, createdAt);
+    const parts = (input.parts?.length ? input.parts : [{ type: textPartType(input.role), text: input.content }]).map((part, index) => this.insertAgentHistoryPart(input.agentId, id, input.activationId, index, part, createdAt));
+    this.appendEvent("agent_history.message", { id, agentId: input.agentId, activationId: input.activationId, role: input.role, kind: input.kind, chars: input.content.length });
+    return { id, project: this.project, agentId: input.agentId, activationId: input.activationId, role: input.role, kind: input.kind, content: input.content, sequence, archived: false, metadata, parts, createdAt };
+  }
+
+  activeAgentHistory(agentId: string): AgentHistoryMessage[] {
+    this.requireAgent(agentId);
+    const rows = this.db.prepare(
+      `SELECT * FROM agent_history_messages
+       WHERE project = ? AND agent_id = ? AND compaction_id IS NULL
+       ORDER BY CASE role WHEN 'compaction' THEN 0 ELSE 1 END, sequence ASC`,
+    ).all(this.project, agentId) as DbAgentHistoryMessage[];
+    return this.historyMessagesFromRows(rows);
+  }
+
+  listAgentHistory(agentId: string, input: { limit?: number; beforeSequence?: number; includeArchived?: boolean } = {}): AgentHistoryPage {
+    this.requireAgent(agentId);
+    const limit = Math.max(1, Math.min(500, Math.floor(input.limit ?? 100)));
+    const params: Array<string | number> = [this.project, agentId];
+    const filters = ["project = ?", "agent_id = ?"];
+    if (!input.includeArchived) filters.push("compaction_id IS NULL");
+    if (input.beforeSequence !== undefined) {
+      filters.push("sequence < ?");
+      params.push(input.beforeSequence);
+    }
+    params.push(limit);
+    const rows = this.db.prepare(`SELECT * FROM agent_history_messages WHERE ${filters.join(" AND ")} ORDER BY sequence DESC LIMIT ?`).all(...params) as DbAgentHistoryMessage[];
+    const messages = this.historyMessagesFromRows(rows);
+    return { agentId, messages, nextBefore: messages.length === limit ? messages[messages.length - 1]?.sequence : undefined };
+  }
+
+  historyCompaction(compactionId: string): AgentHistoryCompaction {
+    const row = this.db.prepare("SELECT * FROM agent_history_compactions WHERE project = ? AND id = ?").get(this.project, compactionId) as DbAgentHistoryCompaction | undefined;
+    if (!row) throw new Error(`Unknown history compaction: ${compactionId}`);
+    return compactionFromRow(row);
+  }
+
+  async historyArchive(compactionId: string): Promise<{ compaction: AgentHistoryCompaction; archive: unknown }> {
+    const compaction = this.historyCompaction(compactionId);
+    const archive = JSON.parse(await readFile(compaction.archivePath, "utf8")) as unknown;
+    return { compaction, archive };
+  }
+
+  async compactAgentHistory(input: { agentId: string; activationId?: string; summary: string; keepTail?: number; reason?: string; selectedModel?: string }): Promise<{ compaction?: AgentHistoryCompaction; history: AgentHistoryMessage[] }> {
+    const active = this.activeAgentHistory(input.agentId);
+    const keepTail = Math.max(1, Math.min(100, Math.floor(input.keepTail ?? 12)));
+    const head = active.slice(0, Math.max(0, active.length - keepTail));
+    if (head.length === 0) return { history: active };
+
+    const compactionId = createId("cmp");
+    const archiveDir = path.join(this.paths.root, "history", input.agentId);
+    await mkdir(archiveDir, { recursive: true });
+    const archivePath = path.join(archiveDir, `${compactionId}.json`);
+    const archive = {
+      version: 1,
+      compactionId,
+      project: this.project,
+      agentId: input.agentId,
+      activationId: input.activationId,
+      reason: input.reason,
+      selectedModel: input.selectedModel,
+      createdAt: nowIso(),
+      messages: head,
+    };
+    const archiveText = JSON.stringify(archive, null, 2) + "\n";
+    await writeFile(archivePath, archiveText, "utf8");
+
+    const sequences = head.map((message) => message.sequence);
+    const startSequence = Math.min(...sequences);
+    const endSequence = Math.max(...sequences);
+    const summary = input.summary.trim() || "Older agent history was compacted; no summary text was produced.";
+    const summaryMessage = this.appendAgentHistoryMessage({
+      agentId: input.agentId,
+      activationId: input.activationId,
+      role: "compaction",
+      kind: "history_compaction",
+      content: summary,
+      metadata: { compactionId, archivePath, archivedMessageCount: head.length, startSequence, endSequence, reason: input.reason, selectedModel: input.selectedModel },
+      parts: [{ type: "compaction", text: summary, metadata: { compactionId, archivePath } }],
+    });
+    const stmt = this.db.prepare("UPDATE agent_history_messages SET compaction_id = ? WHERE project = ? AND id = ?");
+    for (const message of head) stmt.run(compactionId, this.project, message.id);
+    const createdAt = nowIso();
+    this.db.prepare("INSERT INTO agent_history_compactions (id, project, agent_id, activation_id, summary_message_id, archive_path, start_sequence, end_sequence, archived_message_count, raw_chars, summary, reason, selected_model, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(compactionId, this.project, input.agentId, input.activationId ?? null, summaryMessage.id, archivePath, startSequence, endSequence, head.length, archiveText.length, summary, input.reason ?? null, input.selectedModel ?? null, createdAt);
+    const compaction: AgentHistoryCompaction = { id: compactionId, project: this.project, agentId: input.agentId, activationId: input.activationId, summaryMessageId: summaryMessage.id, archivePath, startSequence, endSequence, archivedMessageCount: head.length, rawChars: archiveText.length, summary, reason: input.reason, selectedModel: input.selectedModel, createdAt };
+    this.appendEvent("agent_history.compacted", { compactionId, agentId: input.agentId, activationId: input.activationId, archivedMessageCount: head.length, rawChars: archiveText.length });
+    return { compaction, history: this.activeAgentHistory(input.agentId) };
+  }
+
+  deliverToolBoundarySignals(agentId: string, activationId: string, limit = 20): { signals: SignalRecord[]; content?: string } {
+    const rows = this.db.prepare(
+      `SELECT * FROM signals
+       WHERE project = ? AND target_agent = ? AND status = 'pending' AND priority = 'P1'
+       ORDER BY created_at ASC
+       LIMIT ?`,
+    ).all(this.project, agentId, Math.max(1, Math.min(100, limit))) as DbSignal[];
+    const signals = rows.map(signalFromRow);
+    if (signals.length === 0) return { signals };
+    const content = [
+      "# New P1 Signals Delivered At Tool Boundary",
+      "These signals arrived while this activation was running. Treat them as newly delivered instructions after the tool result above.",
+      ...signals.map(renderSignalForHistory),
+    ].join("\n\n");
+    this.markSignalsDelivered(agentId, signals, activationId);
+    this.appendAgentHistoryMessage({
+      agentId,
+      activationId,
+      role: "user",
+      kind: "tool_boundary_signals",
+      content,
+      metadata: { delivery: "tool_boundary", signalIds: signals.map((signal) => signal.id) },
+    });
+    return { signals, content };
+  }
+
   projectStats(): Record<string, number> {
     const messageCount = countRows(this.db, "messages", this.project);
     const activationCount = countRows(this.db, "activations", this.project);
     const failedActivationCount = countRows(this.db, "activations", this.project, "status = 'failed'");
     const runningActivationCount = countRows(this.db, "activations", this.project, "status = 'running'");
     const toolCallCount = countRows(this.db, "tool_calls", this.project);
+    const historyMessageCount = countRows(this.db, "agent_history_messages", this.project);
+    const historyCompactionCount = countRows(this.db, "agent_history_compactions", this.project);
     const eventCount = countRows(this.db, "events", this.project);
-    return { messageCount, activationCount, failedActivationCount, runningActivationCount, toolCallCount, eventCount };
+    return { messageCount, activationCount, failedActivationCount, runningActivationCount, toolCallCount, historyMessageCount, historyCompactionCount, eventCount };
   }
 
   recordSignal(input: { kind: string; sourceAgent?: string; sourceActivation?: string; targetAgent?: string; targetChannel?: string; priority?: MessagePriority; payload?: JsonObject; status?: "pending" | "closed"; usefulEffect?: boolean }): SignalRecord[] {
@@ -275,6 +443,33 @@ export class ProjectStore {
 
   listEvents(limit = 200): Record<string, unknown>[] {
     return this.db.prepare("SELECT * FROM events WHERE project = ? ORDER BY created_at DESC LIMIT ?").all(this.project, limit) as Record<string, unknown>[];
+  }
+
+  private nextAgentHistorySequence(agentId: string): number {
+    const row = this.db.prepare("SELECT COALESCE(MAX(sequence), 0) AS sequence FROM agent_history_messages WHERE project = ? AND agent_id = ?").get(this.project, agentId) as { sequence: number };
+    return row.sequence + 1;
+  }
+
+  private insertAgentHistoryPart(agentId: string, messageId: string, activationId: string | undefined, partIndex: number, part: AgentHistoryPartInput, createdAt: string): AgentHistoryPart {
+    const id = createId("hpart");
+    const metadata = part.metadata ?? {};
+    this.db.prepare("INSERT INTO agent_history_parts (id, project, agent_id, message_id, activation_id, part_index, type, text, tool_call_id, tool_name, input_json, output, error, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(id, this.project, agentId, messageId, activationId ?? null, partIndex, part.type, part.text ?? null, part.toolCallId ?? null, part.toolName ?? null, part.inputJson ?? null, part.output ?? null, part.error ?? null, JSON.stringify(metadata), createdAt);
+    return { id, project: this.project, agentId, messageId, activationId, partIndex, type: part.type, text: part.text, toolCallId: part.toolCallId, toolName: part.toolName, inputJson: part.inputJson, output: part.output, error: part.error, metadata, createdAt };
+  }
+
+  private historyMessagesFromRows(rows: DbAgentHistoryMessage[]): AgentHistoryMessage[] {
+    if (rows.length === 0) return [];
+    const ids = rows.map((row) => row.id);
+    const placeholders = ids.map(() => "?").join(", ");
+    const parts = this.db.prepare(`SELECT * FROM agent_history_parts WHERE project = ? AND message_id IN (${placeholders}) ORDER BY message_id, part_index ASC`).all(this.project, ...ids) as DbAgentHistoryPart[];
+    const byMessage = new Map<string, AgentHistoryPart[]>();
+    for (const part of parts) {
+      const item = historyPartFromRow(part);
+      const list = byMessage.get(item.messageId) ?? [];
+      list.push(item);
+      byMessage.set(item.messageId, list);
+    }
+    return rows.map((row) => historyMessageFromRow(row, byMessage.get(row.id) ?? []));
   }
 
   private insertAgent(agent: AgentRecord): void {
@@ -420,6 +615,46 @@ function activationFromRow(row: DbActivation): ActivationRecord {
   return { id: row.id, project: row.project, agentId: row.agent_id, status: row.status, prompt: row.prompt, inputPath: row.input_path, outputPath: row.output_path, containerName: row.container_name ?? undefined, startedAt: row.started_at, completedAt: row.completed_at ?? undefined, text: row.text ?? undefined, error: row.error ?? undefined, emittedMessages: row.emitted_messages, usageJson: row.usage_json ?? undefined, contextJson: row.context_json ?? undefined };
 }
 
+type DbToolCall = { id: string; project: string; activation_id: string; agent_id: string; tool: string; input_json: string; status: "running" | "completed" | "failed"; output: string | null; error: string | null; created_at: string; completed_at: string | null };
+
+type AgentHistoryPartInput = {
+  type: AgentHistoryPartType;
+  text?: string;
+  toolCallId?: string;
+  toolName?: string;
+  inputJson?: string;
+  output?: string;
+  error?: string;
+  metadata?: JsonObject;
+};
+
+type DbAgentHistoryMessage = { id: string; project: string; agent_id: string; activation_id: string | null; role: AgentHistoryRole; kind: string; content: string; sequence: number; metadata_json: string; compaction_id: string | null; created_at: string };
+
+type DbAgentHistoryPart = { id: string; project: string; agent_id: string; message_id: string; activation_id: string | null; part_index: number; type: AgentHistoryPartType; text: string | null; tool_call_id: string | null; tool_name: string | null; input_json: string | null; output: string | null; error: string | null; metadata_json: string; created_at: string };
+
+type DbAgentHistoryCompaction = { id: string; project: string; agent_id: string; activation_id: string | null; summary_message_id: string; archive_path: string; start_sequence: number; end_sequence: number; archived_message_count: number; raw_chars: number; summary: string; reason: string | null; selected_model: string | null; created_at: string };
+
+function historyMessageFromRow(row: DbAgentHistoryMessage, parts: AgentHistoryPart[]): AgentHistoryMessage {
+  return { id: row.id, project: row.project, agentId: row.agent_id, activationId: row.activation_id ?? undefined, role: row.role, kind: row.kind, content: row.content, sequence: row.sequence, compactionId: row.compaction_id ?? undefined, archived: row.compaction_id !== null, metadata: parseJsonObject(row.metadata_json), parts, createdAt: row.created_at };
+}
+
+function historyPartFromRow(row: DbAgentHistoryPart): AgentHistoryPart {
+  return { id: row.id, project: row.project, agentId: row.agent_id, messageId: row.message_id, activationId: row.activation_id ?? undefined, partIndex: row.part_index, type: row.type, text: row.text ?? undefined, toolCallId: row.tool_call_id ?? undefined, toolName: row.tool_name ?? undefined, inputJson: row.input_json ?? undefined, output: row.output ?? undefined, error: row.error ?? undefined, metadata: parseJsonObject(row.metadata_json), createdAt: row.created_at };
+}
+
+function compactionFromRow(row: DbAgentHistoryCompaction): AgentHistoryCompaction {
+  return { id: row.id, project: row.project, agentId: row.agent_id, activationId: row.activation_id ?? undefined, summaryMessageId: row.summary_message_id, archivePath: row.archive_path, startSequence: row.start_sequence, endSequence: row.end_sequence, archivedMessageCount: row.archived_message_count, rawChars: row.raw_chars, summary: row.summary, reason: row.reason ?? undefined, selectedModel: row.selected_model ?? undefined, createdAt: row.created_at };
+}
+
+function parseJsonObject(value: string): JsonObject {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as JsonObject : {};
+  } catch {
+    return {};
+  }
+}
+
 function countRows(db: DatabaseSync, table: string, project: string, where?: string): number {
   const row = db.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE project = ?${where ? ` AND ${where}` : ""}`).get(project) as { count: number };
   return row.count;
@@ -436,7 +671,7 @@ function signalAgent(value: string | undefined): string | undefined {
 }
 
 function signalPriority(value: unknown): MessagePriority {
-  if (value === "P0" || value === "P1" || value === "P2" || value === "P3") return value;
+  if (value === "P0" || value === "P1" || value === "P2") return value;
   throw new Error(`Invalid priority: ${String(value)}`);
 }
 
@@ -454,6 +689,41 @@ function defaultUsefulEffect(kind: string, status: SignalRecord["status"]): bool
   if (kind === "scheduler.no_effect_nudge") return false;
   if (status === "pending") return true;
   return kind === "message.created" || kind === "completion.submitted" || kind === "coordination.wait_for_signal";
+}
+
+function textPartType(role: AgentHistoryRole): AgentHistoryPartType {
+  if (role === "tool_call") return "tool_call";
+  if (role === "tool_result") return "tool_result";
+  if (role === "compaction") return "compaction";
+  return "text";
+}
+
+function renderToolCallContent(tool: string, input: unknown): string {
+  return [`# Tool Call`, `Tool: ${tool}`, "", JSON.stringify(input ?? {}, null, 2)].join("\n");
+}
+
+function renderToolResultContent(tool: string, status: "completed" | "failed", output?: string, error?: string): string {
+  return [`# Tool Result`, `Tool: ${tool}`, `Status: ${status}`, error ? `Error: ${error}` : undefined, output ? ["", output].join("\n") : undefined].filter(Boolean).join("\n");
+}
+
+function renderSignalForHistory(signal: SignalRecord): string {
+  if (signal.kind === "message.created") {
+    const message = signal.payload as Record<string, unknown>;
+    return [
+      `## ${signal.id} message.created`,
+      `Message: ${String(message.id ?? signal.id)}`,
+      `From: ${String(message.sender ?? "unknown")}`,
+      typeof message.recipient === "string" ? `To: ${message.recipient}` : `Channel: ${String(message.channel ?? signal.targetChannel ?? "")}`,
+      `Priority: ${String(message.priority ?? signal.priority)}`,
+      `Time: ${String(message.createdAt ?? signal.createdAt)}`,
+      "",
+      String(message.body ?? "").trim(),
+    ].join("\n");
+  }
+  if (signal.kind === "scheduler.no_effect_nudge") {
+    return [`## ${signal.id} scheduler.no_effect_nudge`, `Priority: ${signal.priority}`, "", String(signal.payload.message ?? "Your previous activation produced no externally visible effect. Before ending, call messages.send, coordination.wait_for_signal, or completion.submit as appropriate.")].join("\n");
+  }
+  return [`## ${signal.id} ${signal.kind}`, `Priority: ${signal.priority}`, `Time: ${signal.createdAt}`, "", JSON.stringify(signal.payload, null, 2)].join("\n");
 }
 
 const SCHEMA = `
@@ -547,9 +817,59 @@ CREATE TABLE IF NOT EXISTS signals (
   delivered_at TEXT,
   delivered_activation_id TEXT
 );
+CREATE TABLE IF NOT EXISTS agent_history_messages (
+  id TEXT PRIMARY KEY,
+  project TEXT NOT NULL,
+  agent_id TEXT NOT NULL,
+  activation_id TEXT,
+  role TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  content TEXT NOT NULL,
+  sequence INTEGER NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  compaction_id TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS agent_history_parts (
+  id TEXT PRIMARY KEY,
+  project TEXT NOT NULL,
+  agent_id TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  activation_id TEXT,
+  part_index INTEGER NOT NULL,
+  type TEXT NOT NULL,
+  text TEXT,
+  tool_call_id TEXT,
+  tool_name TEXT,
+  input_json TEXT,
+  output TEXT,
+  error TEXT,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS agent_history_compactions (
+  id TEXT PRIMARY KEY,
+  project TEXT NOT NULL,
+  agent_id TEXT NOT NULL,
+  activation_id TEXT,
+  summary_message_id TEXT NOT NULL,
+  archive_path TEXT NOT NULL,
+  start_sequence INTEGER NOT NULL,
+  end_sequence INTEGER NOT NULL,
+  archived_message_count INTEGER NOT NULL,
+  raw_chars INTEGER NOT NULL,
+  summary TEXT NOT NULL,
+  reason TEXT,
+  selected_model TEXT,
+  created_at TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_messages_project_created ON messages(project, created_at);
 CREATE INDEX IF NOT EXISTS idx_events_project_created ON events(project, created_at);
 CREATE INDEX IF NOT EXISTS idx_activations_project_started ON activations(project, started_at);
 CREATE INDEX IF NOT EXISTS idx_signals_project_target ON signals(project, target_agent, status, created_at);
 CREATE INDEX IF NOT EXISTS idx_signals_project_source ON signals(project, source_activation, useful_effect);
+CREATE INDEX IF NOT EXISTS idx_agent_history_project_agent_sequence ON agent_history_messages(project, agent_id, sequence);
+CREATE INDEX IF NOT EXISTS idx_agent_history_project_agent_active ON agent_history_messages(project, agent_id, compaction_id, sequence);
+CREATE INDEX IF NOT EXISTS idx_agent_history_parts_message ON agent_history_parts(project, message_id, part_index);
+CREATE INDEX IF NOT EXISTS idx_agent_history_compactions_agent ON agent_history_compactions(project, agent_id, created_at);
 `;

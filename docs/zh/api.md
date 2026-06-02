@@ -43,6 +43,8 @@ lead: "HTTP server 暴露项目观测、用户控制动作、SSE 事件流，以
 | 方法  | 路径                                          | 说明                                            |
 |-------|-----------------------------------------------|-------------------------------------------------|
 | `GET` | `/api/projects/:project/agents`               | Agent records，token 已隐藏。                   |
+| `GET` | `/api/projects/:project/agents/:agent/history?limit=100` | 分页读取单个 agent 的模型历史。       |
+| `GET` | `/api/projects/:project/agents/:agent/history-archive/:compaction` | 读取一次 history compaction 的 raw 本地归档。 |
 | `GET` | `/api/projects/:project/messages?limit=100`   | 近期消息。                                      |
 | `GET` | `/api/projects/:project/events?limit=200`     | 近期事件。                                      |
 | `GET` | `/api/projects/:project/activations?limit=100` | 近期 activation。                               |
@@ -85,6 +87,8 @@ Docker runner 把所有模型可见工具展示给模型。Controller 提供 sup
 | `POST` | `/runner/tool-calls/start`            | 鉴权 agent/activation，校验工具属于已配置 toolpack 且在 allowlist 中，并创建 running 记录。 |
 | `POST` | `/runner/tool-calls/finish`           | 校验 tool call 属于当前 agent activation，然后标记 completed 或 failed。                    |
 | `POST` | `/runner/signals`                     | 允许 runner-side 或 local toolpack 代码创建 pending signal 或 closed effect。         |
+| `POST` | `/runner/history/messages`            | 为当前 activation append 可见 assistant/history 记录。                                  |
+| `POST` | `/runner/history/compact`             | 归档旧 agent history，并 append compaction summary marker。                             |
 | `POST` | `/toolpacks/:toolpackId/support`      | 分发 built-in 或 local toolpack 的 controller-side support。                          |
 | `POST` | `/activation-context`                 | 提交 running activation 的模型消息上下文快照。                                        |
 | `POST` | `/activation-output`                  | 提交最终 activation 文本和 usage metadata。                                           |
@@ -174,7 +178,13 @@ Backend 只有在收到这个已鉴权提交后才把 activation 标记为完成
 
 ### `POST /activation-context`
 
-Docker chat runner 会在主模型调用前提交 context snapshot。公开的 activation context API 用它展示实际发送给模型的 messages。旧 activation 没有该字段时，会回退显示 scheduler activation prompt。
+Docker chat runner 会在主模型调用前提交 context snapshot。公开的 activation context API 用它展示实际发送给模型的 messages。旧 activation 没有该字段时，会回退显示 activation prompt。
+
+### Agent History APIs
+
+`GET /api/projects/:project/agents/:agent/history` 按最新记录优先返回 history rows，支持 `limit`、`before` 和 `includeArchived=0`。每行包含 role、kind、activation id、sequence number、metadata 和截断后的 content。响应里的 `nextBefore` 可用于继续加载更旧页面。
+
+Compaction row 的 metadata 中包含 `compactionId`。`GET /api/projects/:project/agents/:agent/history-archive/:compaction` 会读取 compact 前保存的完整 raw archive。该 endpoint 独立存在，避免 WebUI 普通刷新时拉取巨大 archived payload。
 
 ## Core Tool Inputs
 
@@ -233,6 +243,6 @@ Docker chat runner 会在主模型调用前提交 context snapshot。公开的 a
 
 ## WebUI
 
-根路径 `/` 提供由 `webui/` 构建的 Preact WebUI。它调用上面的 API routes 并定期刷新。开发 WebUI 时，运行 `npm run webui:dev` 并打开 `http://127.0.0.1:5173`；Vite 会把 `/api` 和 `/health` 代理到 `39400` 上的 backend。Control room 包含项目选择、状态操作、消息编辑、agent roster、messages、activations、单次 activation 的模型上下文快照、tool calls、event timeline、resolved YAML 和 submitted report 视图。项目 overview 只刷新轻量 summary；大型 logs、config、events、tool calls 和 context payload 都按需加载。
+根路径 `/` 提供由 `webui/` 构建的 Preact WebUI。它调用上面的 API routes 并定期刷新。开发 WebUI 时，运行 `npm run webui:dev` 并打开 `http://127.0.0.1:5173`；Vite 会把 `/api` 和 `/health` 代理到 `39400` 上的 backend。Control room 包含项目选择、状态操作、消息编辑、agent roster、per-agent history、messages、activations、单次 activation 的模型上下文快照、tool calls、event timeline、resolved YAML 和 submitted report 视图。项目 overview 只刷新轻量 summary；大型 logs、agent histories、config、events、tool calls、archives 和 context payload 都按需加载。
 
 <div class="footer">下一步：<a href="roadmap.html">路线图</a>。</div>
