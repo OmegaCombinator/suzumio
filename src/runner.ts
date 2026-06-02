@@ -167,21 +167,21 @@ async function runAiRequestWithHistory(input: RunnerActivationInput, resolved: R
 }
 
 async function compactHistoryForContextOverflow(input: RunnerActivationInput, resolved: ResolvedRunnerModel, history: AgentHistoryMessage[], error: unknown): Promise<AgentHistoryMessage[]> {
-  const keepTail = retryTailMessageCount(history);
-  if (history.length <= keepTail) throw error;
-  const archived = history.slice(0, -keepTail);
-  const summary = await summarizeAgentHistory(resolved, archived, undefined).catch((summaryError) => {
-    console.warn(`history summary failed; using deterministic fallback for activation ${input.activation.id}: ${errorMessage(summaryError)}`);
-    return fallbackAgentHistorySummary({
-      agentId: input.agent.id,
-      history,
-      archived,
-      keepTail,
-      overflowError: errorMessage(error),
-      summaryError: errorMessage(summaryError),
-      selectedModel: resolved.selectedPresetId,
-    });
+  const keepTail = Math.max(1, retryTailMessageCount(history));
+  const archived = history.slice(0, Math.max(0, history.length - keepTail));
+  const fallbackSummary = (summaryError: string) => fallbackAgentHistorySummary({
+    agentId: input.agent.id,
+    history,
+    archived,
+    keepTail,
+    overflowError: errorMessage(error),
+    summaryError,
+    selectedModel: resolved.selectedPresetId,
   });
+  const summary = archived.length ? await summarizeAgentHistory(resolved, archived, undefined).catch((summaryError) => {
+    console.warn(`history summary failed; using deterministic fallback for activation ${input.activation.id}: ${errorMessage(summaryError)}`);
+    return fallbackSummary(errorMessage(summaryError));
+  }) : fallbackSummary("No pre-activation history segment was available to summarize; compacting active controller history.");
   const response = await postJson<{ history?: AgentHistoryMessage[] }>(new URL("/runner/history/compact", input.controllerUrl), {
     project: input.project,
     agentId: input.agent.id,
