@@ -22,11 +22,9 @@ type ToolCallFinishOutput = { status: "completed" | "failed"; deliveredSignals?:
 const fetchWithDispatcher = undiciFetch as unknown as FetchWithDispatcher;
 const webProxyDispatchers = new Map<string, ProxyAgent>();
 const EFFECTIVELY_UNBOUNDED_STEPS = 1_000_000;
-const DEFAULT_CONTEXT_LIMIT = 120_000;
-const COMPACTION_BUFFER = 20_000;
+const CONTEXT_OVERFLOW_RETRIES = 1;
 const DEFAULT_TAIL_MESSAGES = 12;
 const MAX_TURN_CHARS = 20_000;
-const MAX_TOOL_CHARS = 2_000;
 const MAX_SUMMARY_CHARS = 20_000;
 const MAX_SUMMARY_HISTORY_CHARS = 140_000;
 const SUMMARY_OUTPUT_TOKENS = 4_000;
@@ -100,14 +98,24 @@ async function runAi(input: RunnerActivationInput): Promise<RunnerActivationOutp
 }
 
 async function runAiWithModel(input: RunnerActivationInput, resolved: ResolvedRunnerModel): Promise<RunnerActivationOutput> {
+  let history = input.history ?? [];
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await runAiRequestWithHistory(input, resolved, history);
+    } catch (error) {
+      if (attempt >= CONTEXT_OVERFLOW_RETRIES || !isContextOverflowError(error)) throw error;
+      console.warn(`context overflow from ${resolved.presetId}; compacting agent history and retrying activation ${input.activation.id}`);
+      history = await compactHistoryForContextOverflow(input, resolved, history, error);
+    }
+  }
+}
+
+async function runAiRequestWithHistory(input: RunnerActivationInput, resolved: ResolvedRunnerModel, history: AgentHistoryMessage[]): Promise<RunnerActivationOutput> {
   let toolCalls = 0;
   const abortController = new AbortController();
   let activationEnded = false;
   let endActivationOutput: string | undefined;
-  let history = input.history ?? [];
-  history = await compactHistoryBeforeRequest(input, resolved, history);
   const firstPrompt = isFirstActivationPrompt(history);
-  const toolTranscript: string[] = [];
   const tools = await toAiTools(input, () => {
     toolCalls += 1;
     if (input.runner.maxToolCalls !== undefined && toolCalls > input.runner.maxToolCalls) throw new Error(`Exceeded maxToolCalls: ${input.runner.maxToolCalls}`);
@@ -115,9 +123,7 @@ async function runAiWithModel(input: RunnerActivationInput, resolved: ResolvedRu
     activationEnded = true;
     endActivationOutput = output;
     abortController.abort();
-  }, () => activationEnded, (toolName, args, result) => {
-    toolTranscript.push(renderToolTranscript(toolName, args, result));
-  });
+  }, () => activationEnded);
   const messages = historyMessages(history);
   await submitActivationContext(input, resolved, messages, firstPrompt).catch((error) => console.warn("activation context submit failed", errorMessage(error)));
   let text = "";
@@ -143,7 +149,6 @@ async function runAiWithModel(input: RunnerActivationInput, resolved: ResolvedRu
   const finish = async (toolOutput?: string): Promise<RunnerActivationOutput> => {
     const completed = output(toolOutput);
     await submitHistoryAssistant(input, completed, resolved, usage).catch((error) => console.warn("assistant history submit failed", errorMessage(error)));
-    await compactHistoryAfterResponse(input, resolved, history, completed.text, toolTranscript, usage).catch((error) => console.warn("history compaction failed", errorMessage(error)));
     return completed;
   };
   try {
@@ -164,8 +169,8 @@ async function runAiWithModel(input: RunnerActivationInput, resolved: ResolvedRu
   return await finish();
 }
 
-async function compactHistoryBeforeRequest(input: RunnerActivationInput, resolved: ResolvedRunnerModel, history: AgentHistoryMessage[]): Promise<AgentHistoryMessage[]> {
-  if (!historyNeedsCompaction(history, resolved)) return history;
+async function compactHistoryForContextOverflow(input: RunnerActivationInput, resolved: ResolvedRunnerModel, history: AgentHistoryMessage[], error: unknown): Promise<AgentHistoryMessage[]> {
+  if (history.length <= DEFAULT_TAIL_MESSAGES) throw error;
   const summary = await summarizeAgentHistory(resolved, history.slice(0, -DEFAULT_TAIL_MESSAGES), undefined);
   const response = await postJson<{ history?: AgentHistoryMessage[] }>(new URL("/runner/history/compact", input.controllerUrl), {
     project: input.project,
@@ -174,30 +179,10 @@ async function compactHistoryBeforeRequest(input: RunnerActivationInput, resolve
     token: input.token,
     summary,
     keepTail: DEFAULT_TAIL_MESSAGES,
-    reason: "pre_request_context_budget",
+    reason: "provider_context_overflow",
     selectedModel: resolved.selectedPresetId,
   });
   return response.history?.length ? response.history : history;
-}
-
-async function compactHistoryAfterResponse(input: RunnerActivationInput, resolved: ResolvedRunnerModel, history: AgentHistoryMessage[], assistantText: string, toolTranscript: string[], usage: TokenUsage | undefined): Promise<void> {
-  const synthetic = [
-    ...history,
-    ...toolTranscript.map((item, index) => syntheticHistoryMessage("tool_result", `tool_result_${index}`, item)),
-    syntheticHistoryMessage("assistant", "assistant_output", assistantText),
-  ];
-  if (!(usage && isOverflow(usage, resolved)) && !historyNeedsCompaction(synthetic, resolved)) return;
-  const summary = await summarizeAgentHistory(resolved, synthetic.slice(0, -DEFAULT_TAIL_MESSAGES), usage);
-  await postJson(new URL("/runner/history/compact", input.controllerUrl), {
-    project: input.project,
-    agentId: input.agent.id,
-    activationId: input.activation.id,
-    token: input.token,
-    summary,
-    keepTail: DEFAULT_TAIL_MESSAGES,
-    reason: usage && isOverflow(usage, resolved) ? "post_response_token_budget" : "post_response_context_budget",
-    selectedModel: resolved.selectedPresetId,
-  });
 }
 
 async function summarizeAgentHistory(resolved: ResolvedRunnerModel, history: AgentHistoryMessage[], usage: TokenUsage | undefined): Promise<string> {
@@ -254,11 +239,6 @@ function isFirstActivationPrompt(history: AgentHistoryMessage[]): boolean {
   return history.filter((item) => item.kind === "activation_prompt").length <= 1;
 }
 
-function historyNeedsCompaction(history: AgentHistoryMessage[], resolved: ResolvedRunnerModel): boolean {
-  if (history.length <= DEFAULT_TAIL_MESSAGES) return false;
-  return history.reduce((sum, item) => sum + item.content.length, 0) >= usableContextTokens(resolved) * 3;
-}
-
 function trimHistoryForSummary(history: AgentHistoryMessage[]): string {
   let used = 0;
   const rendered: string[] = [];
@@ -274,24 +254,6 @@ function trimHistoryForSummary(history: AgentHistoryMessage[]): string {
 
 function renderHistoryForSummary(item: AgentHistoryMessage): string {
   return [`## ${item.sequence} ${item.role} ${item.kind}`, `Time: ${item.createdAt}`, item.activationId ? `Activation: ${item.activationId}` : undefined, item.compactionId ? `Archived by: ${item.compactionId}` : undefined, "", item.content].filter(Boolean).join("\n");
-}
-
-function syntheticHistoryMessage(role: "assistant" | "tool_result", kind: string, content: string): AgentHistoryMessage {
-  return { id: kind, project: "", agentId: "", role, kind, content, sequence: 0, archived: false, createdAt: new Date().toISOString() };
-}
-
-function isOverflow(usage: TokenUsage, resolved: ResolvedRunnerModel): boolean {
-  return totalTokens(usage) >= usableContextTokens(resolved);
-}
-
-function usableContextTokens(resolved: ResolvedRunnerModel): number {
-  const context = resolved.preset.contextLimit ?? DEFAULT_CONTEXT_LIMIT;
-  const reserved = Math.min(COMPACTION_BUFFER, resolved.preset.maxOutputTokens ?? SUMMARY_OUTPUT_TOKENS);
-  return Math.max(0, context - reserved);
-}
-
-function totalTokens(usage: TokenUsage): number {
-  return usage.total ?? (usage.input ?? 0) + (usage.output ?? 0) + (usage.reasoning ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0);
 }
 
 function parseUsage(value: unknown): TokenUsage | undefined {
@@ -320,10 +282,6 @@ function trimChars(text: string, maxChars: number): string {
   const trimmed = text.trim();
   if (trimmed.length <= maxChars) return trimmed;
   return `${trimmed.slice(0, maxChars).trimEnd()}\n\n[truncated ${trimmed.length - maxChars} chars]`;
-}
-
-function renderToolTranscript(toolName: string, args: unknown, result: ToolResult): string {
-  return trimChars([`## ${toolName}${result.title ? `: ${result.title}` : ""}`, "### Input", JSON.stringify(args ?? {}, null, 2), "### Output", result.output].join("\n"), MAX_TOOL_CHARS);
 }
 
 function providerOptionsFor(resolved: ResolvedRunnerModel): JsonObject {
@@ -499,6 +457,23 @@ function endsActivation(toolName: string): boolean {
 
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && (error.name === "AbortError" || error.message.toLowerCase().includes("abort"));
+}
+
+function isContextOverflowError(error: unknown): boolean {
+  const message = errorMessage(error).toLowerCase();
+  return [
+    "context_length_exceeded",
+    "context length",
+    "context window",
+    "maximum context",
+    "max context",
+    "too many tokens",
+    "input exceeds",
+    "exceeds the context",
+    "exceeded the context",
+    "prompt is too long",
+    "request too large",
+  ].some((needle) => message.includes(needle));
 }
 
 async function finishToolCall(input: RunnerActivationInput, toolCallId: string, status: "completed" | "failed", output?: string, error?: string): Promise<ToolCallFinishOutput> {

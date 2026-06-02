@@ -495,7 +495,7 @@ Suzumio 会拒绝循环 import 和过深的 import 链，避免项目意外无�
 
 多数项目应省略 `scheduler`。默认行为是 signal-driven：idle agent 会因 pending signal 醒来，`P0` 会中断并重启 running agent，`P1` 会尽量在下一次 tool boundary 投递，`P2` 等待下一次 activation。高级项目可以设置 `scheduler.kind` 或 `scheduler.maxSignalsPerActivation`；默认每次 activation 最多投递 20 个 pending signals。
 
-Suzumio 会在 SQLite 中保存每个 agent 的模型历史。每次 activation prompt、可见 assistant 输出、tool call、tool result 和 compaction marker 都会 append 到 history。Runner 下一次调用模型时会把 active history 重新传给模型。当模型 context budget 不够时，旧 history 会被总结成 compaction message，compact 前的完整 raw 范围会本地归档，供 WebUI 或人工查看。
+Suzumio 会在 SQLite 中保存每个 agent 的模型历史。每次 activation prompt、可见 assistant 输出、tool call、tool result 和 compaction marker 都会 append 到 history。Runner 下一次调用模型时会把 active history 重新传给模型。当 provider 因 context window 超限而拒绝请求时，旧 history 会被总结成 compaction message，compact 前的完整 raw 范围会本地归档，然后 runner retry 当前 activation。
 
 ## Backend Config
 
@@ -561,7 +561,7 @@ Suzumio 会在 SQLite 中保存每个 agent 的模型历史。每次 activation 
 
 Model 选择是显式的。可以在 `backend.runner.model` 设置项目级选择，或在 `agents.*.model` 为每个 agent 设置。带 `model-list` 的 preset 会展开成有序 fallback 列表；runner 会按顺序尝试其中的 concrete preset。多数配置里，`model` 同时也是 provider-facing model id。只有当本地 preset 名称需要和 provider API 模型名不同时，才使用 `apiModel`。
 
-Agent history compaction 是 Docker chat runner 的一部分，不暴露成用户配置面。请在 model preset 上设置 `contextLimit`，runner 会根据 provider-reported usage 判断何时压缩旧 history。
+Agent history compaction 是 Docker chat runner 的一部分，不暴露成用户配置面。Model preset 的 `contextLimit` 默认值是 `260000`；它是模型配置 metadata，不会主动触发 compaction。Runner 只在 provider 报告 context-window overflow 时 compact。
 
 <div class="notice danger">
 

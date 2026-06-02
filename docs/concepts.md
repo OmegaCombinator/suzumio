@@ -98,7 +98,7 @@ An activation can send messages, publish artifacts, submit a report, or simply r
 
 Each agent has append-only model history stored in SQLite. Suzumio appends user prompts from delivered signals, visible assistant output, tool calls, tool results, and compaction markers. The runner sends the active history back to the model on the next call, so continuity lives in the core runtime rather than in a container-local file.
 
-When the active history grows too large, the runner asks the model for a compact summary. Suzumio archives the full raw compacted range locally, marks those messages archived, appends a compaction marker containing the summary, and keeps the latest tail messages verbatim.
+When the provider rejects a request because the active history exceeds the context window, the runner asks the model for a compact summary and retries the activation with the compacted history. Suzumio archives the full raw compacted range locally, marks those messages archived, appends a compaction marker containing the summary, and keeps the latest tail messages verbatim.
 
 ## Signal Scheduler
 

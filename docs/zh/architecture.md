@@ -101,7 +101,7 @@ Runner 通过一个只读 input 文件接收上下文，并通过 HTTP 回传完
 
 Agent 连续性保存在 SQLite 的 append-only history rows 中，而不是容器本地 session 文件。启动 activation 前，backend 会把目标 agent 的 active history snapshot 写入 `/activation/input.json`。docker-chat runner 把这段 history 渲染成模型 messages，然后通过 runner-internal support routes append 可见 assistant 输出和已审计 tool records。
 
-Compaction 由 docker-chat runner 根据 provider usage 或配置的 context limit 决定。Runner 生成 summary，然后调用 runner-internal persistence route，由 Suzumio 侧 docker-chat support 归档 compact 前的 raw 范围并 append compaction marker。Scheduler 不指派也不决定 compaction。
+Compaction 只在模型 provider 明确报告请求超过 context window 后由 docker-chat runner 决定。Runner 生成 summary，然后调用 runner-internal persistence route，由 Suzumio 侧 docker-chat support 归档 compact 前的 raw 范围并 append compaction marker，随后 retry。Scheduler 不指派也不决定 compaction。
 
 ## Signal Delivery
 

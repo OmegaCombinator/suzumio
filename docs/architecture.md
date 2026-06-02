@@ -101,7 +101,7 @@ The model does not receive arbitrary host tools by default. Tools are configured
 
 Agent continuity is stored as append-only history rows in SQLite, not as a container-local session file. Before starting an activation, the backend snapshots the target agent's active history into `/activation/input.json`. The docker-chat runner turns that history into model messages, then appends visible assistant output and audited tool records through runner-internal support routes.
 
-Compaction is decided by the docker-chat runner when provider usage or configured context limits require it. The runner generates the summary, then calls a runner-internal persistence route so the Suzumio-side docker-chat support can archive the raw compacted range and append a compaction marker. The scheduler does not assign or decide compaction.
+Compaction is decided by the docker-chat runner only after the model provider reports that the request exceeds the available context window. The runner generates the summary, then calls a runner-internal persistence route so the Suzumio-side docker-chat support can archive the raw compacted range and append a compaction marker before retrying. The scheduler does not assign or decide compaction.
 
 ## Signal Delivery
 

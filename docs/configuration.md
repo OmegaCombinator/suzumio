@@ -495,7 +495,7 @@ The backend object deep-merges, so `backend.image` remains from the profile whil
 
 Most projects should omit `scheduler`. The default is signal-driven: idle agents wake for pending signals, `P0` interrupts and restarts a running agent, `P1` is delivered at the next tool boundary when possible, and `P2` waits for the next activation. Advanced projects may set `scheduler.kind` or `scheduler.maxSignalsPerActivation`; the default signal batch size is 20.
 
-Suzumio keeps per-agent model history in SQLite. Each activation prompt, visible assistant output, tool call, tool result, and compaction marker is appended to that history. The runner sends the active history back to the model on the next call. When the model context budget is reached, older history is summarized into a compaction message and the full raw compacted range is archived locally for inspection.
+Suzumio keeps per-agent model history in SQLite. Each activation prompt, visible assistant output, tool call, tool result, and compaction marker is appended to that history. The runner sends the active history back to the model on the next call. When the provider rejects a request because the context window is exceeded, older history is summarized into a compaction message and the full raw compacted range is archived locally before the runner retries.
 
 ## Backend Config
 
@@ -561,7 +561,7 @@ Suzumio keeps per-agent model history in SQLite. Each activation prompt, visible
 
 Model selection is explicit. Set `backend.runner.model` for a project-level selection, or set `agents.*.model` per agent. Presets with `model-list` expand to an ordered fallback list; the runner tries each concrete preset in order. In most configs, `model` is also the provider model id. Use `apiModel` only when you want the local preset name to differ from the provider-facing model id.
 
-Agent history compaction is part of the Docker chat runner rather than a user-facing config surface. Set `contextLimit` on model presets so the runner can decide when provider-reported usage is close enough to the budget to compact old history.
+Agent history compaction is part of the Docker chat runner rather than a user-facing config surface. Model presets default `contextLimit` to `260000`; this is metadata for model configuration and does not proactively trigger compaction. The runner compacts only when the provider reports a context-window overflow.
 
 <div class="notice danger">
 

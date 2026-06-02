@@ -96,7 +96,7 @@ Activation 是一个连续 agent 的一次隔离执行。Suzumio 创建 activati
 
 每个 agent 都有 append-only 模型历史，保存在 SQLite 中。Suzumio 会 append 已投递 signal 形成的 user prompt、可见 assistant 输出、tool call、tool result 和 compaction marker。Runner 下一次调用模型时会把 active history 重新传给模型，所以连续性存在 core runtime 中，而不是容器本地文件里。
 
-当 active history 太长时，runner 会让模型生成 compact summary。Suzumio 会把 compact 前的完整 raw 范围本地归档，将这些消息标记为 archived，append 一个包含 summary 的 compaction marker，并保留最新 tail messages 原文。
+当 provider 因 active history 超过 context window 而拒绝请求时，runner 会让模型生成 compact summary，并用 compacted history retry 当前 activation。Suzumio 会把 compact 前的完整 raw 范围本地归档，将这些消息标记为 archived，append 一个包含 summary 的 compaction marker，并保留最新 tail messages 原文。
 
 ## Signal Scheduler
 

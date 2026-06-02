@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { ProjectConfig } from "./types.js";
 
 const JsonObjectSchema = z.record(z.string(), z.unknown());
+const DEFAULT_CONTEXT_LIMIT = 260_000;
 
 const SchedulerSchema = z.preprocess(
   (value) => {
@@ -53,7 +54,7 @@ const ModelPresetSchema = z.preprocess(
       topP: z.number().optional(),
       topK: z.number().optional(),
       maxOutputTokens: z.number().int().positive().optional(),
-      contextLimit: z.number().int().positive().optional(),
+      contextLimit: z.number().int().positive().default(DEFAULT_CONTEXT_LIMIT),
       toolChoice: z.enum(["auto", "required", "none"]).optional(),
       providerOptions: JsonObjectSchema.default({}),
       headers: z.record(z.string(), z.string()).default({}),
