@@ -91,7 +91,7 @@ export class ProjectStore {
     if (input.recipient && input.channel) throw new Error("Message cannot have both recipient and channel");
     if (input.recipient && input.recipient !== "user") this.requireAgent(input.recipient);
     if (input.channel && !this.config().channels.includes(input.channel)) throw new Error(`Unknown channel: ${input.channel}`);
-    const priority = signalPriority(input.priority ?? "P2");
+    const priority = signalPriority(input.priority ?? "P1");
     const message: MessageRecord = {
       id: createId("msg"),
       project: this.project,

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { ProxyAgent, fetch as undiciFetch, type Dispatcher } from "undici";
@@ -487,6 +487,9 @@ function builtinRunnerHandlers(toolpackId: string, context: RunnerToolContext): 
         "messages.send": (input) => context.callSupport("messages.send", input),
         "coordination.wait_for_signal": (input) => context.callSupport("coordination.wait_for_signal", input),
         "completion.submit": (input) => context.callSupport("completion.submit", input),
+        "file.read": (input) => runFileRead(context.workspace, input),
+        "file.write": (input) => runFileWrite(context.workspace, context.agentId, input),
+        "file.patch": (input) => runFilePatch(context.workspace, context.agentId, input),
       };
     case "shell":
       return { "shell.exec": (input) => runShellExec(context.workspace, input) };
@@ -495,6 +498,70 @@ function builtinRunnerHandlers(toolpackId: string, context: RunnerToolContext): 
     default:
       throw new Error(`Unknown built-in runner toolpack: ${toolpackId}`);
   }
+}
+
+async function runFileRead(workspace: string, rawArgs: unknown): Promise<ToolResult> {
+  const args = objectInput(rawArgs);
+  const filePath = readablePath(workspace, stringArg(args, "path"));
+  const info = await stat(filePath);
+  const offset = boundedNumber(args.offset, 1, Number.MAX_SAFE_INTEGER);
+  const limit = boundedNumber(args.limit, 200, 2_000);
+  const maxBytes = boundedNumber(args.maxBytes, 50_000, 100_000);
+  if (info.isDirectory()) {
+    const entries = (await readdir(filePath, { withFileTypes: true })).map((entry) => `${entry.name}${entry.isDirectory() ? "/" : ""}`).sort();
+    const selected = entries.slice(offset - 1, offset - 1 + limit);
+    const body = capToolText(selected.join("\n"), maxBytes);
+    return { title: "file read", output: body || "(empty directory range)", metadata: { path: filePath, kind: "directory", entries: entries.length, offset, limit, truncated: body.length < selected.join("\n").length } };
+  }
+  const text = await readFile(filePath, "utf8");
+  const lines = text.split(/\r?\n/);
+  const selected = lines.slice(offset - 1, offset - 1 + limit).map((line, index) => `${offset + index}: ${line.length > 2_000 ? `${line.slice(0, 2_000)}... (line truncated)` : line}`);
+  const raw = selected.join("\n");
+  const body = capToolText(raw, maxBytes);
+  return { title: "file read", output: body || "(empty file range)", metadata: { path: filePath, kind: "file", lines: lines.length, offset, limit, truncated: body.length < raw.length } };
+}
+
+async function runFileWrite(workspace: string, agentId: string, rawArgs: unknown): Promise<ToolResult> {
+  const args = objectInput(rawArgs);
+  const filePath = writablePath(workspace, agentId, stringArg(args, "path"));
+  const content = textArg(args, "content");
+  if (optionalBoolean(args.createDirs)) await mkdir(path.dirname(filePath), { recursive: true });
+  await writeFile(filePath, content, "utf8");
+  return { title: "file written", output: `Wrote ${content.length} chars to ${filePath}`, metadata: { path: filePath, chars: content.length } };
+}
+
+async function runFilePatch(workspace: string, agentId: string, rawArgs: unknown): Promise<ToolResult> {
+  const args = objectInput(rawArgs);
+  const operations = arrayArg(args.operations, "operations").map((item) => objectInput(item));
+  const results: string[] = [];
+  for (const op of operations) {
+    const kind = stringArg(op, "op");
+    const filePath = writablePath(workspace, agentId, stringArg(op, "path"));
+    if (kind === "add") {
+      const content = textArg(op, "content");
+      if (optionalBoolean(op.createDirs)) await mkdir(path.dirname(filePath), { recursive: true });
+      await writeFile(filePath, content, "utf8");
+      results.push(`add ${filePath} (${content.length} chars)`);
+      continue;
+    }
+    if (kind === "delete") {
+      await rm(filePath);
+      results.push(`delete ${filePath}`);
+      continue;
+    }
+    if (kind !== "update") throw new Error(`Unsupported patch op: ${kind}`);
+    const search = stringArg(op, "search");
+    const replace = typeof op.replace === "string" ? op.replace : "";
+    const replaceAll = optionalBoolean(op.replaceAll) ?? false;
+    const text = await readFile(filePath, "utf8");
+    const matches = text.split(search).length - 1;
+    if (matches === 0) throw new Error(`Patch search text not found in ${filePath}`);
+    if (!replaceAll && matches !== 1) throw new Error(`Patch search text matched ${matches} times in ${filePath}; set replaceAll:true or make search text unique`);
+    const next = replaceAll ? text.split(search).join(replace) : text.replace(search, replace);
+    await writeFile(filePath, next, "utf8");
+    results.push(`update ${filePath} (${matches} replacement${matches === 1 ? "" : "s"})`);
+  }
+  return { title: "file patch", output: results.join("\n"), metadata: { operations: results.length } };
 }
 
 async function externalRunnerHandlers(toolpack: RunnerToolpackSpec, context: RunnerToolContext): Promise<Record<string, RunnerToolHandler>> {
@@ -630,8 +697,53 @@ function stringArg(input: Record<string, unknown>, key: string): string {
   return value;
 }
 
+function textArg(input: Record<string, unknown>, key: string): string {
+  const value = input[key];
+  if (typeof value !== "string") throw new Error(`${key} must be a string`);
+  return value;
+}
+
 function optionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function optionalBoolean(value: unknown): boolean | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value === "boolean") return value;
+  throw new Error(`Expected boolean, got ${String(value)}`);
+}
+
+function arrayArg(value: unknown, key: string): unknown[] {
+  if (!Array.isArray(value)) throw new Error(`${key} must be an array`);
+  return value;
+}
+
+function readablePath(workspace: string, value: string): string {
+  const filePath = resolveFilePath(workspace, value);
+  if (isUnder(filePath, "/workspace") || isUnder(filePath, "/artifacts") || isUnder(filePath, "/mnt")) return filePath;
+  throw new Error(`Read path must be under /workspace, /artifacts, or /mnt: ${value}`);
+}
+
+function writablePath(workspace: string, agentId: string, value: string): string {
+  const filePath = resolveFilePath(workspace, value);
+  if (isUnder(filePath, "/workspace") || isUnder(filePath, `/artifacts/${agentId}`)) return filePath;
+  throw new Error(`Write path must be under /workspace or /artifacts/${agentId}: ${value}`);
+}
+
+function resolveFilePath(workspace: string, value: string): string {
+  return path.isAbsolute(value) ? path.normalize(value) : path.resolve(workspace, value);
+}
+
+function isUnder(filePath: string, root: string): boolean {
+  const resolved = path.resolve(filePath);
+  const base = path.resolve(root);
+  return resolved === base || resolved.startsWith(base + path.sep);
+}
+
+function capToolText(text: string, maxBytes: number): string {
+  const bytes = Buffer.byteLength(text, "utf8");
+  if (bytes <= maxBytes) return text;
+  return `${text.slice(0, maxBytes).trimEnd()}\n\n[truncated ${bytes - maxBytes} bytes]`;
 }
 
 function boundedNumber(value: unknown, fallback: number, max: number): number {

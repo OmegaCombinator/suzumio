@@ -247,7 +247,7 @@ function builtinSupport(toolpackId: string, tool: string, context: ControllerCon
 const BUILTIN_TOOLPACKS: Record<string, BuiltinToolpack> = {
   core: {
     id: "core",
-    tools: [messagesSendDefinition(), waitForSignalDefinition(), completionSubmitDefinition()],
+    tools: [messagesSendDefinition(), waitForSignalDefinition(), completionSubmitDefinition(), fileReadDefinition(), fileWriteDefinition(), filePatchDefinition()],
     support: {
       "messages.send": messagesSendSupport,
       "coordination.wait_for_signal": waitForSignalSupport,
@@ -261,13 +261,13 @@ const BUILTIN_TOOLPACKS: Record<string, BuiltinToolpack> = {
 function messagesSendDefinition(): ToolDefinition {
   return {
     name: "messages.send",
-    description: "Send a Markdown message to another agent, the user, or a configured project channel. This is the normal way to make substantive work externally visible and finish an activation after shell/file work. Delivery is immediate; do not send ACK-only messages or request confirmation of receipt.",
+    description: "Send a Markdown message to another agent, the user, or a configured project channel. Default priority is P1. Use P0 only for true interrupt-worthy emergencies such as human stop, destructive conflict, or secret/safety issues. Delivery is immediate; do not send ACK-only messages or request confirmation of receipt.",
     inputSchema: {
       type: "object",
       properties: {
         recipient: { type: "string", description: "Direct recipient agent id, or user. Non-PM agents usually report to pm unless the signal names another recipient." },
         channel: { type: "string", description: "Project channel such as #project. Use either recipient or channel." },
-        priority: { type: "string", enum: ["P0", "P1", "P2"], default: "P2" },
+        priority: { type: "string", enum: ["P0", "P1", "P2"], default: "P1", description: "Message priority. Use P1 by default. Use P0 only for true interrupt-worthy emergencies; ordinary assignments, handoffs, review requests, blockers, and status updates are P1." },
         body: { type: "string", description: "Markdown body containing results, exact artifact paths, exact commands/results, next action requested, or blocker. Do not use this for ACK-only text such as received/noted/standing by." },
       },
       required: ["body"],
@@ -279,11 +279,78 @@ function messagesSendDefinition(): ToolDefinition {
 async function messagesSendSupport({ store, agent, activationId }: ControllerContext, input: unknown): Promise<ToolCallOutput> {
   const args = objectInput(input);
   const body = stringArg(args, "body");
-  const priority = priorityArg(args.priority ?? "P2");
+  const priority = priorityArg(args.priority ?? "P1");
   const recipient = optionalString(args.recipient);
   const channel = optionalString(args.channel);
   const message = store.sendMessage({ sender: agent.id, recipient, channel, priority, body, sourceAgent: agent.id, sourceActivation: activationId });
   return { title: "message sent", output: `Message sent and delivered: ${message.id}`, metadata: { messageId: message.id } };
+}
+
+function fileReadDefinition(): ToolDefinition {
+  return {
+    name: "file.read",
+    description: "Read a file or directory from /workspace, /artifacts, or /mnt. Prefer this over shell commands like cat/sed/head/tail. For large files, use offset/limit and inspect focused ranges.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Absolute path under /workspace, /artifacts, or /mnt, or a path relative to /workspace." },
+        offset: { type: "number", description: "1-indexed line offset for file reads. Defaults to 1." },
+        limit: { type: "number", description: "Maximum lines or directory entries returned. Defaults to 200, capped at 2000." },
+        maxBytes: { type: "number", description: "Maximum output bytes returned, capped at 100000. Defaults to 50000." },
+      },
+      required: ["path"],
+      additionalProperties: false,
+    },
+  };
+}
+
+function fileWriteDefinition(): ToolDefinition {
+  return {
+    name: "file.write",
+    description: "Write a complete file under /workspace or your own /artifacts/<agent-id> directory. Use for new files or deliberate full rewrites. For targeted edits, prefer file.patch.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Absolute path under /workspace or your own /artifacts/<agent-id> directory, or a path relative to /workspace." },
+        content: { type: "string", description: "Full file content to write." },
+        createDirs: { type: "boolean", default: false, description: "Create missing parent directories." },
+      },
+      required: ["path", "content"],
+      additionalProperties: false,
+    },
+  };
+}
+
+function filePatchDefinition(): ToolDefinition {
+  return {
+    name: "file.patch",
+    description: "Apply one or more exact text edits under /workspace or your own /artifacts/<agent-id> directory. Prefer this for modifying existing files. Each update must match existing text exactly, which prevents accidental broad rewrites.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        operations: {
+          type: "array",
+          description: "Patch operations. Use op=add to create a file, op=update for exact search/replace, or op=delete to remove a file.",
+          items: {
+            type: "object",
+            properties: {
+              op: { type: "string", enum: ["add", "update", "delete"] },
+              path: { type: "string" },
+              content: { type: "string", description: "Content for add operations." },
+              search: { type: "string", description: "Exact text to replace for update operations." },
+              replace: { type: "string", description: "Replacement text for update operations." },
+              replaceAll: { type: "boolean", default: false, description: "Replace all occurrences instead of exactly one." },
+              createDirs: { type: "boolean", default: false, description: "Create missing parent directories for add operations." },
+            },
+            required: ["op", "path"],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ["operations"],
+      additionalProperties: false,
+    },
+  };
 }
 
 function waitForSignalDefinition(): ToolDefinition {
@@ -310,7 +377,7 @@ async function waitForSignalSupport({ store, agent, activationId }: ControllerCo
   let messageId: string | undefined;
   let notifiedAgent: string | undefined;
   if (notifyPm && agent.id !== pm && store.listAgents().some((item) => item.id === pm)) {
-    const message = store.sendMessage({ sender: agent.id, recipient: pm, priority: "P2", body: `Waiting for future signals.\n\nReason: ${reason}`, sourceAgent: agent.id, sourceActivation: activationId });
+    const message = store.sendMessage({ sender: agent.id, recipient: pm, priority: "P1", body: `Waiting for future signals.\n\nReason: ${reason}`, sourceAgent: agent.id, sourceActivation: activationId });
     messageId = message.id;
     notifiedAgent = pm;
   }
