@@ -500,8 +500,35 @@ button {
 .agent-card {
   display: flex;
   gap: 0.75rem;
+  align-items: flex-start;
   min-width: 0;
   padding: 0.875rem;
+  border-left-width: 4px;
+}
+
+.agent-card.agent-running {
+  background: linear-gradient(180deg, #eff6ff 0%, #ffffff 70%);
+  border-color: #bfdbfe;
+  border-left-color: #2563eb;
+}
+
+.agent-card.agent-quiet {
+  background: #f8fafc;
+  border-color: #e2e8f0;
+  border-left-color: #94a3b8;
+}
+
+.agent-card.agent-ready {
+  background: linear-gradient(180deg, #fffbeb 0%, #ffffff 70%);
+  border-color: #fde68a;
+  border-left-color: #d97706;
+}
+
+.agent-card.agent-failed,
+.agent-card.agent-stopped {
+  background: linear-gradient(180deg, #fef2f2 0%, #ffffff 70%);
+  border-color: #fecaca;
+  border-left-color: #dc2626;
 }
 
 .agent-avatar {
@@ -515,6 +542,27 @@ button {
   border-radius: 999px;
   font-size: 0.75rem;
   font-weight: 650;
+}
+
+.agent-running .agent-avatar {
+  color: #ffffff;
+  background: #2563eb;
+}
+
+.agent-quiet .agent-avatar {
+  color: #475569;
+  background: #e2e8f0;
+}
+
+.agent-ready .agent-avatar {
+  color: #92400e;
+  background: #fef3c7;
+}
+
+.agent-failed .agent-avatar,
+.agent-stopped .agent-avatar {
+  color: #ffffff;
+  background: #dc2626;
 }
 
 .agent-card div:last-child {
@@ -1151,6 +1199,13 @@ textarea:focus {
   border-radius: 999px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 0.6875rem;
+}
+
+.history-meta .history-tool-chip {
+  color: #92400e;
+  background: #fffbeb;
+  border-color: #fde68a;
+  font-weight: 650;
 }
 
 .history-item details {

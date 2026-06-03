@@ -418,11 +418,12 @@ function HistoryPanel({ project }: { project: Project }) {
 
 function HistoryItem({ message, onArchive }: { message: AgentHistoryMessage; onArchive: (message: AgentHistoryMessage) => void }) {
   const compactionId = historyCompactionId(message);
-  const title = `${message.sequence}. ${message.role} / ${message.kind}`;
+  const toolName = historyToolName(message);
+  const title = toolName ? `${message.sequence}. ${message.role} / ${toolName}` : `${message.sequence}. ${message.role} / ${message.kind}`;
   return (
     <article class={`history-item history-${message.role} ${message.archived ? "archived" : ""}`}>
       <div class="item-title"><strong>{title}</strong><small>{formatRelative(message.createdAt)}</small></div>
-      <div class="history-meta"><span>{message.id}</span>{message.activationId && <span>{message.activationId}</span>}{message.archived && <span>archived</span>}</div>
+      <div class="history-meta"><span>{message.id}</span>{message.activationId && <span>{message.activationId}</span>}{toolName && <span class="history-tool-chip">{toolName}</span>}{message.archived && <span>archived</span>}</div>
       <details open={message.role === "compaction" || message.role === "user"}>
         <summary>{message.content.length.toLocaleString()} chars</summary>
         <pre>{message.content}</pre>
@@ -489,7 +490,7 @@ function ActivationContextPanel({ context, onClose }: { context: ActivationConte
       <div class="context-list">
         {snapshot.messages.map((message, index) => (
           <details class="context-message" open={index === snapshot.messages.length - 1 || snapshot.messages.length <= 3}>
-            <summary><strong>{index + 1}. {message.role}</strong><small>{message.chars.toLocaleString()} chars</small></summary>
+            <summary><strong>{index + 1}. {contextMessageLabel(message)}</strong><small>{message.chars.toLocaleString()} chars</small></summary>
             <pre>{message.content}</pre>
           </details>
         ))}
@@ -507,7 +508,7 @@ function Metric({ label, value, sub, tone }: { label: string; value: number; sub
 }
 
 function AgentCard({ agent }: { agent: Agent }) {
-  return <article class="agent-card"><div class="agent-avatar">{initials(agent.displayName || agent.id)}</div><div><div class="item-title"><strong>{agent.displayName}</strong><StatusPill status={agent.status} compact /></div><p>{agent.role}</p><small>{agent.id}{agent.activeActivationId ? ` - ${agent.activeActivationId}` : ""}</small></div></article>;
+  return <article class={`agent-card agent-${agent.status}`}><div class="agent-avatar">{initials(agent.displayName || agent.id)}</div><div><div class="item-title"><strong>{agent.displayName}</strong><StatusPill status={agent.status} compact /></div><p>{agent.role}</p><small>{agent.id}{agent.activeActivationId ? ` - ${agent.activeActivationId}` : ""}</small></div></article>;
 }
 
 function MessageList({ projectId, messages, verbose = false }: { projectId?: string; messages: Message[]; verbose?: boolean }) {
@@ -598,5 +599,8 @@ function initials(value: string): string { return value.split(/[\s_-]+/).map((pa
 function formatTime(value: string): string { return new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }); }
 function formatRelative(value: string): string { const seconds = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 1000)); if (seconds < 60) return `${seconds}s ago`; if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`; if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`; return `${Math.floor(seconds / 86400)}d ago`; }
 function messageTarget(message: Message): string { return message.recipient ?? message.channel ?? "broadcast"; }
+function contextMessageLabel(message: ActivationContextResponse["context"]["messages"][number]): string { const toolName = extractToolNameFromText(message.content); return toolName ? `${message.role} / ${toolName}` : message.role; }
 function historyCompactionId(message: AgentHistoryMessage): string | undefined { const value = message.metadata?.compactionId ?? message.compactionId; return typeof value === "string" ? value : undefined; }
+function historyToolName(message: AgentHistoryMessage): string | undefined { const structured = message.parts?.find((part) => (part.type === "tool_call" || part.type === "tool_result") && part.toolName)?.toolName; if (structured) return structured; const metadataTool = message.metadata?.tool; if (typeof metadataTool === "string" && metadataTool) return metadataTool; return extractToolNameFromText(message.content); }
+function extractToolNameFromText(value: string): string | undefined { const match = value.match(/^Tool:\s*(.+)$/m); return match?.[1]?.trim() || undefined; }
 function summarizeJson(value: string): string { try { const parsed = JSON.parse(value) as Record<string, unknown>; return Object.entries(parsed).slice(0, 4).map(([key, item]) => `${key}: ${typeof item === "string" ? item : JSON.stringify(item)}`).join(" - ") || "No payload"; } catch { return value; } }
