@@ -6,6 +6,12 @@ import type { ProjectConfig } from "./types.js";
 
 const JsonObjectSchema = z.record(z.string(), z.unknown());
 const DEFAULT_CONTEXT_LIMIT = 260_000;
+const MessagePrioritySchema = z.enum(["P0", "P1", "P2"]);
+
+const DEFAULT_ALL_QUIET_NUDGE_MESSAGE = [
+  "All agents are quiet and there are no pending work signals for this running project.",
+  "Treat this as a coordination stall: ask workers for current progress, tell them to continue, or resend any missing work/review messages. Use targeted messages rather than waiting silently.",
+].join("\n\n");
 
 const SchedulerSchema = z.preprocess(
   (value) => {
@@ -19,9 +25,27 @@ const SchedulerSchema = z.preprocess(
     .object({
       kind: z.enum(["nonpreemptive-mailbox", "nonpreemptive-signals"]).default("nonpreemptive-signals"),
       maxSignalsPerActivation: z.number().int().positive().default(20),
+      allQuietNudge: z
+        .object({
+          enabled: z.boolean().default(false),
+          targetAgent: z.string().min(1).default("pm"),
+          priority: MessagePrioritySchema.default("P1"),
+          cooldownMs: z.number().int().positive().default(300_000),
+          message: z.string().min(1).default(DEFAULT_ALL_QUIET_NUDGE_MESSAGE),
+        })
+        .default({ enabled: false, targetAgent: "pm", priority: "P1", cooldownMs: 300_000, message: DEFAULT_ALL_QUIET_NUDGE_MESSAGE }),
     })
-    .default({ kind: "nonpreemptive-signals", maxSignalsPerActivation: 20 }),
+    .default({ kind: "nonpreemptive-signals", maxSignalsPerActivation: 20, allQuietNudge: { enabled: false, targetAgent: "pm", priority: "P1", cooldownMs: 300_000, message: DEFAULT_ALL_QUIET_NUDGE_MESSAGE } }),
 );
+
+const CommunicationSchema = z
+  .object({
+    coordinatorAgent: z.string().min(1).default("pm"),
+    restrictNonCoordinatorToCoordinator: z.boolean().default(false),
+    nonCoordinatorMaxPriority: MessagePrioritySchema.default("P1"),
+    pmRoutineVerifierPriority: MessagePrioritySchema.default("P2"),
+  })
+  .default({ coordinatorAgent: "pm", restrictNonCoordinatorToCoordinator: false, nonCoordinatorMaxPriority: "P1", pmRoutineVerifierPriority: "P2" });
 
 const ProviderSchema = z.object({
   type: z.enum(["openai", "anthropic", "google", "openai-compatible"]),
@@ -156,6 +180,7 @@ const ProjectConfigSchema = z.object({
   task: z.string().min(1),
   extends: z.array(z.unknown()).optional(),
   scheduler: SchedulerSchema,
+  communication: CommunicationSchema,
   backend: BackendSchema,
   agents: z.record(z.string(), AgentSchema).default({}),
   channels: z.array(z.string()).default(["#project", "#blocked"]),

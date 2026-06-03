@@ -16,6 +16,7 @@ export class NonPreemptiveSignalScheduler {
       if (projectRow.status !== "running") return;
       const agents = store.listAgents();
       for (const agent of agents) await this.tickAgent(store, agent, agents);
+      this.maybeNudgeAllQuiet(store);
     } finally {
       store.close();
     }
@@ -64,6 +65,29 @@ export class NonPreemptiveSignalScheduler {
     store.markSignalsDelivered(agent.id, signals, activation.id);
     await this.backend.startActivation(store, agent, activation, prompt);
   }
+
+  private maybeNudgeAllQuiet(store: ProjectStore): void {
+    const config = store.config();
+    const nudge = config.scheduler.allQuietNudge;
+    if (!nudge?.enabled) return;
+    const agents = store.listAgents();
+    if (agents.length === 0 || !agents.some((agent) => agent.id === nudge.targetAgent)) return;
+    if (!agents.every((agent) => agent.status === "quiet")) return;
+    if (store.hasPendingSignals()) return;
+    const last = store.latestSignalCreatedAt({ kind: "scheduler.all_quiet_nudge", targetAgent: nudge.targetAgent });
+    if (last && Date.now() - Date.parse(last) < nudge.cooldownMs) return;
+    store.recordSignal({
+      kind: "scheduler.all_quiet_nudge",
+      targetAgent: nudge.targetAgent,
+      priority: nudge.priority,
+      payload: {
+        message: nudge.message,
+        reason: "all agents quiet and no pending signals",
+        agentStatuses: agents.map((agent) => ({ id: agent.id, status: agent.status })),
+      },
+      usefulEffect: true,
+    });
+  }
 }
 
 export class NonPreemptiveMailboxScheduler extends NonPreemptiveSignalScheduler {}
@@ -77,31 +101,40 @@ function renderActivationPrompt(config: ProjectConfig, agent: AgentRecord, agent
     isFirstActivation ? renderSharedArtifacts(agent, agents) : undefined,
     "# New Signals",
     ...signals.map(renderSignal),
-    renderToolAndReportingContract(agent, agents),
+    renderToolAndReportingContract(config, agent, agents),
     renderActivationRule(),
   ]
     .filter(Boolean)
     .join("\n\n");
 }
 
-function renderToolAndReportingContract(agent: AgentRecord, agents: AgentRecord[]): string {
-  const hasPm = agents.some((item) => item.id === "pm");
-  const defaultRecipient = hasPm ? "`pm`" : "the requested recipient, a configured channel, or `user`";
+function renderToolAndReportingContract(config: ProjectConfig, agent: AgentRecord, agents: AgentRecord[]): string {
+  const communication = config.communication ?? { coordinatorAgent: "pm", restrictNonCoordinatorToCoordinator: false, nonCoordinatorMaxPriority: "P1", pmRoutineVerifierPriority: "P2" };
+  const coordinator = communication.coordinatorAgent;
+  const hasCoordinator = agents.some((item) => item.id === coordinator);
+  const isCoordinator = agent.id === coordinator;
+  const defaultRecipient = hasCoordinator ? `\`${coordinator}\`` : "the requested recipient, a configured channel, or `user`";
+  const communicationRule = communication.restrictNonCoordinatorToCoordinator
+    ? isCoordinator
+      ? `Communication policy: you are the coordinator. You may message any project agent or \`user\`. For routine non-urgent verifier review/delegation, prefer \`${communication.pmRoutineVerifierPriority}\`; use \`P1\` when the review unblocks active work. Keep \`P0\` for true emergencies only.`
+      : `Communication policy: only send direct messages to \`${coordinator}\`; do not message \`user\`, channels, verifier, scout, or other formalizers directly. Your allowed message priorities are \`${communication.nonCoordinatorMaxPriority}\` or lower; do not use \`P0\`.`
+    : undefined;
   return [
     "# Tool And Reporting Contract",
     `Available tools for you: ${agent.tools.length ? agent.tools.join(", ") : "none"}.`,
     "New Signals are your current assignments. Use the newest direct assignment unless a higher-priority signal blocks it.",
     "Default message priority is `P1`. Use `P0` only for true interrupt-worthy emergencies: human stop, destructive repository conflict, secret/safety issue, or a blocker where continuing the current activation would be harmful. Do not use `P0` for ordinary assignments, review requests, candidate handoffs, blocker reports, or status updates.",
+    communicationRule,
     "Use `file.read`, `file.write`, and `file.patch` for file inspection and edits when available. Use `shell.exec` for searches, git, Acorn verification, and commands that genuinely need a shell. Shell output and files are private until you report them.",
     "Use `/workspace` for mutable working files. Use `/artifacts/<agent-id>` for published handoff snapshots and do not modify an artifact snapshot after you announce it.",
     "Before ending every activation, create one externally visible effect with the appropriate tool.",
     "Do not send ACK-only messages such as 'received', 'noted', or 'standing by'. A successful `messages.send` call is already delivered; no confirmation reply is needed.",
     `If you completed work or hit a blocker, call \`messages.send\`. Use the requested recipient; if none is specified and you are not \`pm\`, send to ${defaultRecipient}.`,
-    "If you are `pm` and you handled the signal by delegating work, call `messages.send` to the target agent or `user`.",
+    `If you are \`${coordinator}\` and you handled the signal by delegating work, call \`messages.send\` to the target agent or \`user\`.`,
     "If you already reported and are waiting, call `coordination.wait_for_signal` with `notifyPm:false`.",
-    "Only the PM should call `completion.submit`, and only for the final project report.",
-    hasPm
-      ? "If the task, recipient, or required tool is unclear, call `messages.send` with a blocker to `pm`, or to `user` if you are `pm`. Do not end silently."
+    `Only \`${coordinator}\` should call \`completion.submit\`, and only for the final project report.`,
+    hasCoordinator
+      ? `If the task, recipient, or required tool is unclear, call \`messages.send\` with a blocker to \`${coordinator}\`, or to \`user\` if you are \`${coordinator}\`. Do not end silently.`
       : "If the task, recipient, or required tool is unclear, call `messages.send` with a blocker to the requested recipient, a configured channel, or `user`. Do not end silently.",
   ].join("\n");
 }
@@ -163,6 +196,9 @@ function renderSignal(signal: SignalRecord): string {
   }
   if (signal.kind === "scheduler.no_effect_nudge") {
     return [`## ${signal.id} scheduler.no_effect_nudge`, `Priority: ${signal.priority}`, "", String(signal.payload.message ?? "Your previous activation produced no externally visible effect. Before ending, call messages.send, coordination.wait_for_signal, or completion.submit as appropriate.")].join("\n");
+  }
+  if (signal.kind === "scheduler.all_quiet_nudge") {
+    return [`## ${signal.id} scheduler.all_quiet_nudge`, `Priority: ${signal.priority}`, "", String(signal.payload.message ?? "All agents are quiet and no pending signals exist. Rehydrate work by sending targeted messages before waiting.")].join("\n");
   }
   return [`## ${signal.id} ${signal.kind}`, `Priority: ${signal.priority}`, `Time: ${signal.createdAt}`, "", JSON.stringify(signal.payload, null, 2)].join("\n");
 }

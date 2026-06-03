@@ -1,7 +1,7 @@
 import { pathToFileURL } from "node:url";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
-import type { AgentRecord, JsonObject, MessagePriority, ToolDefinition, ToolpackConfigEntry } from "./types.js";
+import type { AgentRecord, JsonObject, MessagePriority, ProjectConfig, ToolDefinition, ToolpackConfigEntry } from "./types.js";
 import { ProjectStore } from "./store.js";
 
 export type ToolCallOutput = {
@@ -282,6 +282,7 @@ async function messagesSendSupport({ store, agent, activationId }: ControllerCon
   const priority = priorityArg(args.priority ?? "P1");
   const recipient = optionalString(args.recipient);
   const channel = optionalString(args.channel);
+  validateMessagePolicy(store.config(), agent, recipient, channel, priority);
   const message = store.sendMessage({ sender: agent.id, recipient, channel, priority, body, sourceAgent: agent.id, sourceActivation: activationId });
   return { title: "message sent", output: `Message sent and delivered: ${message.id}`, metadata: { messageId: message.id } };
 }
@@ -371,8 +372,10 @@ function waitForSignalDefinition(): ToolDefinition {
 
 async function waitForSignalSupport({ store, agent, activationId }: ControllerContext, input: unknown): Promise<ToolCallOutput> {
   const args = objectInput(input);
+  const config = store.config();
+  const coordinator = (config.communication ?? { coordinatorAgent: "pm" }).coordinatorAgent;
   const reason = optionalString(args.reason) ?? "Waiting for future signals.";
-  const pm = optionalString(args.pm) ?? "pm";
+  const pm = optionalString(args.pm) ?? coordinator;
   const notifyPm = optionalBoolean(args.notifyPm) ?? agent.id !== pm;
   let messageId: string | undefined;
   let notifiedAgent: string | undefined;
@@ -463,6 +466,18 @@ function optionalBoolean(value: unknown): boolean | undefined {
 function priorityArg(value: unknown): MessagePriority {
   if (value === "P0" || value === "P1" || value === "P2") return value;
   throw new Error(`Invalid priority: ${String(value)}`);
+}
+
+function validateMessagePolicy(config: ProjectConfig, agent: AgentRecord, recipient: string | undefined, channel: string | undefined, priority: MessagePriority): void {
+  const communication = config.communication ?? { coordinatorAgent: "pm", restrictNonCoordinatorToCoordinator: false, nonCoordinatorMaxPriority: "P1" as MessagePriority, pmRoutineVerifierPriority: "P2" as MessagePriority };
+  if (!communication.restrictNonCoordinatorToCoordinator || agent.id === communication.coordinatorAgent) return;
+  if (channel) throw new Error(`Communication policy allows non-coordinator agents to send direct messages only to ${communication.coordinatorAgent}; channels are not allowed.`);
+  if (recipient !== communication.coordinatorAgent) throw new Error(`Communication policy allows non-coordinator agents to message only ${communication.coordinatorAgent}.`);
+  if (priorityRank(priority) < priorityRank(communication.nonCoordinatorMaxPriority)) throw new Error(`Communication policy allows non-coordinator priorities ${communication.nonCoordinatorMaxPriority} or lower; ${priority} is not allowed.`);
+}
+
+function priorityRank(priority: MessagePriority): number {
+  return priority === "P0" ? 0 : priority === "P1" ? 1 : 2;
 }
 
 function boundedNumber(value: unknown, fallback: number, max: number): number {

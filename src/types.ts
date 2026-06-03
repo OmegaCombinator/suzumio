@@ -17,11 +17,19 @@ export interface ProjectConfig {
   task: string;
   extends?: unknown[];
   scheduler: SchedulerConfig;
+  communication: CommunicationConfig;
   backend: BackendConfig;
   agents: Record<string, AgentConfig>;
   channels: string[];
   tools: ToolpackConfig;
   observability: ObservabilityConfig;
+}
+
+export interface CommunicationConfig {
+  coordinatorAgent: string;
+  restrictNonCoordinatorToCoordinator: boolean;
+  nonCoordinatorMaxPriority: MessagePriority;
+  pmRoutineVerifierPriority: MessagePriority;
 }
 
 export interface ToolpackConfig {
@@ -39,6 +47,15 @@ export interface SchedulerConfig {
   kind: "nonpreemptive-mailbox" | "nonpreemptive-signals";
   maxSignalsPerActivation: number;
   maxPromptMessages?: number;
+  allQuietNudge: AllQuietNudgeConfig;
+}
+
+export interface AllQuietNudgeConfig {
+  enabled: boolean;
+  targetAgent: string;
+  priority: MessagePriority;
+  cooldownMs: number;
+  message: string;
 }
 
 export interface BackendConfig {

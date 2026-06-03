@@ -428,6 +428,23 @@ export class ProjectStore {
     return rows.map(signalFromRow);
   }
 
+  hasPendingSignals(): boolean {
+    const row = this.db.prepare("SELECT id FROM signals WHERE project = ? AND status = 'pending' LIMIT 1").get(this.project) as { id: string } | undefined;
+    return row !== undefined;
+  }
+
+  latestSignalCreatedAt(input: { kind: string; targetAgent?: string }): string | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT created_at FROM signals
+         WHERE project = ? AND kind = ? AND (? IS NULL OR target_agent = ?)
+         ORDER BY created_at DESC
+         LIMIT 1`,
+      )
+      .get(this.project, input.kind, input.targetAgent ?? null, input.targetAgent ?? null) as { created_at: string } | undefined;
+    return row?.created_at;
+  }
+
   markSignalsDelivered(agentId: string, signals: SignalRecord[], activationId: string): void {
     const stmt = this.db.prepare("UPDATE signals SET status = 'delivered', delivered_at = ?, delivered_activation_id = ? WHERE project = ? AND id = ? AND target_agent = ? AND status = 'pending'");
     const now = nowIso();
@@ -728,6 +745,9 @@ function renderSignalForHistory(signal: SignalRecord): string {
   }
   if (signal.kind === "scheduler.no_effect_nudge") {
     return [`## ${signal.id} scheduler.no_effect_nudge`, `Priority: ${signal.priority}`, "", String(signal.payload.message ?? "Your previous activation produced no externally visible effect. Before ending, call messages.send, coordination.wait_for_signal, or completion.submit as appropriate.")].join("\n");
+  }
+  if (signal.kind === "scheduler.all_quiet_nudge") {
+    return [`## ${signal.id} scheduler.all_quiet_nudge`, `Priority: ${signal.priority}`, "", String(signal.payload.message ?? "All agents are quiet and no pending signals exist. Rehydrate work by sending targeted messages before waiting.")].join("\n");
   }
   return [`## ${signal.id} ${signal.kind}`, `Priority: ${signal.priority}`, `Time: ${signal.createdAt}`, "", JSON.stringify(signal.payload, null, 2)].join("\n");
 }
