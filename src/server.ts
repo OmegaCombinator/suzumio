@@ -88,13 +88,13 @@ async function handleRequest(
     if (request.method === "POST" && parts[3] === "request-changes") {
       const body = await readBody<Record<string, unknown>>(request);
       store.setProjectStatus("running");
-      store.sendMessage({ sender: "user", recipient: optionalString(body.recipient) ?? "pm", priority: "P1", body: requiredString(body.body, "body") });
+      store.sendMessage({ sender: "user", recipient: optionalString(body.recipient) ?? "pm", priority: "P2", body: requiredString(body.body, "body") });
       await ctx.schedulerEngine.tickProject(project);
       return json(response, projectSummary(store));
     }
     if (request.method === "POST" && parts[3] === "messages") {
       const body = await readBody<Record<string, unknown>>(request);
-      const message = store.sendMessage({ sender: optionalString(body.sender) ?? "user", recipient: optionalString(body.recipient), channel: optionalString(body.channel), priority: priority(optionalString(body.priority) ?? "P1"), body: requiredString(body.body, "body") });
+      const message = store.sendMessage({ sender: optionalString(body.sender) ?? "user", recipient: optionalString(body.recipient), channel: optionalString(body.channel), priority: priority(optionalString(body.priority) ?? "P2"), body: requiredString(body.body, "body") });
       await ctx.schedulerEngine.tickProject(project);
       return json(response, message);
     }

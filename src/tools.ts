@@ -261,13 +261,13 @@ const BUILTIN_TOOLPACKS: Record<string, BuiltinToolpack> = {
 function messagesSendDefinition(): ToolDefinition {
   return {
     name: "messages.send",
-    description: "Send a Markdown message to another agent, the user, or a configured project channel. Default priority is P1. Use P0 only for true interrupt-worthy emergencies such as human stop, destructive conflict, or secret/safety issues. Delivery is immediate; do not send ACK-only messages or request confirmation of receipt.",
+    description: "Send a Markdown message to another agent, the user, or a configured project channel. Default priority is P2. Use P1 for work-unblocking assignments, handoffs, review requests, or blocker reports. Use P0 only for true interrupt-worthy emergencies such as human stop, destructive conflict, or secret/safety issues. Delivery is immediate; do not send ACK-only messages or request confirmation of receipt.",
     inputSchema: {
       type: "object",
       properties: {
         recipient: { type: "string", description: "Direct recipient agent id, or user. Non-PM agents usually report to pm unless the signal names another recipient." },
         channel: { type: "string", description: "Project channel such as #project. Use either recipient or channel." },
-        priority: { type: "string", enum: ["P0", "P1", "P2"], default: "P1", description: "Message priority. Use P1 by default. Use P0 only for true interrupt-worthy emergencies; ordinary assignments, handoffs, review requests, blockers, and status updates are P1." },
+        priority: { type: "string", enum: ["P0", "P1", "P2"], default: "P2", description: "Message priority. Use P2 by default. Use P1 for work-unblocking assignments, handoffs, review requests, or blocker reports. Use P0 only for true interrupt-worthy emergencies." },
         body: { type: "string", description: "Markdown body containing results, exact artifact paths, exact commands/results, next action requested, or blocker. Do not use this for ACK-only text such as received/noted/standing by." },
       },
       required: ["body"],
@@ -279,7 +279,7 @@ function messagesSendDefinition(): ToolDefinition {
 async function messagesSendSupport({ store, agent, activationId }: ControllerContext, input: unknown): Promise<ToolCallOutput> {
   const args = objectInput(input);
   const body = stringArg(args, "body");
-  const priority = priorityArg(args.priority ?? "P1");
+  const priority = priorityArg(args.priority ?? "P2");
   const recipient = optionalString(args.recipient);
   const channel = optionalString(args.channel);
   validateMessagePolicy(store.config(), agent, recipient, channel, priority);
@@ -380,7 +380,7 @@ async function waitForSignalSupport({ store, agent, activationId }: ControllerCo
   let messageId: string | undefined;
   let notifiedAgent: string | undefined;
   if (notifyPm && agent.id !== pm && store.listAgents().some((item) => item.id === pm)) {
-    const message = store.sendMessage({ sender: agent.id, recipient: pm, priority: "P1", body: `Waiting for future signals.\n\nReason: ${reason}`, sourceAgent: agent.id, sourceActivation: activationId });
+    const message = store.sendMessage({ sender: agent.id, recipient: pm, priority: "P2", body: `Waiting for future signals.\n\nReason: ${reason}`, sourceAgent: agent.id, sourceActivation: activationId });
     messageId = message.id;
     notifiedAgent = pm;
   }

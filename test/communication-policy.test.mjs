@@ -99,6 +99,93 @@ test("communication policy restricts non-coordinator messages", async () => {
   });
 });
 
+test("messages.send defaults routine messages to P2", async () => {
+  const config = projectConfig("policy-default-p2");
+  await withProject(config, async (root) => {
+    const host = new ToolSupportHost(root);
+    const { activation, token } = await createRunningActivation(root, config.name, "worker");
+    const base = { project: config.name, agentId: "worker", activationId: activation.id, token, tool: "messages.send" };
+
+    const sent = await host.support("core", { ...base, input: { recipient: "pm", body: "routine status" } });
+    assert.match(sent.output, /Message sent and delivered/);
+
+    const checked = new ProjectStore(config.name, root);
+    try {
+      const messages = checked.listMessages(10);
+      const message = messages.find((item) => item.body === "routine status");
+      assert.equal(message?.priority, "P2");
+      const signals = checked.pendingSignals("pm", 10);
+      assert.equal(signals.length, 1);
+      assert.equal(signals[0].priority, "P2");
+    } finally {
+      checked.close();
+    }
+  });
+});
+
+test("pending P2 signals are delivered one at a time", async () => {
+  const config = projectConfig("policy-p2-single");
+  await withProject(config, async (root) => {
+    const store = new ProjectStore(config.name, root);
+    try {
+      store.recordSignal({ kind: "test.p2", targetAgent: "worker", priority: "P2", payload: { n: 1 } });
+      store.recordSignal({ kind: "test.p2", targetAgent: "worker", priority: "P2", payload: { n: 2 } });
+      store.recordSignal({ kind: "test.p2", targetAgent: "worker", priority: "P2", payload: { n: 3 } });
+
+      const p2Only = store.pendingSignals("worker", 20);
+      assert.equal(p2Only.length, 1);
+      assert.equal(p2Only[0].priority, "P2");
+
+      store.recordSignal({ kind: "test.p1", targetAgent: "worker", priority: "P1", payload: { n: 4 } });
+      store.recordSignal({ kind: "test.p1", targetAgent: "worker", priority: "P1", payload: { n: 5 } });
+
+      const highPriority = store.pendingSignals("worker", 20);
+      assert.equal(highPriority.length, 2);
+      assert.deepEqual(highPriority.map((signal) => signal.priority), ["P1", "P1"]);
+    } finally {
+      store.close();
+    }
+  });
+});
+
+test("no-effect nudge repeats up to configured limit", async () => {
+  const config = projectConfig("policy-no-effect-repeat", {
+    scheduler: {
+      noEffectNudge: { enabled: true, priority: "P2", maxConsecutive: 2 },
+    },
+  });
+  await withProject(config, async (root) => {
+    const store = new ProjectStore(config.name, root);
+    try {
+      const worker = store.requireAgent("worker");
+
+      const first = store.createActivation(worker, "first");
+      store.completeActivation(first.id, { text: "" });
+      const firstNudge = store.pendingSignals("worker", 10);
+      assert.equal(firstNudge.length, 1);
+      assert.equal(firstNudge[0].kind, "scheduler.no_effect_nudge");
+      assert.equal(firstNudge[0].priority, "P2");
+      assert.equal(firstNudge[0].payload.attempt, 1);
+
+      const second = store.createActivation(worker, "second");
+      store.markSignalsDelivered("worker", firstNudge, second.id);
+      store.completeActivation(second.id, { text: "" });
+      const secondNudge = store.pendingSignals("worker", 10);
+      assert.equal(secondNudge.length, 1);
+      assert.equal(secondNudge[0].kind, "scheduler.no_effect_nudge");
+      assert.equal(secondNudge[0].payload.attempt, 2);
+
+      const third = store.createActivation(worker, "third");
+      store.markSignalsDelivered("worker", secondNudge, third.id);
+      store.completeActivation(third.id, { text: "" });
+      const afterLimit = store.pendingSignals("worker", 10);
+      assert.equal(afterLimit.length, 0);
+    } finally {
+      store.close();
+    }
+  });
+});
+
 test("all-quiet scheduler nudge creates a pending PM signal", async () => {
   const config = projectConfig("policy-all-quiet", {
     scheduler: {

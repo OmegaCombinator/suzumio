@@ -91,7 +91,7 @@ export class ProjectStore {
     if (input.recipient && input.channel) throw new Error("Message cannot have both recipient and channel");
     if (input.recipient && input.recipient !== "user") this.requireAgent(input.recipient);
     if (input.channel && !this.config().channels.includes(input.channel)) throw new Error(`Unknown channel: ${input.channel}`);
-    const priority = signalPriority(input.priority ?? "P1");
+    const priority = signalPriority(input.priority ?? "P2");
     const message: MessageRecord = {
       id: createId("msg"),
       project: this.project,
@@ -155,13 +155,18 @@ export class ProjectStore {
     this.setAgentStatus(activation.agentId, "quiet", null);
     const usefulEffects = this.countActivationUsefulEffects(activationId);
     this.appendEvent("activation.completed", { activationId, agentId: activation.agentId, emittedMessages: emitted, usefulEffects });
-    if (usefulEffects === 0 && !this.activationWasNoEffectNudge(activationId)) {
+    const noEffectNudge = this.config().scheduler.noEffectNudge ?? { enabled: true, priority: "P2" as MessagePriority, maxConsecutive: 3 };
+    const previousNoEffectNudgeAttempt = this.deliveredNoEffectNudgeAttempt(activationId);
+    if (usefulEffects === 0 && noEffectNudge.enabled && previousNoEffectNudgeAttempt < noEffectNudge.maxConsecutive) {
+      const attempt = previousNoEffectNudgeAttempt + 1;
       this.recordSignal({
         kind: "scheduler.no_effect_nudge",
         targetAgent: activation.agentId,
-        priority: "P1",
+        priority: noEffectNudge.priority,
         payload: {
           previousActivationId: activationId,
+          attempt,
+          maxConsecutive: noEffectNudge.maxConsecutive,
           message: activation.agentId === "pm"
             ? "Your previous activation produced no externally visible effect. Before ending this activation, use messages.send to delegate work or report a blocker to user, coordination.wait_for_signal after reporting, or completion.submit for a final report. Do not only run shell commands."
             : "Your previous activation produced no externally visible effect. Before ending this activation, use messages.send to report results, artifact paths, or a blocker to the requested recipient or coordinator, or use coordination.wait_for_signal after reporting. Do not only run shell commands.",
@@ -419,13 +424,20 @@ export class ProjectStore {
   }
 
   pendingSignals(agentId: string, limit = 20): SignalRecord[] {
-    const rows = this.db.prepare(
+    const highPriorityRows = this.db.prepare(
       `SELECT * FROM signals
-       WHERE project = ? AND target_agent = ? AND status = 'pending'
-       ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END, created_at ASC
+       WHERE project = ? AND target_agent = ? AND status = 'pending' AND priority IN ('P0', 'P1')
+       ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 ELSE 2 END, created_at ASC
        LIMIT ?`,
     ).all(this.project, agentId, limit) as DbSignal[];
-    return rows.map(signalFromRow);
+    if (highPriorityRows.length > 0) return highPriorityRows.map(signalFromRow);
+    const p2Rows = this.db.prepare(
+      `SELECT * FROM signals
+       WHERE project = ? AND target_agent = ? AND status = 'pending' AND priority = 'P2'
+       ORDER BY created_at ASC
+       LIMIT 1`,
+    ).all(this.project, agentId) as DbSignal[];
+    return p2Rows.map(signalFromRow);
   }
 
   hasPendingSignals(): boolean {
@@ -509,9 +521,12 @@ export class ProjectStore {
     return row.count;
   }
 
-  private activationWasNoEffectNudge(activationId: string): boolean {
-    const row = this.db.prepare("SELECT id FROM signals WHERE project = ? AND delivered_activation_id = ? AND kind = 'scheduler.no_effect_nudge' LIMIT 1").get(this.project, activationId) as { id: string } | undefined;
-    return row !== undefined;
+  private deliveredNoEffectNudgeAttempt(activationId: string): number {
+    const row = this.db.prepare("SELECT payload_json FROM signals WHERE project = ? AND delivered_activation_id = ? AND kind = 'scheduler.no_effect_nudge' ORDER BY created_at DESC LIMIT 1").get(this.project, activationId) as { payload_json: string } | undefined;
+    if (!row) return 0;
+    const payload = JSON.parse(row.payload_json) as Record<string, unknown>;
+    const attempt = payload.attempt;
+    return typeof attempt === "number" && Number.isFinite(attempt) ? Math.max(1, Math.trunc(attempt)) : 1;
   }
 
   private signalTargets(input: { sourceAgent?: string; targetAgent?: string; targetChannel?: string }): Array<{ targetAgent?: string; targetChannel?: string }> {

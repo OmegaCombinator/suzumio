@@ -123,7 +123,7 @@ function renderToolAndReportingContract(config: ProjectConfig, agent: AgentRecor
     "# Tool And Reporting Contract",
     `Available tools for you: ${agent.tools.length ? agent.tools.join(", ") : "none"}.`,
     "New Signals are your current assignments. Use the newest direct assignment unless a higher-priority signal blocks it.",
-    "Default message priority is `P1`. Use `P0` only for true interrupt-worthy emergencies: human stop, destructive repository conflict, secret/safety issue, or a blocker where continuing the current activation would be harmful. Do not use `P0` for ordinary assignments, review requests, candidate handoffs, blocker reports, or status updates.",
+    "Default message priority is `P2`. Use `P1` for work-unblocking assignments, review requests, candidate handoffs, and blocker reports. Use `P0` only for true interrupt-worthy emergencies: human stop, destructive repository conflict, secret/safety issue, or a blocker where continuing the current activation would be harmful.",
     communicationRule,
     "Use `file.read`, `file.write`, and `file.patch` for file inspection and edits when available. Use `shell.exec` for searches, git, Acorn verification, and commands that genuinely need a shell. Shell output and files are private until you report them.",
     "Use `/workspace` for mutable working files. Use `/artifacts/<agent-id>` for published handoff snapshots and do not modify an artifact snapshot after you announce it.",

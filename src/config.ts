@@ -13,6 +13,9 @@ const DEFAULT_ALL_QUIET_NUDGE_MESSAGE = [
   "Treat this as a coordination stall: ask workers for current progress, tell them to continue, or resend any missing work/review messages. Use targeted messages rather than waiting silently.",
 ].join("\n\n");
 
+const DEFAULT_NO_EFFECT_NUDGE = { enabled: true, priority: "P2" as const, maxConsecutive: 3 };
+const DEFAULT_ALL_QUIET_NUDGE = { enabled: false, targetAgent: "pm", priority: "P1" as const, cooldownMs: 300_000, message: DEFAULT_ALL_QUIET_NUDGE_MESSAGE };
+
 const SchedulerSchema = z.preprocess(
   (value) => {
     if (!isPlainObject(value)) return value;
@@ -25,6 +28,13 @@ const SchedulerSchema = z.preprocess(
     .object({
       kind: z.enum(["nonpreemptive-mailbox", "nonpreemptive-signals"]).default("nonpreemptive-signals"),
       maxSignalsPerActivation: z.number().int().positive().default(20),
+      noEffectNudge: z
+        .object({
+          enabled: z.boolean().default(true),
+          priority: MessagePrioritySchema.default("P2"),
+          maxConsecutive: z.number().int().min(0).default(3),
+        })
+        .default(DEFAULT_NO_EFFECT_NUDGE),
       allQuietNudge: z
         .object({
           enabled: z.boolean().default(false),
@@ -33,9 +43,9 @@ const SchedulerSchema = z.preprocess(
           cooldownMs: z.number().int().positive().default(300_000),
           message: z.string().min(1).default(DEFAULT_ALL_QUIET_NUDGE_MESSAGE),
         })
-        .default({ enabled: false, targetAgent: "pm", priority: "P1", cooldownMs: 300_000, message: DEFAULT_ALL_QUIET_NUDGE_MESSAGE }),
+        .default(DEFAULT_ALL_QUIET_NUDGE),
     })
-    .default({ kind: "nonpreemptive-signals", maxSignalsPerActivation: 20, allQuietNudge: { enabled: false, targetAgent: "pm", priority: "P1", cooldownMs: 300_000, message: DEFAULT_ALL_QUIET_NUDGE_MESSAGE } }),
+    .default({ kind: "nonpreemptive-signals", maxSignalsPerActivation: 20, noEffectNudge: DEFAULT_NO_EFFECT_NUDGE, allQuietNudge: DEFAULT_ALL_QUIET_NUDGE }),
 );
 
 const CommunicationSchema = z

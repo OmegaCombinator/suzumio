@@ -47,7 +47,14 @@ export interface SchedulerConfig {
   kind: "nonpreemptive-mailbox" | "nonpreemptive-signals";
   maxSignalsPerActivation: number;
   maxPromptMessages?: number;
+  noEffectNudge: NoEffectNudgeConfig;
   allQuietNudge: AllQuietNudgeConfig;
+}
+
+export interface NoEffectNudgeConfig {
+  enabled: boolean;
+  priority: MessagePriority;
+  maxConsecutive: number;
 }
 
 export interface AllQuietNudgeConfig {
