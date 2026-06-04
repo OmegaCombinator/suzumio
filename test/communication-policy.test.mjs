@@ -17,7 +17,7 @@ function projectConfig(name, overrides = {}) {
       allQuietNudge: {
         enabled: false,
         targetAgent: "pm",
-        priority: "P1",
+        priority: "P2",
         cooldownMs: 300000,
         message: "All agents are quiet.",
       },
@@ -26,7 +26,7 @@ function projectConfig(name, overrides = {}) {
     communication: {
       coordinatorAgent: "pm",
       restrictNonCoordinatorToCoordinator: true,
-      nonCoordinatorMaxPriority: "P1",
+      nonCoordinatorMaxPriority: "P2",
       pmRoutineVerifierPriority: "P2",
       ...(overrides.communication ?? {}),
     },
@@ -91,10 +91,10 @@ test("communication policy restricts non-coordinator messages", async () => {
     );
     await assert.rejects(
       () => host.support("core", { ...base, input: { recipient: "pm", priority: "P0", body: "not an emergency" } }),
-      /P1 or lower/,
+      /P2 or lower/,
     );
 
-    const sent = await host.support("core", { ...base, input: { recipient: "pm", priority: "P1", body: "valid report" } });
+    const sent = await host.support("core", { ...base, input: { recipient: "pm", priority: "P2", body: "valid report" } });
     assert.match(sent.output, /Message sent and delivered/);
   });
 });
@@ -241,7 +241,7 @@ test("all-quiet scheduler nudge creates a pending PM signal", async () => {
       allQuietNudge: {
         enabled: true,
         targetAgent: "pm",
-        priority: "P1",
+        priority: "P2",
         cooldownMs: 300000,
         message: "All agents are quiet and no work is pending.",
       },
@@ -259,7 +259,7 @@ test("all-quiet scheduler nudge creates a pending PM signal", async () => {
       const signals = checked.pendingSignals("pm", 10);
       assert.equal(signals.length, 1);
       assert.equal(signals[0].kind, "scheduler.all_quiet_nudge");
-      assert.equal(signals[0].priority, "P1");
+      assert.equal(signals[0].priority, "P2");
       assert.match(String(signals[0].payload.message), /All agents are quiet/);
     } finally {
       checked.close();

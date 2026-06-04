@@ -109,14 +109,14 @@ function renderActivationPrompt(config: ProjectConfig, agent: AgentRecord, agent
 }
 
 function renderToolAndReportingContract(config: ProjectConfig, agent: AgentRecord, agents: AgentRecord[]): string {
-  const communication = config.communication ?? { coordinatorAgent: "pm", restrictNonCoordinatorToCoordinator: false, nonCoordinatorMaxPriority: "P1", pmRoutineVerifierPriority: "P2" };
+  const communication = config.communication ?? { coordinatorAgent: "pm", restrictNonCoordinatorToCoordinator: false, nonCoordinatorMaxPriority: "P2", pmRoutineVerifierPriority: "P2" };
   const coordinator = communication.coordinatorAgent;
   const hasCoordinator = agents.some((item) => item.id === coordinator);
   const isCoordinator = agent.id === coordinator;
   const defaultRecipient = hasCoordinator ? `\`${coordinator}\`` : "the requested recipient, a configured channel, or `user`";
   const communicationRule = communication.restrictNonCoordinatorToCoordinator
     ? isCoordinator
-      ? `Communication policy: you are the coordinator. You may message any project agent or \`user\`. For routine non-urgent verifier review/delegation, prefer \`${communication.pmRoutineVerifierPriority}\`; use \`P1\` when the review unblocks active work. Keep \`P0\` for true emergencies only.`
+      ? `Communication policy: you are the coordinator. You may message any project agent or \`user\`. Default routine messages are \`P2\`. For routine non-urgent verifier review/delegation, use \`${communication.pmRoutineVerifierPriority}\`; use \`P1\` only for concrete blockers, urgent user/policy corrections, or messages that immediately unblock active work. Keep \`P0\` for true emergencies only.`
       : `Communication policy: only send direct messages to \`${coordinator}\`; do not message \`user\`, channels, verifier, scout, or other formalizers directly. Your allowed message priorities are \`${communication.nonCoordinatorMaxPriority}\` or lower; do not use \`P0\`.`
     : undefined;
   return [

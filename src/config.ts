@@ -14,7 +14,7 @@ const DEFAULT_ALL_QUIET_NUDGE_MESSAGE = [
 ].join("\n\n");
 
 const DEFAULT_NO_EFFECT_NUDGE = { enabled: true, priority: "P2" as const, maxConsecutive: 0, initialDelayMs: 30_000, backoffFactor: 2, maxDelayMs: 300_000 };
-const DEFAULT_ALL_QUIET_NUDGE = { enabled: false, targetAgent: "pm", priority: "P1" as const, cooldownMs: 300_000, message: DEFAULT_ALL_QUIET_NUDGE_MESSAGE };
+const DEFAULT_ALL_QUIET_NUDGE = { enabled: false, targetAgent: "pm", priority: "P2" as const, cooldownMs: 300_000, message: DEFAULT_ALL_QUIET_NUDGE_MESSAGE };
 
 const SchedulerSchema = z.preprocess(
   (value) => {
@@ -42,7 +42,7 @@ const SchedulerSchema = z.preprocess(
         .object({
           enabled: z.boolean().default(false),
           targetAgent: z.string().min(1).default("pm"),
-          priority: MessagePrioritySchema.default("P1"),
+          priority: MessagePrioritySchema.default("P2"),
           cooldownMs: z.number().int().positive().default(300_000),
           message: z.string().min(1).default(DEFAULT_ALL_QUIET_NUDGE_MESSAGE),
         })
@@ -55,10 +55,10 @@ const CommunicationSchema = z
   .object({
     coordinatorAgent: z.string().min(1).default("pm"),
     restrictNonCoordinatorToCoordinator: z.boolean().default(false),
-    nonCoordinatorMaxPriority: MessagePrioritySchema.default("P1"),
+    nonCoordinatorMaxPriority: MessagePrioritySchema.default("P2"),
     pmRoutineVerifierPriority: MessagePrioritySchema.default("P2"),
   })
-  .default({ coordinatorAgent: "pm", restrictNonCoordinatorToCoordinator: false, nonCoordinatorMaxPriority: "P1", pmRoutineVerifierPriority: "P2" });
+  .default({ coordinatorAgent: "pm", restrictNonCoordinatorToCoordinator: false, nonCoordinatorMaxPriority: "P2", pmRoutineVerifierPriority: "P2" });
 
 const ProviderSchema = z.object({
   type: z.enum(["openai", "anthropic", "google", "openai-compatible"]),

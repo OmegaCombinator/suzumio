@@ -261,13 +261,13 @@ const BUILTIN_TOOLPACKS: Record<string, BuiltinToolpack> = {
 function messagesSendDefinition(): ToolDefinition {
   return {
     name: "messages.send",
-    description: "Send a Markdown message to another agent, the user, or a configured project channel. Default priority is P2. Use P1 for work-unblocking assignments, handoffs, review requests, or blocker reports. Use P0 only for true interrupt-worthy emergencies such as human stop, destructive conflict, or secret/safety issues. Delivery is immediate; do not send ACK-only messages or request confirmation of receipt.",
+    description: "Send a Markdown message to another agent, the user, or a configured project channel. Default priority is P2. Use P2 for routine status, handoffs, and review routing. Use P1 only for concrete blockers, urgent policy/user corrections, or messages that immediately unblock active work. Use P0 only for true interrupt-worthy emergencies such as human stop, destructive conflict, or secret/safety issues. Delivery is immediate; do not send ACK-only messages or request confirmation of receipt.",
     inputSchema: {
       type: "object",
       properties: {
         recipient: { type: "string", description: "Direct recipient agent id, or user. Non-PM agents usually report to pm unless the signal names another recipient." },
         channel: { type: "string", description: "Project channel such as #project. Use either recipient or channel." },
-        priority: { type: "string", enum: ["P0", "P1", "P2"], default: "P2", description: "Message priority. Use P2 by default. Use P1 for work-unblocking assignments, handoffs, review requests, or blocker reports. Use P0 only for true interrupt-worthy emergencies." },
+        priority: { type: "string", enum: ["P0", "P1", "P2"], default: "P2", description: "Message priority. Use P2 by default for routine status, handoffs, and review routing. Use P1 only for concrete blockers, urgent policy/user corrections, or messages that immediately unblock active work. Use P0 only for true interrupt-worthy emergencies." },
         body: { type: "string", description: "Markdown body containing results, exact artifact paths, exact commands/results, next action requested, or blocker. Do not use this for ACK-only text such as received/noted/standing by." },
       },
       required: ["body"],
@@ -469,7 +469,7 @@ function priorityArg(value: unknown): MessagePriority {
 }
 
 function validateMessagePolicy(config: ProjectConfig, agent: AgentRecord, recipient: string | undefined, channel: string | undefined, priority: MessagePriority): void {
-  const communication = config.communication ?? { coordinatorAgent: "pm", restrictNonCoordinatorToCoordinator: false, nonCoordinatorMaxPriority: "P1" as MessagePriority, pmRoutineVerifierPriority: "P2" as MessagePriority };
+  const communication = config.communication ?? { coordinatorAgent: "pm", restrictNonCoordinatorToCoordinator: false, nonCoordinatorMaxPriority: "P2" as MessagePriority, pmRoutineVerifierPriority: "P2" as MessagePriority };
   if (!communication.restrictNonCoordinatorToCoordinator || agent.id === communication.coordinatorAgent) return;
   if (channel) throw new Error(`Communication policy allows non-coordinator agents to send direct messages only to ${communication.coordinatorAgent}; channels are not allowed.`);
   if (recipient !== communication.coordinatorAgent) throw new Error(`Communication policy allows non-coordinator agents to message only ${communication.coordinatorAgent}.`);
