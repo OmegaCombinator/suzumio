@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import YAML from "yaml";
 import { createId, nowIso } from "./id.js";
 import { agentPaths, ensureProjectDirs, projectPaths, suzumioRoot, type ProjectPaths } from "./paths.js";
-import type { ActivationContextSnapshot, ActivationRecord, AgentHistoryCompaction, AgentHistoryMessage, AgentHistoryPage, AgentHistoryPart, AgentHistoryPartType, AgentHistoryRole, AgentRecord, JsonObject, MessagePriority, MessageRecord, ProjectConfig, ProjectStatus, RunnerActivationOutput, SignalRecord } from "./types.js";
+import type { ActivationContextSnapshot, ActivationRecord, AgentHistoryCompaction, AgentHistoryMessage, AgentHistoryPage, AgentHistoryPart, AgentHistoryPartType, AgentHistoryRole, AgentRecord, JsonObject, MessagePriority, MessageRecord, NoEffectNudgeConfig, ProjectConfig, ProjectStatus, RunnerActivationOutput, SignalRecord } from "./types.js";
 
 export class ProjectStore {
   readonly paths: ProjectPaths;
@@ -155,18 +155,25 @@ export class ProjectStore {
     this.setAgentStatus(activation.agentId, "quiet", null);
     const usefulEffects = this.countActivationUsefulEffects(activationId);
     this.appendEvent("activation.completed", { activationId, agentId: activation.agentId, emittedMessages: emitted, usefulEffects });
-    const noEffectNudge = this.config().scheduler.noEffectNudge ?? { enabled: true, priority: "P2" as MessagePriority, maxConsecutive: 3 };
+    const noEffectNudge = this.config().scheduler.noEffectNudge ?? defaultNoEffectNudgeConfig();
     const previousNoEffectNudgeAttempt = this.deliveredNoEffectNudgeAttempt(activationId);
-    if (usefulEffects === 0 && noEffectNudge.enabled && previousNoEffectNudgeAttempt < noEffectNudge.maxConsecutive) {
+    const maxConsecutive = noEffectNudge.maxConsecutive ?? 0;
+    const canNudge = maxConsecutive === 0 || previousNoEffectNudgeAttempt < maxConsecutive;
+    if (usefulEffects === 0 && noEffectNudge.enabled && canNudge) {
       const attempt = previousNoEffectNudgeAttempt + 1;
+      const delayMs = noEffectNudgeDelayMs(noEffectNudge, attempt);
+      const notBefore = delayMs === 0 ? undefined : new Date(Date.now() + delayMs).toISOString();
       this.recordSignal({
         kind: "scheduler.no_effect_nudge",
         targetAgent: activation.agentId,
         priority: noEffectNudge.priority,
+        notBefore,
         payload: {
           previousActivationId: activationId,
           attempt,
-          maxConsecutive: noEffectNudge.maxConsecutive,
+          maxConsecutive,
+          delayMs,
+          notBefore,
           message: activation.agentId === "pm"
             ? "Your previous activation produced no externally visible effect. Before ending this activation, use messages.send to delegate work or report a blocker to user, coordination.wait_for_signal after reporting, or completion.submit for a final report. Do not only run shell commands."
             : "Your previous activation produced no externally visible effect. Before ending this activation, use messages.send to report results, artifact paths, or a blocker to the requested recipient or coordinator, or use coordination.wait_for_signal after reporting. Do not only run shell commands.",
@@ -406,17 +413,18 @@ export class ProjectStore {
     return { messageCount, activationCount, failedActivationCount, runningActivationCount, toolCallCount, historyMessageCount, historyCompactionCount, eventCount };
   }
 
-  recordSignal(input: { kind: string; sourceAgent?: string; sourceActivation?: string; targetAgent?: string; targetChannel?: string; priority?: MessagePriority; payload?: JsonObject; status?: "pending" | "closed"; usefulEffect?: boolean }): SignalRecord[] {
+  recordSignal(input: { kind: string; sourceAgent?: string; sourceActivation?: string; targetAgent?: string; targetChannel?: string; priority?: MessagePriority; payload?: JsonObject; status?: "pending" | "closed"; usefulEffect?: boolean; notBefore?: string }): SignalRecord[] {
     const targets = this.signalTargets(input);
     const signals: SignalRecord[] = [];
     const createdAt = nowIso();
+    const notBefore = input.notBefore ?? createdAt;
     const priority = signalPriority(input.priority ?? "P2");
     for (const target of targets) {
       const id = createId("sig");
       const status = signalStatus(input.status, target.targetAgent ? "pending" : "closed");
       const usefulEffect = input.usefulEffect ?? defaultUsefulEffect(input.kind, status);
-      this.db.prepare("INSERT INTO signals (id, project, kind, source_agent, source_activation, target_agent, target_channel, priority, payload_json, status, useful_effect, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(id, this.project, input.kind, input.sourceAgent ?? null, input.sourceActivation ?? null, target.targetAgent ?? null, target.targetChannel ?? null, priority, JSON.stringify(input.payload ?? {}), status, usefulEffect ? 1 : 0, createdAt);
-      const signal = { id, project: this.project, kind: input.kind, sourceAgent: input.sourceAgent, sourceActivation: input.sourceActivation, targetAgent: target.targetAgent, targetChannel: target.targetChannel, priority, payload: input.payload ?? {}, status, usefulEffect, createdAt } satisfies SignalRecord;
+      this.db.prepare("INSERT INTO signals (id, project, kind, source_agent, source_activation, target_agent, target_channel, priority, payload_json, status, useful_effect, created_at, not_before) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(id, this.project, input.kind, input.sourceAgent ?? null, input.sourceActivation ?? null, target.targetAgent ?? null, target.targetChannel ?? null, priority, JSON.stringify(input.payload ?? {}), status, usefulEffect ? 1 : 0, createdAt, notBefore);
+      const signal = { id, project: this.project, kind: input.kind, sourceAgent: input.sourceAgent, sourceActivation: input.sourceActivation, targetAgent: target.targetAgent, targetChannel: target.targetChannel, priority, payload: input.payload ?? {}, status, usefulEffect, createdAt, notBefore: notBefore === createdAt ? undefined : notBefore } satisfies SignalRecord;
       signals.push(signal);
       this.appendEvent("signal.created", signal);
     }
@@ -424,24 +432,25 @@ export class ProjectStore {
   }
 
   pendingSignals(agentId: string, limit = 20): SignalRecord[] {
+    const now = nowIso();
     const highPriorityRows = this.db.prepare(
       `SELECT * FROM signals
-       WHERE project = ? AND target_agent = ? AND status = 'pending' AND priority IN ('P0', 'P1')
+       WHERE project = ? AND target_agent = ? AND status = 'pending' AND priority IN ('P0', 'P1') AND not_before <= ?
        ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 ELSE 2 END, created_at ASC
        LIMIT ?`,
-    ).all(this.project, agentId, limit) as DbSignal[];
+    ).all(this.project, agentId, now, limit) as DbSignal[];
     if (highPriorityRows.length > 0) return highPriorityRows.map(signalFromRow);
     const p2Rows = this.db.prepare(
       `SELECT * FROM signals
-       WHERE project = ? AND target_agent = ? AND status = 'pending' AND priority = 'P2'
+       WHERE project = ? AND target_agent = ? AND status = 'pending' AND priority = 'P2' AND not_before <= ?
        ORDER BY created_at ASC
        LIMIT 1`,
-    ).all(this.project, agentId) as DbSignal[];
+    ).all(this.project, agentId, now) as DbSignal[];
     return p2Rows.map(signalFromRow);
   }
 
   hasPendingSignals(): boolean {
-    const row = this.db.prepare("SELECT id FROM signals WHERE project = ? AND status = 'pending' LIMIT 1").get(this.project) as { id: string } | undefined;
+    const row = this.db.prepare("SELECT id FROM signals WHERE project = ? AND status = 'pending' AND not_before <= ? LIMIT 1").get(this.project, nowIso()) as { id: string } | undefined;
     return row !== undefined;
   }
 
@@ -562,6 +571,8 @@ export class ProjectStore {
     if (this.columnExists("signals", "source_turn")) this.db.exec("UPDATE signals SET source_activation = source_turn WHERE source_activation IS NULL AND source_turn IS NOT NULL");
     this.addColumnIfMissing("signals", "delivered_activation_id", "TEXT");
     if (this.columnExists("signals", "delivered_turn_id")) this.db.exec("UPDATE signals SET delivered_activation_id = delivered_turn_id WHERE delivered_activation_id IS NULL AND delivered_turn_id IS NOT NULL");
+    this.addColumnIfMissing("signals", "not_before", "TEXT");
+    if (this.columnExists("signals", "not_before")) this.db.exec("UPDATE signals SET not_before = created_at WHERE not_before IS NULL");
     this.addColumnIfMissing("activations", "context_json", "TEXT");
 
   }
@@ -698,10 +709,11 @@ function countRows(db: DatabaseSync, table: string, project: string, where?: str
   return row.count;
 }
 
-type DbSignal = { id: string; project: string; kind: string; source_agent: string | null; source_activation: string | null; target_agent: string | null; target_channel: string | null; priority: MessagePriority; payload_json: string; status: SignalRecord["status"]; useful_effect: number; created_at: string; delivered_at: string | null; delivered_activation_id: string | null };
+type DbSignal = { id: string; project: string; kind: string; source_agent: string | null; source_activation: string | null; target_agent: string | null; target_channel: string | null; priority: MessagePriority; payload_json: string; status: SignalRecord["status"]; useful_effect: number; created_at: string; not_before: string | null; delivered_at: string | null; delivered_activation_id: string | null };
 
 function signalFromRow(row: DbSignal): SignalRecord {
-  return { id: row.id, project: row.project, kind: row.kind, sourceAgent: row.source_agent ?? undefined, sourceActivation: row.source_activation ?? undefined, targetAgent: row.target_agent ?? undefined, targetChannel: row.target_channel ?? undefined, priority: row.priority, payload: JSON.parse(row.payload_json) as JsonObject, status: row.status, usefulEffect: row.useful_effect !== 0, createdAt: row.created_at, deliveredAt: row.delivered_at ?? undefined, deliveredActivationId: row.delivered_activation_id ?? undefined };
+  const notBefore = row.not_before && row.not_before !== row.created_at ? row.not_before : undefined;
+  return { id: row.id, project: row.project, kind: row.kind, sourceAgent: row.source_agent ?? undefined, sourceActivation: row.source_activation ?? undefined, targetAgent: row.target_agent ?? undefined, targetChannel: row.target_channel ?? undefined, priority: row.priority, payload: JSON.parse(row.payload_json) as JsonObject, status: row.status, usefulEffect: row.useful_effect !== 0, createdAt: row.created_at, notBefore, deliveredAt: row.delivered_at ?? undefined, deliveredActivationId: row.delivered_activation_id ?? undefined };
 }
 
 function signalAgent(value: string | undefined): string | undefined {
@@ -727,6 +739,20 @@ function defaultUsefulEffect(kind: string, status: SignalRecord["status"]): bool
   if (kind === "scheduler.no_effect_nudge") return false;
   if (status === "pending") return true;
   return kind === "message.created" || kind === "completion.submitted" || kind === "coordination.wait_for_signal";
+}
+
+function defaultNoEffectNudgeConfig(): NoEffectNudgeConfig {
+  return { enabled: true, priority: "P2", maxConsecutive: 0, initialDelayMs: 30_000, backoffFactor: 2, maxDelayMs: 300_000 };
+}
+
+function noEffectNudgeDelayMs(config: Partial<NoEffectNudgeConfig>, attempt: number): number {
+  if (attempt <= 1) return 0;
+  const initialDelayMs = Math.max(0, Math.trunc(config.initialDelayMs ?? 30_000));
+  const maxDelayMs = Math.max(0, Math.trunc(config.maxDelayMs ?? 300_000));
+  const factor = Math.max(1, config.backoffFactor ?? 2);
+  const uncapped = initialDelayMs * factor ** Math.max(0, attempt - 2);
+  if (!Number.isFinite(uncapped)) return maxDelayMs;
+  return Math.min(maxDelayMs, Math.trunc(uncapped));
 }
 
 function textPartType(role: AgentHistoryRole): AgentHistoryPartType {
@@ -855,6 +881,7 @@ CREATE TABLE IF NOT EXISTS signals (
   status TEXT NOT NULL,
   useful_effect INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
+  not_before TEXT,
   delivered_at TEXT,
   delivered_activation_id TEXT
 );
@@ -908,6 +935,7 @@ CREATE INDEX IF NOT EXISTS idx_messages_project_created ON messages(project, cre
 CREATE INDEX IF NOT EXISTS idx_events_project_created ON events(project, created_at);
 CREATE INDEX IF NOT EXISTS idx_activations_project_started ON activations(project, started_at);
 CREATE INDEX IF NOT EXISTS idx_signals_project_target ON signals(project, target_agent, status, created_at);
+CREATE INDEX IF NOT EXISTS idx_signals_project_target_ready ON signals(project, target_agent, status, not_before, created_at);
 CREATE INDEX IF NOT EXISTS idx_signals_project_source ON signals(project, source_activation, useful_effect);
 CREATE INDEX IF NOT EXISTS idx_agent_history_project_agent_sequence ON agent_history_messages(project, agent_id, sequence);
 CREATE INDEX IF NOT EXISTS idx_agent_history_project_agent_active ON agent_history_messages(project, agent_id, compaction_id, sequence);

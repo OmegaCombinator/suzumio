@@ -55,6 +55,9 @@ export interface NoEffectNudgeConfig {
   enabled: boolean;
   priority: MessagePriority;
   maxConsecutive: number;
+  initialDelayMs: number;
+  backoffFactor: number;
+  maxDelayMs: number;
 }
 
 export interface AllQuietNudgeConfig {
@@ -291,6 +294,7 @@ export interface SignalRecord {
   status: "pending" | "delivered" | "closed";
   usefulEffect: boolean;
   createdAt: string;
+  notBefore?: string;
   deliveredAt?: string;
   deliveredActivationId?: string;
 }

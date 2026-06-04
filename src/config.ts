@@ -13,7 +13,7 @@ const DEFAULT_ALL_QUIET_NUDGE_MESSAGE = [
   "Treat this as a coordination stall: ask workers for current progress, tell them to continue, or resend any missing work/review messages. Use targeted messages rather than waiting silently.",
 ].join("\n\n");
 
-const DEFAULT_NO_EFFECT_NUDGE = { enabled: true, priority: "P2" as const, maxConsecutive: 3 };
+const DEFAULT_NO_EFFECT_NUDGE = { enabled: true, priority: "P2" as const, maxConsecutive: 0, initialDelayMs: 30_000, backoffFactor: 2, maxDelayMs: 300_000 };
 const DEFAULT_ALL_QUIET_NUDGE = { enabled: false, targetAgent: "pm", priority: "P1" as const, cooldownMs: 300_000, message: DEFAULT_ALL_QUIET_NUDGE_MESSAGE };
 
 const SchedulerSchema = z.preprocess(
@@ -32,7 +32,10 @@ const SchedulerSchema = z.preprocess(
         .object({
           enabled: z.boolean().default(true),
           priority: MessagePrioritySchema.default("P2"),
-          maxConsecutive: z.number().int().min(0).default(3),
+          maxConsecutive: z.number().int().min(0).default(0),
+          initialDelayMs: z.number().int().min(0).default(30_000),
+          backoffFactor: z.number().min(1).default(2),
+          maxDelayMs: z.number().int().min(0).default(300_000),
         })
         .default(DEFAULT_NO_EFFECT_NUDGE),
       allQuietNudge: z

@@ -148,10 +148,10 @@ test("pending P2 signals are delivered one at a time", async () => {
   });
 });
 
-test("no-effect nudge repeats up to configured limit", async () => {
+test("no-effect nudge honors a configured finite limit", async () => {
   const config = projectConfig("policy-no-effect-repeat", {
     scheduler: {
-      noEffectNudge: { enabled: true, priority: "P2", maxConsecutive: 2 },
+      noEffectNudge: { enabled: true, priority: "P2", maxConsecutive: 2, initialDelayMs: 0, backoffFactor: 2, maxDelayMs: 300000 },
     },
   });
   await withProject(config, async (root) => {
@@ -180,6 +180,55 @@ test("no-effect nudge repeats up to configured limit", async () => {
       store.completeActivation(third.id, { text: "" });
       const afterLimit = store.pendingSignals("worker", 10);
       assert.equal(afterLimit.length, 0);
+    } finally {
+      store.close();
+    }
+  });
+});
+
+test("no-effect nudge continues with exponential backoff", async () => {
+  const config = projectConfig("policy-no-effect-backoff", {
+    scheduler: {
+      noEffectNudge: { enabled: true, priority: "P2", maxConsecutive: 0, initialDelayMs: 1000, backoffFactor: 2, maxDelayMs: 5000 },
+    },
+  });
+  await withProject(config, async (root) => {
+    const store = new ProjectStore(config.name, root);
+    try {
+      const worker = store.requireAgent("worker");
+
+      const first = store.createActivation(worker, "first");
+      store.completeActivation(first.id, { text: "" });
+      const firstNudge = store.pendingSignals("worker", 10);
+      assert.equal(firstNudge.length, 1);
+      assert.equal(firstNudge[0].payload.attempt, 1);
+      assert.equal(firstNudge[0].payload.delayMs, 0);
+
+      const second = store.createActivation(worker, "second");
+      store.markSignalsDelivered("worker", firstNudge, second.id);
+      store.completeActivation(second.id, { text: "" });
+      assert.equal(store.pendingSignals("worker", 10).length, 0);
+
+      const delayed = store.db.prepare("SELECT id, payload_json, not_before FROM signals WHERE project = ? AND kind = 'scheduler.no_effect_nudge' AND status = 'pending' ORDER BY created_at DESC LIMIT 1").get(config.name);
+      assert.ok(delayed);
+      const delayedPayload = JSON.parse(delayed.payload_json);
+      assert.equal(delayedPayload.attempt, 2);
+      assert.equal(delayedPayload.delayMs, 1000);
+      assert.ok(Date.parse(delayed.not_before) > Date.now());
+
+      store.db.prepare("UPDATE signals SET not_before = created_at WHERE project = ? AND id = ?").run(config.name, delayed.id);
+      const secondNudge = store.pendingSignals("worker", 10);
+      assert.equal(secondNudge.length, 1);
+      assert.equal(secondNudge[0].payload.attempt, 2);
+
+      const third = store.createActivation(worker, "third");
+      store.markSignalsDelivered("worker", secondNudge, third.id);
+      store.completeActivation(third.id, { text: "" });
+      const later = store.db.prepare("SELECT payload_json FROM signals WHERE project = ? AND kind = 'scheduler.no_effect_nudge' AND status = 'pending' ORDER BY created_at DESC LIMIT 1").get(config.name);
+      assert.ok(later);
+      const laterPayload = JSON.parse(later.payload_json);
+      assert.equal(laterPayload.attempt, 3);
+      assert.equal(laterPayload.delayMs, 2000);
     } finally {
       store.close();
     }
