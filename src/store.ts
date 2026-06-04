@@ -573,6 +573,8 @@ export class ProjectStore {
     if (this.columnExists("signals", "delivered_turn_id")) this.db.exec("UPDATE signals SET delivered_activation_id = delivered_turn_id WHERE delivered_activation_id IS NULL AND delivered_turn_id IS NOT NULL");
     this.addColumnIfMissing("signals", "not_before", "TEXT");
     if (this.columnExists("signals", "not_before")) this.db.exec("UPDATE signals SET not_before = created_at WHERE not_before IS NULL");
+    if (this.columnExists("signals", "not_before")) this.db.exec("CREATE INDEX IF NOT EXISTS idx_signals_project_target_ready ON signals(project, target_agent, status, not_before, created_at)");
+    if (this.columnExists("signals", "source_activation")) this.db.exec("CREATE INDEX IF NOT EXISTS idx_signals_project_source ON signals(project, source_activation, useful_effect)");
     this.addColumnIfMissing("activations", "context_json", "TEXT");
 
   }
@@ -935,8 +937,6 @@ CREATE INDEX IF NOT EXISTS idx_messages_project_created ON messages(project, cre
 CREATE INDEX IF NOT EXISTS idx_events_project_created ON events(project, created_at);
 CREATE INDEX IF NOT EXISTS idx_activations_project_started ON activations(project, started_at);
 CREATE INDEX IF NOT EXISTS idx_signals_project_target ON signals(project, target_agent, status, created_at);
-CREATE INDEX IF NOT EXISTS idx_signals_project_target_ready ON signals(project, target_agent, status, not_before, created_at);
-CREATE INDEX IF NOT EXISTS idx_signals_project_source ON signals(project, source_activation, useful_effect);
 CREATE INDEX IF NOT EXISTS idx_agent_history_project_agent_sequence ON agent_history_messages(project, agent_id, sequence);
 CREATE INDEX IF NOT EXISTS idx_agent_history_project_agent_active ON agent_history_messages(project, agent_id, compaction_id, sequence);
 CREATE INDEX IF NOT EXISTS idx_agent_history_parts_message ON agent_history_parts(project, message_id, part_index);
