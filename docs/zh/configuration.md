@@ -18,7 +18,7 @@ Suzumio 把配置当作 source material，而不是可变运行时状态。运�
       -> apply defaults and validate
       -> write resolved.yaml and SQLite project config
 
-评审或初始化前建议运行 `suzumio config render path/to/project.yaml`。它会展示 Suzumio 实际运行的完整配置。
+`suzumio config render path/to/project.yaml` 会打印 Suzumio 实际运行的完整配置。
 
 ## 最小项目
 
@@ -54,7 +54,7 @@ Suzumio 把配置当作 source material，而不是可变运行时状态。运�
         tools:
           - messages.send
 
-这个项目只有一个 agent，适合 smoke test，但不是真正的协作。实际的 multi-agent YAML 通常从一个 coordinator 和至少一个 specialist 开始。
+这个项目只有一个 agent。Multi-agent 项目通常包含一个 coordinator 和至少一个 specialist。
 
 ## 如何设计 Multi-Agent YAML
 
@@ -79,7 +79,7 @@ Suzumio 把配置当作 source material，而不是可变运行时状态。运�
 
 ## 模式 1：PM + 两个 Worker + Critic
 
-适合证明、研究摘要、设计评审，或者任何需要比较独立尝试的任务。
+模式范围：证明、研究摘要、设计评审，以及需要比较独立尝试的任务。
 
 ```yaml
 name: reviewed-research
@@ -127,7 +127,7 @@ agents:
       - coordination.wait_for_signal
 ```
 
-这个模式有效的原因：
+角色分工结果：
 
 - `pm` 负责提交和协调。
 - worker 可以使用工具和共享文件，但不能提交最终答案。
@@ -135,7 +135,7 @@ agents:
 
 ## 模式 2：Python 实验团队
 
-适合希望 agent 实际运行小实验，而不只是互相聊天的任务。
+模式范围：带脚本、命令输出和 artifact 路径的小实验。
 
 ```yaml
 tools:
@@ -156,7 +156,7 @@ agents:
     role: python-experimenter
     prompt: |
       Use shell.exec to write scripts and outputs under /artifacts/experimenter.
-      Prefer small, auditable scripts. Send pm the path, command, output summary,
+      Keep scripts small and auditable. Send pm the path, command, output summary,
       and limitations. Then wait with notifyPm:false.
     tools:
       - shell.exec
@@ -164,7 +164,7 @@ agents:
       - coordination.wait_for_signal
 ```
 
-好的 worker message 应该包含：
+Worker message 包含：
 
 ```text
 Wrote /artifacts/experimenter/search.py and /artifacts/experimenter/run.log.
@@ -175,7 +175,7 @@ Limitations: brute force only, no proof beyond n=8.
 
 ## 模式 3：Web Research + 保守 Summarizer
 
-适合需要 worker 抓取来源，但最终答案必须避免过度断言的任务。
+模式范围：抓取来源并保持最终结论保守。
 
 ```yaml
 tools:
@@ -203,7 +203,7 @@ agents:
       - coordination.wait_for_signal
 ```
 
-如果网络需要 proxy，可以在 YAML 中声明，或者继承运行 Suzumio 进程的环境变量：
+Proxy 设置可以在 YAML 中声明，也可以继承运行 Suzumio 进程的环境变量：
 
 ```yaml
 backend:
@@ -218,7 +218,7 @@ backend:
 
 ## 模式 4：Review Pipeline
 
-适合 code review、写作或设计任务：作者不应该自己批准自己的输出。
+模式范围：code review、写作和设计任务，author 与 reviewer 分离。
 
 ```yaml
 agents:
@@ -254,7 +254,7 @@ agents:
 
 ## 模式 5：Counted Agents
 
-多个 agent 共享同一个角色、但应该独立工作时，使用 `count`。
+`count` 会把一个角色展开成多个可独立寻址的 agents。
 
 ```yaml
 agents:
@@ -270,11 +270,11 @@ agents:
       - coordination.wait_for_signal
 ```
 
-这会创建 `solver-1`、`solver-2` 和 `solver-3`。第一次 activation prompt 会包含这些生成 id，方便团队用精确 recipient 发送 direct message。
+这会创建 `solver-1`、`solver-2` 和 `solver-3`。第一次 activation prompt 会包含这些生成 id，可作为 direct message 的精确 recipient。
 
 ## 完整结构
 
-下面的例子展示主要字段。实际项目通常会把 task、长 prompt 和可复用 backend 设置拆到 import 或 profile 中。
+下面的例子展示主要字段。大型项目通常会把 task、长 prompt 和可复用 backend 设置拆到 import 或 profile 中。
 
     name: research-demo
     task: @import(tasks/main.md)
@@ -352,16 +352,16 @@ agents:
 | `name`          | 是       | `SUZUMIO_ROOT` 下的项目 id 和运行目录名。                                                     |
 | `task`          | 是       | 持久任务描述，会渲染进第一次 activation prompt，并通过 agent history 延续。                    |
 | `agents`        | 是       | Agent id 到 agent config 的映射。至少需要一个 agent。                                         |
-| `tools`         | 否       | 项目注册的 toolpacks。默认包含 `core` 和 `web`；需要容器内 bash 和共享 artifact 文件时添加 `shell`。 |
+| `tools`         | 否       | 项目的 toolpack 注册。默认包含 `core` 和 `web`；`shell` 添加容器内 bash。详见 [Toolpacks](toolpacks.html)。 |
 | `extends`       | 否       | 一个 profile object 或 profile object 列表，在本地字段之前合并。                              |
-| `scheduler`     | 否       | 高级 scheduler 选项。多数项目应省略它并使用默认值。                                           |
+| `scheduler`     | 否       | Scheduler 选项。默认覆盖 signal delivery、`P0` interrupt、`P1` tool-boundary delivery 和 `P2` activation delivery。 |
 | `backend`       | 否       | Docker runner image、controller support URL、Docker options 和 model runner 设置。            |
 | `channels`      | 否       | 允许的频道名。默认包含 `#project` 和 `#blocked`。                                             |
 | `observability` | 否       | 文档层面的 HTTP/WebUI 默认值。实际 server bind 地址仍由 CLI flags 控制。                      |
 
 ## YAML 写法约定
 
-Suzumio 使用普通 YAML map、array、scalar 和 block string。长文本建议使用 block string 或导入文件，这样 resolved prompt 更容易阅读。
+Suzumio 使用普通 YAML map、array、scalar 和 block string。长 task 与 prompt 通常使用 block string 或导入文件。
 
 | 写法           | 用途                                         | 例子              |
 |----------------|----------------------------------------------|-------------------|
@@ -437,7 +437,7 @@ Import 路径相对包含该 import 的文件解析，而不是相对进程工�
           - messages.send
           - completion.submit
 
-Suzumio 会拒绝循环 import 和过深的 import 链，避免项目意外无限展开配置。
+Suzumio 会拒绝循环 import 和过深的 import 链。
 
 ## Extends 和合并规则
 
@@ -489,11 +489,32 @@ Suzumio 会拒绝循环 import 和过深的 import 链，避免项目意外无�
     backend.runner.mode: ai
     channels: ["#project", "#reviews"]
 
-`backend` 是 object，所以会 deep-merge：profile 中的 `backend.image` 保留，本地 `backend.runner.mode` 覆盖。`channels` 是 array，所以整体替换，不会自动 append。
+Resolved result：profile 中的 `backend.image` 保留，本地 `backend.runner.mode` 覆盖，`channels` 整体替换而不是 append。
 
 ## Scheduler Defaults
 
-多数项目应省略 `scheduler`。默认行为是 signal-driven：idle agent 会因 pending signal 醒来，`P0` 会中断并重启 running agent，`P1` 会尽量在下一次 tool boundary 投递，`P2` 等待下一次 activation。高级项目可以设置 `scheduler.kind` 或 `scheduler.maxSignalsPerActivation`；默认每次 activation 最多投递 20 个 pending signals。
+默认 scheduler 是 signal-driven：idle agent 会因 pending signal 醒来，`P0` 会中断并重启 running agent，`P1` 会尽量在下一次 tool boundary 投递，`P2` 等待下一次 activation。`scheduler.maxSignalsPerActivation` 默认值是 20。
+
+`scheduler.quietAgentMonitor` 会在配置的 agent 保持 `quiet` 超过指定时间后发送普通 `messages.send` 通知。不会创建真实 monitor agent。
+
+```yaml
+scheduler:
+  quietAgentMonitor:
+    enabled: true
+    rules:
+      - id: formalizer-watch
+        agent: formalizer-1
+        recipient: pm
+        sender: monitor
+        priority: P2
+        initialDelayMs: 1800000   # quiet 30 分钟后首次提醒
+        repeatDelayMs: 900000     # 仍然 quiet 时每 15 分钟重复提醒
+        message: |
+          {{agent}} has been quiet for {{quietMinutes}} minutes.
+          Please check whether it needs a follow-up assignment.
+```
+
+`message` 模板支持 `{{project}}`、`{{agent}}`、`{{recipient}}`、`{{sender}}`、`{{quietMs}}`、`{{quietMinutes}}`、`{{quietSince}}`、`{{now}}`、`{{attempt}}`、`{{initialDelayMs}}`、`{{repeatDelayMs}}` 和 `{{ruleId}}`。
 
 Suzumio 会在 SQLite 中保存每个 agent 的模型历史。每次 activation prompt、可见 assistant 输出、tool call、tool result 和 compaction marker 都会 append 到 history。Runner 下一次调用模型时会把 active history 重新传给模型。当 provider 因 context window 超限而拒绝请求时，旧 history 会被总结成 compaction message，compact 前的完整 raw 范围会本地归档，然后 runner retry 当前 activation。
 
@@ -529,7 +550,7 @@ Suzumio 会在 SQLite 中保存每个 agent 的模型历史。每次 activation 
 | `docker.mounts`  | 显式挂载到每个 activation container 的 host 文件或目录。Source 会在 render 时相对顶层项目配置解析。      |
 | `runner.mode`    | 只支持 `ai`。                                                                                            |
 
-`docker.proxy` 字段包括 `inheritEnv`、`http`、`https`、`all`、`noProxy` 和 `rewriteLocalhost`。默认情况下，Suzumio 会继承 controller 进程中的标准代理环境变量，并在 bridge-network 容器中把 loopback 代理 host 改写为 `host.docker.internal`。如果代理只监听 host loopback，在 Linux 上可使用 `network: host`。
+`docker.proxy` 字段包括 `inheritEnv`、`http`、`https`、`all`、`noProxy` 和 `rewriteLocalhost`。默认情况下，Suzumio 会继承 controller 进程中的标准代理环境变量，并在 bridge-network 容器中把 loopback 代理 host 改写为 `host.docker.internal`。Linux 上的 `network: host` 会让 host-loopback proxy URL 在容器中直接可达。
 
 ## AI Runner Config
 
@@ -559,13 +580,13 @@ Suzumio 会在 SQLite 中保存每个 agent 的模型历史。每次 activation 
                 - worker-main
                 - pm-main
 
-Model 选择是显式的。可以在 `backend.runner.model` 设置项目级选择，或在 `agents.*.model` 为每个 agent 设置。带 `model-list` 的 preset 会展开成有序 fallback 列表；runner 会按顺序尝试其中的 concrete preset。多数配置里，`model` 同时也是 provider-facing model id。只有当本地 preset 名称需要和 provider API 模型名不同时，才使用 `apiModel`。
+Model 选择是显式的。`backend.runner.model` 设置项目级选择；`agents.*.model` 设置 per-agent 选择。带 `model-list` 的 preset 会展开成有序 fallback 列表，runner 会按顺序尝试其中的 concrete preset。多数配置里，`model` 同时也是 provider-facing model id。`apiModel` 用来分离本地 preset 名称和 provider-facing model id。
 
 Agent history compaction 是 Docker chat runner 的一部分，不暴露成用户配置面。Model preset 的 `contextLimit` 默认值是 `260000`；它是模型配置 metadata，不会主动触发 compaction。Runner 只在 provider 报告 context-window overflow 时 compact。
 
 <div class="notice danger">
 
-提交到仓库的示例必须保持脱敏。优先使用 `baseURLEnv` 和 `apiKeyEnv`，让真实 endpoint 和 key 留在环境变量中。
+提交到仓库的示例使用 `baseURLEnv` 和 `apiKeyEnv`。真实 endpoint 和 key 保留在环境变量中。
 
 </div>
 
@@ -577,42 +598,15 @@ Agent history compaction 是 Docker chat runner 的一部分，不暴露成用�
         - shell
         - web
 
-| Toolpack    | 注册工具                                                | 运行位置                             |
-|-------------|---------------------------------------------------------|--------------------------------------|
-| `core`      | `messages.send`, `coordination.wait_for_signal`, `completion.submit` | Runner wrapper + Suzumio support API |
-| `shell`     | `shell.exec`                                            | Docker runner container              |
-| `web`       | `web.fetch`                                             | Docker runner container              |
+| Toolpack    | 注册工具                                                                                                        | 运行位置                                  |
+|-------------|-----------------------------------------------------------------------------------------------------------------|-------------------------------------------|
+| `core`      | `messages.send`, `coordination.wait_for_signal`, `completion.submit`, `file.read`, `file.write`, `file.patch`   | Runner container + Suzumio support API    |
+| `shell`     | `shell.exec`                                                                                                    | Docker runner container                   |
+| `web`       | `web.fetch`                                                                                                     | Docker runner container                   |
 
-Mounted inputs 是通过配置挂载到容器路径的 host 文件或目录。Suzumio 会把这些路径渲染进 activation prompt。拥有 `shell.exec` 的 agent 可以把它们复制到 `/workspace`、编译代码、运行二进制，并把持久输出写到 `/artifacts/<agent-id>`。当前 agent 的 artifact 目录可写；其他 agent 的 artifact 目录只读。
+`tools.toolpacks` 注册项目 tool definitions。`agents.<id>.tools` 控制 agent 可以看到哪些已注册工具。内置 file tools 可以授权 `file.*`，也可以写精确名称如 `file.read`、`file.patch`。
 
-### Local toolpacks
-
-Local toolpack 从 controller host 上的目录加载，并只读挂载进 runner container。
-
-    tools:
-      toolpacks:
-        - core
-        - path: ./toolpacks/review
-          id: review-tools
-
-每个 local 目录必须包含 `suzumio.toolpack.json` 和 ESM `.mjs` 模块：
-
-    {
-      "id": "review-tools",
-      "runner": "runner.mjs",
-      "controller": "controller.mjs",
-      "tools": [
-        {
-          "name": "review.summarize",
-          "description": "Summarize review findings.",
-          "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
-        }
-      ]
-    }
-
-id 只能包含字母、数字、`.`、`_` 和 `-`。HTTP(S) toolpack path 会被拒绝。当前不提供 TypeScript runtime transpilation；请发布 JavaScript `.mjs` 文件。
-
-Runner module 在容器内实现模型可见工具。Controller module 为需要项目状态的工具提供 support。两侧 context 都有 `recordSignal`；设置 `targetAgent` 会创建 pending signal，省略 target 并设置 `usefulEffect: true` 会创建 closed useful effect。
+Local toolpacks、manifest 字段、runner module、controller module 和 file/artifact 行为见 [Toolpacks](toolpacks.html)。
 
 ## Agent Config
 
@@ -646,6 +640,8 @@ Runner module 在容器内实现模型可见工具。Controller module 为需要
 | `mounts`      | 只挂载给这个 agent 的 host 文件或目录。                                                             |
 | `env`         | 传给 runner containers 的附加环境变量。                                                             |
 
+`tools.toolpacks` 只是为项目注册可用 tool definitions；`agents.<id>.tools` 才是每个 agent 的 allowlist。内置 file tools 可以授权 `file.*`，也可以写精确名称如 `file.read`、`file.patch`。如果 agent allowlist 中写了某个工具，但没有任何已注册 toolpack 提供它，调用仍会失败。
+
 ## Channels
 
     channels:
@@ -653,7 +649,7 @@ Runner module 在容器内实现模型可见工具。Controller module 为需要
       - "#blocked"
       - "#reviews"
 
-发送到未声明 channel 的消息会失败。这样可以避免拼写错误产生噪音频道。
+发送到未声明 channel 的消息会失败。
 
 ## 验证流程
 
@@ -661,6 +657,6 @@ Runner module 在容器内实现模型可见工具。Controller module 为需要
     suzumio init path/to/project.yaml
     suzumio status project-name
 
-使用多个 profile 时尤其要在 review 中渲染配置。检查 resolved output 中是否有意外的 array replacement、继承来的 model 设置，以及不应该提交的私有 endpoint。
+Rendered output 会显示 array replacement、继承来的 model 设置，以及 provider endpoint/key 环境变量名。
 
-<div class="footer">下一步：<a href="cli.html">CLI 参考</a>。</div>
+<div class="footer">下一步：<a href="toolpacks.html">Toolpacks</a>。</div>

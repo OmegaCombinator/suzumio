@@ -489,6 +489,15 @@ export class ProjectStore {
     return this.db.prepare("SELECT * FROM events WHERE project = ? ORDER BY created_at DESC LIMIT ?").all(this.project, limit) as Record<string, unknown>[];
   }
 
+  latestEvent(input: { type: string; match?: (data: JsonObject) => boolean }): { data: JsonObject; createdAt: string } | undefined {
+    const rows = this.db.prepare("SELECT data_json, created_at FROM events WHERE project = ? AND type = ? ORDER BY created_at DESC").all(this.project, input.type) as Array<{ data_json: string; created_at: string }>;
+    for (const row of rows) {
+      const data = parseJsonObject(row.data_json);
+      if (!input.match || input.match(data)) return { data, createdAt: row.created_at };
+    }
+    return undefined;
+  }
+
   private nextAgentHistorySequence(agentId: string): number {
     const row = this.db.prepare("SELECT COALESCE(MAX(sequence), 0) AS sequence FROM agent_history_messages WHERE project = ? AND agent_id = ?").get(this.project, agentId) as { sequence: number };
     return row.sequence + 1;

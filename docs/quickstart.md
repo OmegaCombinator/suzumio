@@ -12,12 +12,12 @@ You will create a small project with two agents:
 - `pm`, the coordinator that receives the user request and decides when to submit;
 - `researcher`, a worker that can run Python in Docker and write shared files under `/artifacts/researcher`.
 
-This is intentionally small, but it contains the core pattern used by larger teams: the PM delegates, the worker reports, the PM waits or submits.
+The project shape is the same one used by larger teams: PM delegates, worker reports, PM waits or submits.
 
 ## Prerequisites
 
-| Requirement | Why it is needed | Check |
-|-------------|------------------|-------|
+| Requirement | Used by | Check |
+|-------------|---------|-------|
 | Node.js 24+ | CLI, server, runner build, built-in SQLite module. | `node --version` |
 | npm | Install TypeScript and runtime dependencies. | `npm --version` |
 | Docker | Every agent activation runs in a container. | `docker ps` |
@@ -43,8 +43,8 @@ Save this as `/tmp/suzumio-tutorial.yaml` and replace the gateway URL if needed.
 name: yaml-tutorial
 task: |
   Produce a short note about one small Ramsey-number example.
-  The worker should run a tiny Python check and save the script/output
-  under /artifacts/researcher. The PM should summarize the result.
+  Have the worker run a tiny Python check and save the script/output
+  under /artifacts/researcher. Have the PM summarize the result.
 
 backend:
   kind: docker-chat
@@ -152,7 +152,7 @@ suzumio start yaml-tutorial
 suzumio send yaml-tutorial pm P1 "Run the small Ramsey example and submit a short note."
 ```
 
-`start` and `send` can run scheduler ticks directly, so they need the same provider/proxy environment as the server.
+`start` and `send` can run scheduler ticks directly. Run them with the same provider/proxy environment as the server.
 
 The packaged WebUI is served from `http://127.0.0.1:39400`. When working on WebUI code, run `npm run webui:dev` in another terminal and open `http://127.0.0.1:5173`; Vite proxies `/api` and `/health` to the backend on `39400`.
 

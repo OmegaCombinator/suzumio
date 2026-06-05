@@ -80,7 +80,7 @@ The event stream sends SQLite events as Server-Sent Events. It emits existing re
 
 ## Runner Support Routes
 
-The Docker runner presents all model-facing tools. The controller provides support APIs for permissions, state, persistence, tool-call audit records, and custom toolpack support. Runner-local tools such as `shell.exec` and `web.fetch` execute inside the Docker container. These routes are not public user APIs.
+The Docker runner presents all model-facing tools. The controller provides support APIs for permissions, state, persistence, tool-call audit records, and custom toolpack support. Runner-local tools such as `file.read`, `file.write`, `file.patch`, `shell.exec`, and `web.fetch` execute inside the Docker container. These routes are not public user APIs.
 
 | Method | Path                                  | Purpose                                                            |
 |--------|---------------------------------------|--------------------------------------------------------------------|
@@ -128,7 +128,7 @@ Set `targetAgent` or `targetChannel` to create schedulable work. Omit the target
 
 ## Custom Toolpack Signals
 
-Local runner modules and controller modules receive a context with `recordSignal`. Use it when a custom tool produces work for another agent or records a useful effect.
+Local runner modules and controller modules receive a context with `recordSignal`. Custom tools use it to produce work for another agent or record a useful effect.
 
     export function createRunnerToolpack(context) {
       return {
@@ -184,7 +184,7 @@ The Docker chat runner submits a context snapshot immediately before the main mo
 
 `GET /api/projects/:project/agents/:agent/history` returns newest history rows first and accepts `limit`, `before`, and `includeArchived=0`. Each row includes role, kind, activation id, sequence number, metadata, and truncated content. Use `nextBefore` from the response to load older pages.
 
-Compaction rows include a `compactionId` in metadata. `GET /api/projects/:project/agents/:agent/history-archive/:compaction` loads the full raw archive saved before compaction. This endpoint is separate so the WebUI does not fetch large archived payloads during normal refresh.
+Compaction rows include a `compactionId` in metadata. `GET /api/projects/:project/agents/:agent/history-archive/:compaction` loads the full raw archive saved before compaction. Normal WebUI refresh does not fetch archived payloads.
 
 ## Core Tool Inputs
 
@@ -211,6 +211,42 @@ Messages to agents create pending `message.created` signals. Channel messages fa
 
 Declares that useful progress now depends on future signals. This ends the current activation. Non-PM agents notify `pm` by direct message by default. PM calls record a closed useful effect and wait quietly.
 
+### `file.read`
+
+    {
+      "path": "/workspace/src/example.txt",
+      "offset": 1,
+      "limit": 200,
+      "maxBytes": 50000
+    }
+
+Reads a file or directory from `/workspace`, `/artifacts`, or `/mnt`. Relative paths are resolved under `/workspace`. File output is line-numbered, `offset` is 1-indexed, `limit` defaults to 200 and is capped at 2000, and `maxBytes` defaults to 50000 and is capped at 100000.
+
+### `file.write`
+
+    {
+      "path": "/workspace/notes/result.md",
+      "content": "Markdown content\n",
+      "createDirs": true
+    }
+
+Writes a complete file under `/workspace` or the current agent's own `/artifacts/<agent-id>` directory. Relative paths are resolved under `/workspace`. `file.patch` handles targeted edits.
+
+### `file.patch`
+
+    {
+      "operations": [
+        {
+          "op": "update",
+          "path": "/workspace/notes/result.md",
+          "search": "old text",
+          "replace": "new text"
+        }
+      ]
+    }
+
+Applies exact text edits under `/workspace` or the current agent's own `/artifacts/<agent-id>` directory. Operations support `add`, `update`, and `delete`. `update` requires exact `search` text; by default it must match exactly once. Set `replaceAll: true` only when replacing every occurrence is intended.
+
 ### `shell.exec`
 
     {
@@ -220,7 +256,7 @@ Declares that useful progress now depends on future signals. This ends the curre
       "maxOutputBytes": 40000
     }
 
-Runs bash inside the Docker runner container. Use it for copying mounted inputs, compiling code, running binaries, tests, or project-local scripts. Grant it only to agents that should execute container commands.
+Runs bash inside the Docker runner container. Typical operations include copying mounted inputs, compiling code, running binaries, tests, and project-local scripts. Grant it only to agents that execute container commands.
 
 ### `completion.submit`
 
@@ -228,7 +264,7 @@ Runs bash inside the Docker runner container. Use it for copying mounted inputs,
       "report": "# Final Report\n\n..."
     }
 
-This writes `final-report.md`, marks the project `submitted`, and waits for user approval. Agents should call it only after incorporating the relevant current information and after any substantive replies they requested are no longer outstanding.
+This writes `final-report.md`, marks the project `submitted`, and waits for user approval. The submitting agent incorporates the relevant current information and has no outstanding substantive replies it requested.
 
 ### `web.fetch`
 
@@ -239,7 +275,7 @@ This writes `final-report.md`, marks the project `submitted`, and waits for user
       "format": "text"
     }
 
-Fetches an HTTP(S) URL from inside the Docker runner container. `format: "text"` returns cleaned text for HTML responses and raw text for other content types; `format: "raw"` returns the unmodified response text. Grant it only to agents that should have web access.
+Fetches an HTTP(S) URL from inside the Docker runner container. `format: "text"` returns cleaned text for HTML responses and raw text for other content types; `format: "raw"` returns the unmodified response text. Grant it only to agents with web access.
 
 ## WebUI
 

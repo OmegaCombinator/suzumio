@@ -10,8 +10,8 @@ actions:
     variant: "primary"
   - text: "YAML reference"
     link: "configuration.html"
-  - text: "Use the API"
-    link: "api.html"
+  - text: "Toolpacks"
+    link: "toolpacks.html"
     variant: "blue"
 ---
 
@@ -22,7 +22,7 @@ Suzumio is a YAML-based multi-agent system. You do not start by writing orchestr
 - what the project is trying to accomplish;
 - which agents exist;
 - what each agent is allowed to do;
-- how agents should coordinate;
+- agent coordination rules;
 - which Docker runner and model presets to use.
 
 The runtime then handles the boring coordination mechanics: storing state in SQLite, starting Docker activations, delivering messages as signals, applying priority rules, mounting shared files, and recording tool calls.
@@ -71,7 +71,7 @@ suzumio send tiny-research pm P1 "Start."
 | `task` | The shared project goal | Rendered into the first activation prompt. |
 | `agents` | The roster and prompts | Each agent becomes a durable participant with its own workspace and shared artifact directory. |
 | `agents.<id>.tools` | The model-visible allowlist | A worker cannot call tools it was not given. |
-| `tools.toolpacks` | Which tool families exist | `core` gives messages/wait/submit; `shell` gives Python/bash; `web` gives HTTP fetch. |
+| `tools.toolpacks` | Which tool families exist | `core` gives messages/wait/submit/file tools; `shell` gives bash; `web` gives HTTP fetch. |
 | `scheduler` | Signal delivery policy | Idle agents with pending signals get one activation; `P0` can interrupt a running activation. |
 | `backend` | Docker/model/proxy settings | The runner image, controller URL, model presets, mounts, network, and proxy are resolved from YAML. |
 
@@ -109,8 +109,8 @@ Use a critic/checker when:
 
 Use `shell.exec` when:
 
-- the agent should run Python, tests, scripts, or local searches;
-- the result should be saved under `/artifacts/<agent-id>`;
+- the agent runs Python, tests, scripts, or local searches;
+- the result is saved under `/artifacts/<agent-id>`;
 - evidence matters more than prose.
 
 ## Copyable Patterns
@@ -138,6 +138,7 @@ $SUZUMIO_ROOT/tiny-research/
 |------|------|
 | Run your first YAML project | [Quickstart](quickstart.html) |
 | Learn every YAML field | [Configuration](configuration.html) |
+| Configure built-in or local tools | [Toolpacks](toolpacks.html) |
 | Understand messages, signals, and activations | [Core Concepts](concepts.html) |
 | Operate projects from the terminal | [CLI Reference](cli.html) |
 | Integrate or build UI around Suzumio | [HTTP API](api.html) |

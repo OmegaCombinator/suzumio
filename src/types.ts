@@ -49,6 +49,7 @@ export interface SchedulerConfig {
   maxPromptMessages?: number;
   noEffectNudge: NoEffectNudgeConfig;
   allQuietNudge: AllQuietNudgeConfig;
+  quietAgentMonitor: QuietAgentMonitorConfig;
 }
 
 export interface NoEffectNudgeConfig {
@@ -65,6 +66,23 @@ export interface AllQuietNudgeConfig {
   targetAgent: string;
   priority: MessagePriority;
   cooldownMs: number;
+  message: string;
+}
+
+export interface QuietAgentMonitorConfig {
+  enabled: boolean;
+  rules: QuietAgentMonitorRuleConfig[];
+}
+
+export interface QuietAgentMonitorRuleConfig {
+  id?: string;
+  enabled: boolean;
+  agent: string;
+  recipient: string;
+  sender: string;
+  priority: MessagePriority;
+  initialDelayMs: number;
+  repeatDelayMs: number;
   message: string;
 }
 

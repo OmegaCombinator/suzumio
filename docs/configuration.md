@@ -18,7 +18,7 @@ Suzumio treats configuration as source material, not as mutable runtime state. W
       -> apply defaults and validate
       -> write resolved.yaml and SQLite project config
 
-Use `suzumio config render path/to/project.yaml` before review or initialization. It is the easiest way to see the exact config Suzumio will run.
+`suzumio config render path/to/project.yaml` prints the exact config Suzumio will run.
 
 ## Minimal Project
 
@@ -54,7 +54,7 @@ Use `suzumio config render path/to/project.yaml` before review or initialization
         tools:
           - messages.send
 
-This project has only one agent, so it is useful for smoke tests but not for real collaboration. Real multi-agent YAML usually starts with a coordinator and at least one specialist.
+This project has one agent. Multi-agent projects usually add a coordinator and at least one specialist.
 
 ## How To Design A Multi-Agent YAML
 
@@ -62,7 +62,7 @@ Think of the YAML as a small operating procedure for a team. A good file answers
 
 | Question | YAML place | Good answer |
 |----------|------------|-------------|
-| What is success? | `task` | Say what the final report should contain and what not to fake. |
+| What is success? | `task` | Specify final-report contents and forbidden overclaims. |
 | Who coordinates? | `agents.pm` or similar | Give one agent `completion.submit`; make it responsible for waiting and merging. |
 | Who does work? | worker agents | Give workers narrow prompts and only the tools they need. |
 | Who checks quality? | critic/checker agent | Give it review instructions and ask for ACCEPT/REVISE style verdicts. |
@@ -74,12 +74,12 @@ Think of the YAML as a small operating procedure for a team. A good file answers
 - Give each agent a role-specific prompt, not the whole workflow script.
 - Tell PM agents that requests are outstanding until answered or explicitly superseded.
 - Tell worker agents to send the useful result, then call `coordination.wait_for_signal` with `notifyPm:false` if they are waiting.
-- Give `completion.submit` only to the agent that should decide final readiness.
-- Give `shell.exec` only to agents that should run code or write files.
+- Give `completion.submit` only to the final-readiness agent.
+- Give `shell.exec` only to code-running or file-writing agents.
 
 ## Pattern 1: PM + Two Workers + Critic
 
-Use this for proofs, research summaries, design reviews, or any task where independent attempts should be compared.
+Pattern scope: proofs, research summaries, design reviews, and tasks that compare independent attempts.
 
 ```yaml
 name: reviewed-research
@@ -127,7 +127,7 @@ agents:
       - coordination.wait_for_signal
 ```
 
-Why this works:
+Resulting role split:
 
 - `pm` owns submission and coordination.
 - Workers can use tools and shared files but cannot submit.
@@ -135,7 +135,7 @@ Why this works:
 
 ## Pattern 2: Python Experiment Team
 
-Use this when you want agents to run small experiments instead of only talking.
+Pattern scope: small experiments with scripts, command output, and artifact paths.
 
 ```yaml
 tools:
@@ -156,7 +156,7 @@ agents:
     role: python-experimenter
     prompt: |
       Use shell.exec to write scripts and outputs under /artifacts/experimenter.
-      Prefer small, auditable scripts. Send pm the path, command, output summary,
+      Keep scripts small and auditable. Send pm the path, command, output summary,
       and limitations. Then wait with notifyPm:false.
     tools:
       - shell.exec
@@ -164,7 +164,7 @@ agents:
       - coordination.wait_for_signal
 ```
 
-A good worker message should include:
+A worker message includes:
 
 ```text
 Wrote /artifacts/experimenter/search.py and /artifacts/experimenter/run.log.
@@ -175,7 +175,7 @@ Limitations: brute force only, no proof beyond n=8.
 
 ## Pattern 3: Web Research With A Conservative Summarizer
 
-Use this when a worker should fetch sources but the final answer must not overclaim.
+Pattern scope: source fetching with conservative final claims.
 
 ```yaml
 tools:
@@ -203,7 +203,7 @@ agents:
       - coordination.wait_for_signal
 ```
 
-If your network needs a proxy, put it in YAML or inherit it from the process environment:
+Proxy settings can be declared in YAML or inherited from the process environment:
 
 ```yaml
 backend:
@@ -218,7 +218,7 @@ backend:
 
 ## Pattern 4: Review Pipeline
 
-Use this for code review, writing, or design tasks where the author should not approve their own output.
+Pattern scope: code review, writing, and design tasks with separate author and reviewer roles.
 
 ```yaml
 agents:
@@ -254,7 +254,7 @@ agents:
 
 ## Pattern 5: Counted Agents
 
-Use `count` when several agents share the same role but should work independently.
+`count` expands one role into several independently addressed agents.
 
 ```yaml
 agents:
@@ -270,11 +270,11 @@ agents:
       - coordination.wait_for_signal
 ```
 
-This creates `solver-1`, `solver-2`, and `solver-3`. The first activation prompt includes these generated ids so the team can send direct messages with exact recipients.
+This creates `solver-1`, `solver-2`, and `solver-3`. The first activation prompt includes these generated ids for exact direct-message recipients.
 
 ## Complete Shape
 
-The example below shows the main fields in one file. Most projects should split task text, long prompts, and reusable backend settings into imports or profiles.
+The example below shows the main fields in one file. Larger projects split task text, long prompts, and reusable backend settings into imports or profiles.
 
     name: research-demo
     task: @import(tasks/main.md)
@@ -352,19 +352,19 @@ The example below shows the main fields in one file. Most projects should split 
 | `name`          | Yes      | Project id and runtime directory name under `SUZUMIO_ROOT`.                                                             |
 | `task`          | Yes      | Durable task statement rendered into the first activation prompt and preserved through agent history.                    |
 | `agents`        | Yes      | Map of agent ids to agent configs. At least one agent is required.                                                      |
-| `tools`         | No       | Toolpacks registered for the project. Defaults to `core` and `web`; add `shell` for container-local bash and shared artifact files. |
+| `tools`         | No       | Toolpack registration for the project. Defaults to `core` and `web`; `shell` adds container-local bash. See [Toolpacks](toolpacks.html). |
 | `extends`       | No       | One profile object or a list of profile objects to merge before local fields.                                           |
-| `scheduler`     | No       | Advanced scheduler options. Most projects should omit it and use the defaults.                                          |
+| `scheduler`     | No       | Scheduler options. Defaults cover signal delivery, `P0` interrupts, `P1` tool-boundary delivery, and `P2` activation delivery. |
 | `backend`       | No       | Docker runner image, controller support URL, Docker options, and model runner settings.                                 |
 | `channels`      | No       | Allowed channel names. Defaults include `#project` and `#blocked`.                                                      |
 | `observability` | No       | Documentation-level server defaults for HTTP/WebUI. The CLI flags still control the actual server bind address.         |
 
 ## YAML Conventions
 
-Suzumio uses ordinary YAML maps, arrays, scalars, and block strings. Keep long text in block strings or imported files so rendered prompts are readable.
+Suzumio uses ordinary YAML maps, arrays, scalars, and block strings. Long task text and prompts are usually block strings or imported files.
 
-| Pattern        | Use it for                                          | Example           |
-|----------------|-----------------------------------------------------|-------------------|
+| Pattern        | Typical value                                      | Example           |
+|----------------|----------------------------------------------------|-------------------|
 | Block scalar   | Tasks and prompts with multiple lines.              | `task: |`         |
 | Quoted strings | Channel names and strings that contain punctuation. | `"#project"`      |
 | Arrays         | Tools, channels, profile lists.                     | `- messages.send` |
@@ -437,7 +437,7 @@ If `agents/pm.yaml` contains the fields below, importing it at `agents.pm` prese
           - messages.send
           - completion.submit
 
-Import loops and excessive import depth are rejected so a project cannot accidentally create an infinite config expansion.
+Import loops and excessive import depth are rejected.
 
 ## Extends and Merge Rules
 
@@ -489,13 +489,34 @@ Import loops and excessive import depth are rejected so a project cannot acciden
     backend.runner.mode: ai
     channels: ["#project", "#reviews"]
 
-The backend object deep-merges, so `backend.image` remains from the profile while `backend.runner.mode` is overridden locally. The channels array is replaced, not appended.
+Resolved result: `backend.image` remains from the profile, `backend.runner.mode` is overridden locally, and `channels` is replaced rather than appended.
 
 ## Scheduler Defaults
 
-Most projects should omit `scheduler`. The default is signal-driven: idle agents wake for pending signals, `P0` interrupts and restarts a running agent, `P1` is delivered at the next tool boundary when possible, and `P2` waits for the next activation. Advanced projects may set `scheduler.kind` or `scheduler.maxSignalsPerActivation`; the default signal batch size is 20.
+The default scheduler is signal-driven: idle agents wake for pending signals, `P0` interrupts and restarts a running agent, `P1` is delivered at the next tool boundary when possible, and `P2` waits for the next activation. `scheduler.maxSignalsPerActivation` defaults to 20.
 
-Suzumio keeps per-agent model history in SQLite. Each activation prompt, visible assistant output, tool call, tool result, and compaction marker is appended to that history. The runner sends the active history back to the model on the next call. When the provider rejects a request because the context window is exceeded, older history is summarized into a compaction message and the full raw compacted range is archived locally before the runner retries.
+`scheduler.quietAgentMonitor` sends an ordinary `messages.send` notification when a configured agent stays `quiet` past the configured delay. No monitor agent is created.
+
+```yaml
+scheduler:
+  quietAgentMonitor:
+    enabled: true
+    rules:
+      - id: formalizer-watch
+        agent: formalizer-1
+        recipient: pm
+        sender: monitor
+        priority: P2
+        initialDelayMs: 1800000   # 30 minutes quiet before the first message
+        repeatDelayMs: 900000     # repeat every 15 minutes while still quiet
+        message: |
+          {{agent}} has been quiet for {{quietMinutes}} minutes.
+          Please check whether it needs a follow-up assignment.
+```
+
+The message template supports `{{project}}`, `{{agent}}`, `{{recipient}}`, `{{sender}}`, `{{quietMs}}`, `{{quietMinutes}}`, `{{quietSince}}`, `{{now}}`, `{{attempt}}`, `{{initialDelayMs}}`, `{{repeatDelayMs}}`, and `{{ruleId}}`.
+
+Suzumio keeps per-agent model history in SQLite. Each activation prompt, visible assistant output, tool call, tool result, and compaction marker is appended to that history. The runner sends the active history back to the model on the next call. When the provider rejects a request for context-window overflow, older history is summarized into a compaction message and the full raw compacted range is archived locally before the runner retries.
 
 ## Backend Config
 
@@ -529,7 +550,7 @@ Suzumio keeps per-agent model history in SQLite. Each activation prompt, visible
 | `docker.mounts`  | Explicit host files or directories mounted into every activation container. Sources are resolved relative to the top-level project config during render. |
 | `runner.mode`    | Only `ai` is supported.                                                                                                                            |
 
-`docker.proxy` fields are `inheritEnv`, `http`, `https`, `all`, `noProxy`, and `rewriteLocalhost`. By default Suzumio inherits standard proxy env vars from the controller process and rewrites loopback proxy hosts to `host.docker.internal` for bridge-network containers. Use `network: host` on Linux if the proxy only listens on host loopback.
+`docker.proxy` fields are `inheritEnv`, `http`, `https`, `all`, `noProxy`, and `rewriteLocalhost`. By default Suzumio inherits standard proxy env vars from the controller process and rewrites loopback proxy hosts to `host.docker.internal` for bridge-network containers. On Linux, `network: host` keeps host-loopback proxy URLs directly reachable from the container.
 
 ## AI Runner Config
 
@@ -559,13 +580,13 @@ Suzumio keeps per-agent model history in SQLite. Each activation prompt, visible
                 - worker-main
                 - pm-main
 
-Model selection is explicit. Set `backend.runner.model` for a project-level selection, or set `agents.*.model` per agent. Presets with `model-list` expand to an ordered fallback list; the runner tries each concrete preset in order. In most configs, `model` is also the provider model id. Use `apiModel` only when you want the local preset name to differ from the provider-facing model id.
+Model selection is explicit. `backend.runner.model` sets the project-level selection; `agents.*.model` sets a per-agent selection. Presets with `model-list` expand to an ordered fallback list, and the runner tries each concrete preset in order. In most configs, `model` is also the provider model id. `apiModel` separates a local preset name from the provider-facing model id.
 
 Agent history compaction is part of the Docker chat runner rather than a user-facing config surface. Model presets default `contextLimit` to `260000`; this is metadata for model configuration and does not proactively trigger compaction. The runner compacts only when the provider reports a context-window overflow.
 
 <div class="notice danger">
 
-Committed examples must stay sanitized. Prefer `baseURLEnv` and `apiKeyEnv` so real provider endpoints and keys stay in environment variables.
+Committed examples use `baseURLEnv` and `apiKeyEnv`. Real provider endpoints and keys stay in environment variables.
 
 </div>
 
@@ -577,42 +598,15 @@ Committed examples must stay sanitized. Prefer `baseURLEnv` and `apiKeyEnv` so r
         - shell
         - web
 
-| Toolpack    | Registered tools                                        | Runs in                                 |
-|-------------|---------------------------------------------------------|-----------------------------------------|
-| `core`      | `messages.send`, `coordination.wait_for_signal`, `completion.submit` | Runner wrapper with Suzumio support API |
-| `shell`     | `shell.exec`                                            | Docker runner container                 |
-| `web`       | `web.fetch`                                             | Docker runner container                 |
+| Toolpack    | Registered tools                                                                                              | Runs in                                      |
+|-------------|---------------------------------------------------------------------------------------------------------------|----------------------------------------------|
+| `core`      | `messages.send`, `coordination.wait_for_signal`, `completion.submit`, `file.read`, `file.write`, `file.patch` | Runner container + Suzumio support API       |
+| `shell`     | `shell.exec`                                                                                                  | Docker runner container                      |
+| `web`       | `web.fetch`                                                                                                   | Docker runner container                      |
 
-Mounted inputs are host files or directories exposed at configured container paths. Suzumio renders those paths into the activation prompt. Agents with `shell.exec` can copy them into `/workspace`, compile code, run binaries, and write durable outputs to `/artifacts/<agent-id>`. The current agent's artifact directory is read-write; other agents' artifact directories are read-only.
+`tools.toolpacks` registers project tool definitions. `agents.<id>.tools` controls which registered tools an agent can see. Built-in file tools can be granted with `file.*` or exact names such as `file.read` and `file.patch`.
 
-### Local toolpacks
-
-Local toolpacks are loaded from directories on the controller host and mounted read-only into runner containers.
-
-    tools:
-      toolpacks:
-        - core
-        - path: ./toolpacks/review
-          id: review-tools
-
-Each local directory must contain `suzumio.toolpack.json` and ESM `.mjs` modules:
-
-    {
-      "id": "review-tools",
-      "runner": "runner.mjs",
-      "controller": "controller.mjs",
-      "tools": [
-        {
-          "name": "review.summarize",
-          "description": "Summarize review findings.",
-          "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
-        }
-      ]
-    }
-
-The id must contain only letters, digits, `.`, `_`, and `-`. HTTP(S) toolpack paths are rejected. TypeScript runtime transpilation is not provided; publish JavaScript `.mjs` files.
-
-Runner modules implement model-facing tools in the container. Controller modules implement support for tools that need project state. Both sides receive a context with `recordSignal`; create a pending signal by setting `targetAgent`, or create a closed useful effect by omitting the target and setting `usefulEffect: true`.
+See [Toolpacks](toolpacks.html) for local toolpacks, manifest fields, runner modules, controller modules, and file/artifact behavior.
 
 ## Agent Config
 
@@ -646,6 +640,8 @@ Runner modules implement model-facing tools in the container. Controller modules
 | `mounts`      | Explicit host files or directories mounted only for this agent.                                                                          |
 | `env`         | Additional environment variables for runner containers.                                                                                  |
 
+`tools.toolpacks` registers available tool definitions for the project; `agents.<id>.tools` is the per-agent allowlist. Built-in file tools can be granted with `file.*` or exact names such as `file.read` and `file.patch`. A tool listed in an agent allowlist still fails if no registered toolpack provides it.
+
 ## Channels
 
     channels:
@@ -653,7 +649,7 @@ Runner modules implement model-facing tools in the container. Controller modules
       - "#blocked"
       - "#reviews"
 
-Channel messages to undeclared channels fail. This prevents accidental creation of noisy or misspelled channels.
+Channel messages to undeclared channels fail.
 
 ## Validation Workflow
 
@@ -661,6 +657,6 @@ Channel messages to undeclared channels fail. This prevents accidental creation 
     suzumio init path/to/project.yaml
     suzumio status project-name
 
-Render configs in code review, especially when using multiple profiles. Check the resolved output for unexpected array replacement, unexpected inherited model settings, and private endpoints that should stay local.
+The rendered output shows array replacement, inherited model settings, and provider endpoint/key environment-variable names.
 
-<div class="footer">Next: <a href="cli.html">CLI Reference</a>.</div>
+<div class="footer">Next: <a href="toolpacks.html">Toolpacks</a>.</div>

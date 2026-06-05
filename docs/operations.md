@@ -9,7 +9,7 @@ lead: "Suzumio is designed to be transparent. Every important object has a CLI v
 
     export SUZUMIO_ROOT=/data/suzumio-runtime
 
-Runtime state should live outside the source repository. The root contains project databases, activation input files, agent workspaces, artifacts, and logs.
+Runtime state lives outside the source repository. The root contains project databases, activation input files, agent workspaces, artifacts, and logs.
 
 ## Recommended Run Pattern
 
@@ -46,7 +46,7 @@ An activation directory contains the exact runner input:
     $SUZUMIO_ROOT/demo/activations/act_.../
       input.json
 
-The input includes the rendered prompt, agent identity, controller URL, runner config, and tool definitions available to the model. Final activation text is submitted through `POST /activation-output` and stored in SQLite, so failed activations are still reviewable without trusting a container-writable output file.
+The input includes the rendered prompt, agent identity, controller URL, runner config, and tool definitions available to the model. Final activation text is submitted through `POST /activation-output` and stored in SQLite. Failed activations remain reviewable without trusting a container-writable output file.
 
 ## Debugging Scheduler Silence
 
@@ -59,9 +59,9 @@ The input includes the rendered prompt, agent identity, controller URL, runner c
 
 ## Avoiding Coordination Loops
 
-Agents should not post "nothing to do" messages to a shared channel. Use `coordination.wait_for_signal` instead. It records the wait state and ends the current activation. Worker agents notify `pm` by direct message by default, and PM can record an intentional wait state without waking itself.
+Agents do not post "nothing to do" messages to a shared channel. `coordination.wait_for_signal` records the wait state and ends the current activation. Worker agents notify `pm` by direct message by default, and PM can record an intentional wait state without waking itself.
 
-If an agent writes a shared artifact under `/artifacts/<agent-id>`, it should also send a message or submit completion when the file is ready for someone else. File writes are durable, but they do not wake another agent by themselves.
+When an agent writes a shared artifact under `/artifacts/<agent-id>`, it also sends a message or submits completion when the file is ready for someone else. File writes are durable, but they do not wake another agent by themselves.
 
 ## Cleaning Debug Containers
 
@@ -72,7 +72,7 @@ Early Suzumio keeps completed activation containers for debugging. Remove only c
 
 <div class="notice danger">
 
-Do not run broad Docker prune commands on shared machines. Suzumio should only clean containers it created.
+Do not run broad Docker prune commands on shared machines. Suzumio only cleans containers it created.
 
 </div>
 
@@ -83,11 +83,11 @@ Use environment variables for API keys and local, untracked config for private g
     export SUZUMIO_GATEWAY_API_KEY=...
     suzumio serve --host 0.0.0.0 --port 39400
 
-The runner backend passes configured provider key environment variables into containers when those variables exist in the process that launches the activation. This can be the long-running server, but CLI commands such as `suzumio start`, `suzumio send`, and `suzumio tick` can also trigger scheduler ticks directly, so run them with the same provider environment. Committed examples should use placeholder endpoints and environment-variable names only.
+The runner backend passes configured provider key environment variables into containers when those variables exist in the process that launches the activation. This can be the long-running server, and CLI commands such as `suzumio start`, `suzumio send`, and `suzumio tick` can also trigger scheduler ticks directly. Run all activation-launching commands with the same provider environment. Committed examples use placeholder endpoints and environment-variable names only.
 
 ## Proxies And Runner Tools
 
-The default runner image includes `python3`, `curl`, and `git`, so agents with `shell.exec` can run small scripts, command-line network probes, and local repository workflows inside Docker.
+The default runner image includes `python3`, `curl`, and `git`. Agents with `shell.exec` can run small scripts, command-line network probes, and local repository workflows inside Docker.
 
 Suzumio passes standard proxy variables into runner containers when they exist: `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`, and lowercase variants. If a proxy value points at `127.0.0.1`, `localhost`, or `::1`, Suzumio rewrites that host to `host.docker.internal` for bridge-network containers.
 
@@ -116,7 +116,7 @@ If the local proxy only listens on host loopback and is not reachable from Docke
       docker:
         network: host
 
-With `network: host`, Suzumio leaves `127.0.0.1` proxy URLs unchanged because the container shares the host network namespace.
+With `network: host`, Suzumio leaves `127.0.0.1` proxy URLs unchanged. The container shares the host network namespace.
 
 ## Long-running Servers
 

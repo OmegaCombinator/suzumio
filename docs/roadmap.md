@@ -2,7 +2,7 @@
 title: "Suzumio Roadmap"
 eyebrow: "Roadmap"
 heroTitle: "Make the quiet runtime stronger"
-lead: "The first version proves the shape: Docker-first activations, SQLite project truth, signal scheduling, audited support routes, and WebUI observability. The next work should harden those boundaries."
+lead: "The first version proves the shape: Docker-first activations, SQLite project truth, signal scheduling, audited support routes, and WebUI observability. The next work hardens those boundaries."
 ---
 
 ## Near Term
@@ -35,7 +35,7 @@ lead: "The first version proves the shape: Docker-first activations, SQLite proj
 
 ## Scheduler
 
-The default scheduler should remain quiet by default, with interruption limited to explicit `P0`. Future schedulers can be added behind an interface, but they should not weaken the default idle-agent semantics.
+The default scheduler remains quiet by default, with interruption limited to explicit `P0`. Future schedulers can be added behind an interface without weakening the default idle-agent semantics.
 
 - Expose a scheduler decision log.
 - Add manual wake and manual cancel operations.

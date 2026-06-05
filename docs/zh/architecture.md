@@ -50,7 +50,7 @@ lead: "Suzumio 将 orchestration 与 execution 分离。核心进程拥有项目
 
 ## Runner Contract
 
-Runner 通过一个只读 input 文件接收上下文，并通过 HTTP 回传完成结果。这样执行层仍可替换，同时不会让模型可写文件成为 output authority。
+Runner 通过一个只读 input 文件接收上下文，并通过 HTTP 回传完成结果。执行层可替换，模型可写文件不是 output authority。
 
     type RunnerActivationInput = {
       project: string
@@ -95,7 +95,7 @@ Runner 通过一个只读 input 文件接收上下文，并通过 HTTP 回传完
       runner POSTs /runner/tool-calls/finish
       runner returns tool output to model
 
-模型默认不会获得任意 host tools。工具按 agent 配置。`shell.exec` 和 `web.fetch` 在 Docker runner 内执行；消息、completion 和 coordination 工具使用 Suzumio support API。
+模型默认不会获得任意 host tools。工具按 agent 配置。`file.read`、`file.write`、`file.patch`、`shell.exec` 和 `web.fetch` 在 Docker runner 内执行；消息、completion 和 coordination 工具使用 Suzumio support API。
 
 ## Agent History
 
@@ -105,7 +105,7 @@ Compaction 只在模型 provider 明确报告请求超过 context window 后由 
 
 ## Signal Delivery
 
-Agent 不 poll 工作。Suzumio 把 pending signal append 到目标 agent history，并记录哪个 activation 收到了哪些 signal。这样既避免 polling loop，也让调度决策可审计。
+Agent 不 poll 工作。Suzumio 把 pending signal append 到目标 agent history，并记录哪个 activation 收到了哪些 signal。调度记录保持显式且可审计。
 
 Priority 决定 pending signal 何时对模型可见。`P0` 会取消当前 activation，并带着新 signal 重启 agent。`P1` 尽量在下一次完成的 tool call 后注入；否则等待下一次 activation。`P2` 等当前 activation 完成后，在下一次 activation start 投递。
 

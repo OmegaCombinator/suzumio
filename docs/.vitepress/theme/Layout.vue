@@ -25,6 +25,7 @@ const englishNav: NavGroup[] = [
     title: "Build",
     items: [
       { text: "Configuration", link: "/configuration.html" },
+      { text: "Toolpacks", link: "/toolpacks.html" },
       { text: "CLI Reference", link: "/cli.html" },
       { text: "Architecture", link: "/architecture.html" },
       { text: "Operations", link: "/operations.html" }
@@ -53,6 +54,7 @@ const chineseNav: NavGroup[] = [
     title: "构建",
     items: [
       { text: "配置", link: "/zh/configuration.html" },
+      { text: "Toolpacks", link: "/zh/toolpacks.html" },
       { text: "CLI 参考", link: "/zh/cli.html" },
       { text: "架构", link: "/zh/architecture.html" },
       { text: "运维", link: "/zh/operations.html" }

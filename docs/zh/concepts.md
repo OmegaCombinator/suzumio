@@ -75,7 +75,7 @@ Signal 同时是 scheduler 输入和 effect ledger。带 `targetAgent` 且 `stat
 
 ## Useful Effect
 
-`usefulEffect` 回答一个问题：这个 activation 有没有做足够的外部协调工作，从而不应该被自动催促？Activation 完成时，Suzumio 会按 `sourceActivation` 统计 useful effect。
+`usefulEffect` 记录 activation 的外部协调工作。Activation 完成时，Suzumio 会按 `sourceActivation` 统计 useful effect。
 
 | Signal kind                         | 默认 useful effect | 原因                                                |
 |-------------------------------------|--------------------|-----------------------------------------------------|
@@ -94,7 +94,7 @@ Activation 是一个连续 agent 的一次隔离执行。Suzumio 创建 activati
 
 ## Agent History
 
-每个 agent 都有 append-only 模型历史，保存在 SQLite 中。Suzumio 会 append 已投递 signal 形成的 user prompt、可见 assistant 输出、tool call、tool result 和 compaction marker。Runner 下一次调用模型时会把 active history 重新传给模型，所以连续性存在 core runtime 中，而不是容器本地文件里。
+每个 agent 都有 append-only 模型历史，保存在 SQLite 中。Suzumio 会 append 已投递 signal 形成的 user prompt、可见 assistant 输出、tool call、tool result 和 compaction marker。Runner 下一次调用模型时会把 active history 重新传给模型。连续性存在 core runtime 中，而不是容器本地文件里。
 
 当 provider 因 active history 超过 context window 而拒绝请求时，runner 会让模型生成 compact summary，并用 compacted history retry 当前 activation。Suzumio 会把 compact 前的完整 raw 范围本地归档，将这些消息标记为 archived，append 一个包含 summary 的 compaction marker，并保留最新 tail messages 原文。
 
@@ -113,13 +113,19 @@ Activation 是一个连续 agent 的一次隔离执行。Suzumio 创建 activati
 
 ## Tools
 
-工具由 Docker runner 展示给模型。需要持久状态的工具会回调 Suzumio support API，用于消息、项目提交、权限检查和审计记录；`shell`、`web.fetch` 这类 local tools 在 runner 容器内执行。
+工具由 Docker runner 展示给模型。需要持久状态的工具会回调 Suzumio support API，用于消息、项目提交、权限检查和审计记录；file、shell 和 web tools 在 runner 容器内执行。
 
 <div class="grid">
 
 <div class="card"><h3><code>messages.send</code></h3><p>通过 Suzumio support API 创建直接或频道消息。</p></div>
 
 <div class="card"><h3><code>coordination.wait_for_signal</code></h3><p>声明当前正在等待未来 signal。非 PM agent 默认通知 <code>pm</code>；PM 自己会安静等待。</p></div>
+
+<div class="card"><h3><code>file.read</code></h3><p>读取 <code>/workspace</code>、<code>/artifacts</code> 或 <code>/mnt</code> 下的文件或目录。</p></div>
+
+<div class="card"><h3><code>file.write</code></h3><p>在 <code>/workspace</code> 或当前 agent 自己的 artifact 目录下完整写入文件。</p></div>
+
+<div class="card"><h3><code>file.patch</code></h3><p>在 <code>/workspace</code> 或当前 agent 自己的 artifact 目录下应用精确文本编辑。</p></div>
 
 <div class="card"><h3><code>shell.exec</code></h3><p>在 Docker runner 容器内运行 bash。</p></div>
 

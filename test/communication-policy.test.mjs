@@ -266,3 +266,75 @@ test("all-quiet scheduler nudge creates a pending PM signal", async () => {
     }
   });
 });
+
+test("quiet agent monitor sends PM messages and repeats after interval", async () => {
+  const config = projectConfig("policy-quiet-monitor", {
+    scheduler: {
+      quietAgentMonitor: {
+        enabled: true,
+        rules: [
+          {
+            id: "worker-quiet",
+            agent: "worker",
+            recipient: "pm",
+            sender: "monitor",
+            priority: "P2",
+            initialDelayMs: 30 * 60 * 1000,
+            repeatDelayMs: 15 * 60 * 1000,
+            message: "{{agent}} has been quiet for {{quietMinutes}} minutes; attempt {{attempt}}.",
+          },
+        ],
+      },
+    },
+  });
+  await withProject(config, async (root) => {
+    const quietSince = new Date(Date.now() - 31 * 60 * 1000).toISOString();
+    const store = new ProjectStore(config.name, root);
+    try {
+      store.setProjectStatus("running");
+      store.db.prepare("UPDATE agents SET updated_at = ? WHERE project = ? AND id = ?").run(quietSince, config.name, "worker");
+    } finally {
+      store.close();
+    }
+
+    await new NonPreemptiveSignalScheduler(root).tickProject(config.name);
+
+    const checked = new ProjectStore(config.name, root);
+    try {
+      const messages = checked.listMessages(10).filter((message) => message.sender === "monitor");
+      assert.equal(messages.length, 1);
+      assert.equal(messages[0].recipient, "pm");
+      assert.equal(messages[0].priority, "P2");
+      assert.match(messages[0].body, /worker has been quiet for 31 minutes; attempt 1\./);
+
+      const signals = checked.pendingSignals("pm", 10);
+      assert.equal(signals.length, 1);
+      assert.equal(signals[0].kind, "message.created");
+      checked.markSignalsDelivered("pm", signals, "act_test_monitor_delivery");
+    } finally {
+      checked.close();
+    }
+
+    await new NonPreemptiveSignalScheduler(root).tickProject(config.name);
+
+    const afterImmediateTick = new ProjectStore(config.name, root);
+    try {
+      assert.equal(afterImmediateTick.listMessages(10).filter((message) => message.sender === "monitor").length, 1);
+      const oldEventTime = new Date(Date.now() - 16 * 60 * 1000).toISOString();
+      afterImmediateTick.db.prepare("UPDATE events SET created_at = ? WHERE project = ? AND type = ?").run(oldEventTime, config.name, "scheduler.quiet_agent_monitor.message_sent");
+    } finally {
+      afterImmediateTick.close();
+    }
+
+    await new NonPreemptiveSignalScheduler(root).tickProject(config.name);
+
+    const afterRepeat = new ProjectStore(config.name, root);
+    try {
+      const messages = afterRepeat.listMessages(10).filter((message) => message.sender === "monitor");
+      assert.equal(messages.length, 2);
+      assert.match(messages[1].body, /attempt 2\./);
+    } finally {
+      afterRepeat.close();
+    }
+  });
+});

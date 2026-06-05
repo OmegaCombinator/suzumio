@@ -34,7 +34,7 @@ Most commands read `SUZUMIO_ROOT`. You can also pass `--root` to commands that s
 
     suzumio config render examples/import-demo.yaml
 
-Loads YAML, resolves whole-field imports, applies `extends`, applies defaults, validates the config, and prints the final YAML. Use this in reviews and debugging.
+Loads YAML, resolves whole-field imports, applies `extends`, applies defaults, validates the config, and prints the final YAML. This command supports reviews and debugging.
 
 Common failures:
 

@@ -11,7 +11,7 @@ lead: "Suzumio 的运行状态是透明的。每个关键对象都有 CLI 视图
 
 运行时状态应放在源码仓库外。Root 包含项目数据库、activation input、agent workspace、artifact 和日志。
 
-## 推荐运行模式
+## 运行模式
 
     npm run build
     docker build -t suzumio-runner:dev .
@@ -57,11 +57,11 @@ Input 包含渲染后的 prompt、agent identity、controller URL、runner confi
 | 有消息但没有新 activation。 | Agent 已经 `running`、项目 stopped，或消息目标是 `user`。 | 等待完成，或向 agent 发送直接消息。                 |
 | Activation 立即失败。 | 镜像、mount 或 Docker daemon 问题。        | 检查 `suzumio activations`、activation input 和 `docker logs`。 |
 
-## 避免协调循环
+## 协调循环控制
 
-Agent 不应该向共享频道发送“没事做”消息。请使用 `coordination.wait_for_signal`。它会记录等待状态并结束当前 activation。Worker agent 默认会用 direct message 通知 `pm`，PM 可以记录一个明确的等待状态，而不会唤醒自己。
+Agent 不向共享频道发送“没事做”消息。`coordination.wait_for_signal` 会记录等待状态并结束当前 activation。Worker agent 默认会用 direct message 通知 `pm`，PM 可以记录一个明确的等待状态，而不会唤醒自己。
 
-如果 agent 在 `/artifacts/<agent-id>` 下写了共享 artifact，它还应该在文件可供他人使用时发送消息或提交 completion。文件写入是持久的，但不会自己唤醒其他 agent。
+Agent 在 `/artifacts/<agent-id>` 下写入共享 artifact 后，在文件可供他人使用时发送消息或提交 completion。文件写入是持久的，但不会自己唤醒其他 agent。
 
 ## 清理 Debug Containers
 
@@ -83,15 +83,15 @@ API key 使用环境变量，私有 gateway URL 放在本地未跟踪配置中�
     export SUZUMIO_GATEWAY_API_KEY=...
     suzumio serve --host 0.0.0.0 --port 39400
 
-Runner backend 会把配置中引用、且创建 activation 的进程环境里存在的 provider key 环境变量传入容器。这个进程可能是长时间运行的 server，也可能是直接触发 scheduler tick 的 CLI 命令，例如 `suzumio start`、`suzumio send` 或 `suzumio tick`，所以这些命令也要带同一套 provider env。提交示例应只使用占位 endpoint 和环境变量名。
+Runner backend 会把配置中引用、且创建 activation 的进程环境里存在的 provider key 环境变量传入容器。这个进程可能是长时间运行的 server，也可能是直接触发 scheduler tick 的 CLI 命令，例如 `suzumio start`、`suzumio send` 或 `suzumio tick`。所有可能启动 activation 的命令都带同一套 provider env。提交示例只使用占位 endpoint 和环境变量名。
 
 ## 代理和 Runner 工具
 
-默认 runner 镜像包含 `python3`、`curl` 和 `git`，所以拥有 `shell.exec` 的 agent 可以在 Docker 内运行小脚本、命令行网络探测和本地仓库流程。
+默认 runner 镜像包含 `python3`、`curl` 和 `git`。拥有 `shell.exec` 的 agent 可以在 Docker 内运行小脚本、命令行网络探测和本地仓库流程。
 
 Suzumio 会把标准代理变量传入 runner 容器：`HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NO_PROXY` 及其小写形式。如果代理值指向 `127.0.0.1`、`localhost` 或 `::1`，Suzumio 会在传给 bridge-network 容器时把 host 改写成 `host.docker.internal`。
 
-本地 HTTP 代理建议在启动任何可能创建 activation 的进程前导出：
+本地 HTTP 代理在启动任何可能创建 activation 的进程前导出：
 
     export HTTPS_PROXY=http://127.0.0.1:7890
     export HTTP_PROXY=http://127.0.0.1:7890
@@ -116,11 +116,11 @@ HTTP/HTTPS proxy URL 会被内置模型调用和 `web.fetch` 使用。SOCKS prox
       docker:
         network: host
 
-使用 `network: host` 时，Suzumio 会保留 `127.0.0.1` 代理 URL，因为容器和宿主共享 network namespace。
+使用 `network: host` 时，Suzumio 会保留 `127.0.0.1` 代理 URL。容器和宿主共享 network namespace。
 
 ## 长时间运行 Server
 
-长时间运行时建议使用 systemd、容器 supervisor 或受监督的 shell session。在用户 API 鉴权完成前，只绑定到可信接口。
+长时间运行时使用 systemd、容器 supervisor 或受监督的 shell session。在用户 API 鉴权完成前，只绑定到可信接口。
 
     suzumio serve --host 127.0.0.1 --port 39400
 

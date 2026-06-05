@@ -13,8 +13,26 @@ const DEFAULT_ALL_QUIET_NUDGE_MESSAGE = [
   "Treat this as a coordination stall: ask workers for current progress, tell them to continue, or resend any missing work/review messages. Use targeted messages rather than waiting silently.",
 ].join("\n\n");
 
+const DEFAULT_QUIET_AGENT_MONITOR_MESSAGE = [
+  "Agent `{{agent}}` has been quiet for {{quietMinutes}} minutes.",
+  "If this is unexpected, send it a follow-up assignment or ask for status. If it is intentionally waiting, no action is needed.",
+].join("\n\n");
+
 const DEFAULT_NO_EFFECT_NUDGE = { enabled: true, priority: "P2" as const, maxConsecutive: 0, initialDelayMs: 30_000, backoffFactor: 2, maxDelayMs: 300_000 };
 const DEFAULT_ALL_QUIET_NUDGE = { enabled: false, targetAgent: "pm", priority: "P2" as const, cooldownMs: 300_000, message: DEFAULT_ALL_QUIET_NUDGE_MESSAGE };
+const DEFAULT_QUIET_AGENT_MONITOR = { enabled: false, rules: [] };
+
+const QuietAgentMonitorRuleSchema = z.object({
+  id: z.string().min(1).optional(),
+  enabled: z.boolean().default(true),
+  agent: z.string().min(1),
+  recipient: z.string().min(1).default("pm"),
+  sender: z.string().min(1).default("monitor"),
+  priority: MessagePrioritySchema.default("P2"),
+  initialDelayMs: z.number().int().min(0).default(30 * 60_000),
+  repeatDelayMs: z.number().int().positive().default(15 * 60_000),
+  message: z.string().min(1).default(DEFAULT_QUIET_AGENT_MONITOR_MESSAGE),
+});
 
 const SchedulerSchema = z.preprocess(
   (value) => {
@@ -47,8 +65,14 @@ const SchedulerSchema = z.preprocess(
           message: z.string().min(1).default(DEFAULT_ALL_QUIET_NUDGE_MESSAGE),
         })
         .default(DEFAULT_ALL_QUIET_NUDGE),
+      quietAgentMonitor: z
+        .object({
+          enabled: z.boolean().default(false),
+          rules: z.array(QuietAgentMonitorRuleSchema).default([]),
+        })
+        .default(DEFAULT_QUIET_AGENT_MONITOR),
     })
-    .default({ kind: "nonpreemptive-signals", maxSignalsPerActivation: 20, noEffectNudge: DEFAULT_NO_EFFECT_NUDGE, allQuietNudge: DEFAULT_ALL_QUIET_NUDGE }),
+    .default({ kind: "nonpreemptive-signals", maxSignalsPerActivation: 20, noEffectNudge: DEFAULT_NO_EFFECT_NUDGE, allQuietNudge: DEFAULT_ALL_QUIET_NUDGE, quietAgentMonitor: DEFAULT_QUIET_AGENT_MONITOR }),
 );
 
 const CommunicationSchema = z

@@ -80,7 +80,7 @@ lead: "HTTP server 暴露项目观测、用户控制动作、SSE 事件流，以
 
 ## Runner Support Routes
 
-Docker runner 把所有模型可见工具展示给模型。Controller 提供 support API，用于权限、状态、持久化、tool-call 审计记录和自定义 toolpack support。`shell.exec` 和 `web.fetch` 这类 runner-local tools 在 Docker 容器内执行。这些 route 不是公共用户 API。
+Docker runner 把所有模型可见工具展示给模型。Controller 提供 support API，用于权限、状态、持久化、tool-call 审计记录和自定义 toolpack support。`file.read`、`file.write`、`file.patch`、`shell.exec` 和 `web.fetch` 这类 runner-local tools 在 Docker 容器内执行。这些 route 不是公共用户 API。
 
 | 方法   | 路径                                  | 用途                                                                                  |
 |--------|---------------------------------------|---------------------------------------------------------------------------------------|
@@ -184,7 +184,7 @@ Docker chat runner 会在主模型调用前提交 context snapshot。公开的 a
 
 `GET /api/projects/:project/agents/:agent/history` 按最新记录优先返回 history rows，支持 `limit`、`before` 和 `includeArchived=0`。每行包含 role、kind、activation id、sequence number、metadata 和截断后的 content。响应里的 `nextBefore` 可用于继续加载更旧页面。
 
-Compaction row 的 metadata 中包含 `compactionId`。`GET /api/projects/:project/agents/:agent/history-archive/:compaction` 会读取 compact 前保存的完整 raw archive。该 endpoint 独立存在，避免 WebUI 普通刷新时拉取巨大 archived payload。
+Compaction row 的 metadata 中包含 `compactionId`。`GET /api/projects/:project/agents/:agent/history-archive/:compaction` 会读取 compact 前保存的完整 raw archive。WebUI 普通刷新不拉取 archived payload。
 
 ## Core Tool Inputs
 
@@ -211,6 +211,42 @@ Compaction row 的 metadata 中包含 `compactionId`。`GET /api/projects/:proje
 
 声明当前进展依赖未来 signal，并结束当前 activation。非 PM agent 默认用 direct message 通知 `pm`。PM 调用时会记录 closed useful effect 并安静等待。
 
+### `file.read`
+
+    {
+      "path": "/workspace/src/example.txt",
+      "offset": 1,
+      "limit": 200,
+      "maxBytes": 50000
+    }
+
+读取 `/workspace`、`/artifacts` 或 `/mnt` 下的文件或目录。相对路径会按 `/workspace` 解析。文件输出会带行号，`offset` 从 1 开始，`limit` 默认 200、上限 2000，`maxBytes` 默认 50000、上限 100000。
+
+### `file.write`
+
+    {
+      "path": "/workspace/notes/result.md",
+      "content": "Markdown content\n",
+      "createDirs": true
+    }
+
+完整写入 `/workspace` 或当前 agent 自己的 `/artifacts/<agent-id>` 目录下的文件。相对路径会按 `/workspace` 解析。`file.patch` 处理 targeted edits。
+
+### `file.patch`
+
+    {
+      "operations": [
+        {
+          "op": "update",
+          "path": "/workspace/notes/result.md",
+          "search": "old text",
+          "replace": "new text"
+        }
+      ]
+    }
+
+在 `/workspace` 或当前 agent 自己的 `/artifacts/<agent-id>` 目录下应用精确文本编辑。支持 `add`、`update` 和 `delete`。`update` 需要精确的 `search` 文本；默认必须恰好匹配一次。只有确实要替换全部出现位置时才设置 `replaceAll: true`。
+
 ### `shell.exec`
 
     {
@@ -220,7 +256,7 @@ Compaction row 的 metadata 中包含 `compactionId`。`GET /api/projects/:proje
       "maxOutputBytes": 40000
     }
 
-在 Docker runner 容器内运行 bash。用于复制 mounted inputs、编译代码、运行二进制、测试或项目本地脚本。只给应该执行容器命令的 agent 授权。
+在 Docker runner 容器内运行 bash。典型操作包括复制 mounted inputs、编译代码、运行二进制、测试和项目本地脚本。只给执行容器命令的 agent 授权。
 
 ### `completion.submit`
 

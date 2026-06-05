@@ -1,6 +1,8 @@
-import type { AgentConfig, AgentRecord, DockerMountConfig, ProjectConfig, SignalRecord } from "./types.js";
+import type { AgentConfig, AgentRecord, DockerMountConfig, ProjectConfig, QuietAgentMonitorRuleConfig, SignalRecord } from "./types.js";
 import { DockerChatBackend } from "./backend.js";
 import { ProjectStore } from "./store.js";
+
+const QUIET_AGENT_MONITOR_EVENT = "scheduler.quiet_agent_monitor.message_sent";
 
 export class NonPreemptiveSignalScheduler {
   private readonly backend: DockerChatBackend;
@@ -16,6 +18,7 @@ export class NonPreemptiveSignalScheduler {
       if (projectRow.status !== "running") return;
       const agents = store.listAgents();
       for (const agent of agents) await this.tickAgent(store, agent, agents);
+      this.maybeMonitorQuietAgents(store, store.listAgents());
       this.maybeNudgeAllQuiet(store);
     } finally {
       store.close();
@@ -86,6 +89,71 @@ export class NonPreemptiveSignalScheduler {
         agentStatuses: agents.map((agent) => ({ id: agent.id, status: agent.status })),
       },
       usefulEffect: true,
+    });
+  }
+
+  private maybeMonitorQuietAgents(store: ProjectStore, agents: AgentRecord[]): void {
+    const config = store.config();
+    const monitor = config.scheduler.quietAgentMonitor;
+    const rules = monitor?.rules ?? [];
+    if (!monitor?.enabled || rules.length === 0) return;
+    const agentsById = new Map(agents.map((agent) => [agent.id, agent]));
+    const now = Date.now();
+    for (const [index, rule] of rules.entries()) {
+      this.maybeSendQuietAgentMonitorMessage(store, agentsById, rule, index, now);
+    }
+  }
+
+  private maybeSendQuietAgentMonitorMessage(store: ProjectStore, agentsById: Map<string, AgentRecord>, rule: QuietAgentMonitorRuleConfig, index: number, now: number): void {
+    if (rule.enabled === false) return;
+    const agent = agentsById.get(rule.agent);
+    if (!agent || agent.status !== "quiet") return;
+    const recipient = rule.recipient ?? "pm";
+    if (recipient !== "user" && !agentsById.has(recipient)) return;
+    const quietSince = agent.updatedAt;
+    const quietSinceMs = Date.parse(quietSince);
+    if (!Number.isFinite(quietSinceMs)) return;
+    const quietMs = now - quietSinceMs;
+    if (quietMs < 0) return;
+    const initialDelayMs = Math.max(0, Math.trunc(rule.initialDelayMs ?? 30 * 60_000));
+    const repeatDelayMs = Math.max(1, Math.trunc(rule.repeatDelayMs ?? 15 * 60_000));
+    const ruleKey = quietAgentMonitorRuleKey(rule, index);
+    const last = store.latestEvent({
+      type: QUIET_AGENT_MONITOR_EVENT,
+      match: (data) => data.ruleKey === ruleKey && data.agent === agent.id && data.quietSince === quietSince,
+    });
+    if (!last && quietMs < initialDelayMs) return;
+    if (last && now - Date.parse(last.createdAt) < repeatDelayMs) return;
+
+    const attempt = last ? Math.max(1, Math.trunc(Number(last.data.attempt) || 1)) + 1 : 1;
+    const sender = rule.sender ?? "monitor";
+    const body = renderQuietAgentMonitorMessage(rule, {
+      project: store.project,
+      agent: agent.id,
+      recipient,
+      sender,
+      quietMs,
+      quietSince,
+      now: new Date(now).toISOString(),
+      initialDelayMs,
+      repeatDelayMs,
+      attempt,
+      ruleId: rule.id ?? ruleKey,
+    });
+    const message = store.sendMessage({ sender, recipient, priority: rule.priority ?? "P2", body });
+    store.appendEvent(QUIET_AGENT_MONITOR_EVENT, {
+      ruleKey,
+      ruleId: rule.id,
+      agent: agent.id,
+      recipient,
+      sender,
+      priority: rule.priority ?? "P2",
+      quietSince,
+      quietMs,
+      initialDelayMs,
+      repeatDelayMs,
+      attempt,
+      messageId: message.id,
     });
   }
 }
@@ -221,4 +289,14 @@ function agentSpec(config: ProjectConfig, agent: AgentRecord): AgentConfig | und
 
 function signalsPerActivation(config: ProjectConfig): number {
   return config.scheduler.maxSignalsPerActivation ?? config.scheduler.maxPromptMessages ?? 20;
+}
+
+function quietAgentMonitorRuleKey(rule: QuietAgentMonitorRuleConfig, index: number): string {
+  return rule.id ?? `${index}:${rule.agent}:${rule.sender ?? "monitor"}->${rule.recipient ?? "pm"}`;
+}
+
+function renderQuietAgentMonitorMessage(rule: QuietAgentMonitorRuleConfig, values: Record<string, string | number>): string {
+  const template = rule.message || "Agent `{{agent}}` has been quiet for {{quietMinutes}} minutes.";
+  const replacements: Record<string, string | number> = { ...values, agentId: values.agent, quietMinutes: Math.floor(Number(values.quietMs) / 60_000) };
+  return template.replace(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g, (match, key: string) => String(replacements[key] ?? match));
 }

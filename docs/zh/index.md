@@ -10,8 +10,8 @@ actions:
     variant: "primary"
   - text: "YAML 参考"
     link: "configuration.html"
-  - text: "使用 API"
-    link: "api.html"
+  - text: "Toolpacks"
+    link: "toolpacks.html"
     variant: "blue"
 ---
 
@@ -22,7 +22,7 @@ Suzumio 是一个 YAML-based multi-agent system。你不是先写 orchestration 
 - 项目要完成什么；
 - 有哪些 agents；
 - 每个 agent 可以做什么；
-- agents 应该如何协作；
+- agent coordination rules；
 - 使用哪个 Docker runner 和模型 presets。
 
 Runtime 负责协调细节：把状态存进 SQLite、启动 Docker activation、把消息变成 signal、应用 priority 规则、挂载共享文件，并记录 tool calls。
@@ -71,7 +71,7 @@ suzumio send tiny-research pm P1 "Start."
 | `task` | 共享项目目标 | 渲染进第一次 activation prompt。 |
 | `agents` | roster 和 prompts | 每个 agent 都变成一个持久参与者，有自己的 workspace 和共享 artifact 目录。 |
 | `agents.<id>.tools` | 模型可见工具 allowlist | worker 不能调用未授权工具。 |
-| `tools.toolpacks` | 可用工具家族 | `core` 提供 messages/wait/submit；`shell` 提供 Python/bash；`web` 提供 HTTP fetch。 |
+| `tools.toolpacks` | 可用工具家族 | `core` 提供 messages/wait/submit/file tools；`shell` 提供 bash；`web` 提供 HTTP fetch。 |
 | `scheduler` | signal 投递策略 | 有 pending signal 的 idle agent 会获得一次 activation；`P0` 可以中断 running activation。 |
 | `backend` | Docker/model/proxy 设置 | runner image、controller URL、模型 presets、mounts、network 和 proxy 都从 YAML 解析。 |
 
@@ -89,28 +89,28 @@ suzumio send tiny-research pm P1 "Start."
 
 最重要的设计能力不是写很长的 prompt，而是分清职责，并给每个 agent 刚好够用的工具。
 
-适合使用 PM 的情况：
+PM 用于：
 
 - 项目需要分派任务；
 - 多份报告需要合并；
 - 需要有人判断最终答案是否 ready。
 
-适合使用 workers 的情况：
+Workers 用于：
 
 - 任务可以独立探索；
 - 你希望有多个尝试、实验或证明；
 - 你希望 PM 比较证据，而不是自己凭空完成全部工作。
 
-适合使用 critic/checker 的情况：
+Critic/checker 用于：
 
 - 最终输出需要审查；
 - 幻觉式确定性很危险；
 - workers 可能给出互相矛盾的 claims。
 
-适合使用 `shell.exec` 的情况：
+`shell.exec` 用于：
 
-- agent 应该运行 Python、测试、脚本或本地搜索；
-- 结果应该保存到 `/artifacts/<agent-id>`；
+- agent 运行 Python、测试、脚本或本地搜索；
+- 结果保存到 `/artifacts/<agent-id>`；
 - 证据比纯文字更重要。
 
 ## 可复制模式
@@ -138,6 +138,7 @@ $SUZUMIO_ROOT/tiny-research/
 |------|------|
 | 跑第一个 YAML 项目 | [快速开始](quickstart.html) |
 | 学习所有 YAML 字段 | [配置](configuration.html) |
+| 配置内置或 local tools | [Toolpacks](toolpacks.html) |
 | 理解 messages、signals 和 activations | [核心概念](concepts.html) |
 | 用终端运维项目 | [CLI 参考](cli.html) |
 | 集成或围绕 Suzumio 做 UI | [HTTP API](api.html) |

@@ -35,7 +35,7 @@ lead: "Suzumio separates orchestration from execution. The core process owns pro
 
 ## Core Process
 
-The core process is the authority for project-level records. If data should be visible in CLI, HTTP, WebUI, or audit logs, it belongs in SQLite through the core store.
+The core process is the authority for project-level records. Data visible in CLI, HTTP, WebUI, or audit logs belongs in SQLite through the core store.
 
 | Module         | Responsibility                                                                                                                          |
 |----------------|-----------------------------------------------------------------------------------------------------------------------------------------|
@@ -78,9 +78,9 @@ Each activation container receives a small, explicit environment:
 - A bind mount for the agent workspace at `/workspace`.
 - Configured host files or directories mounted at explicit non-reserved targets.
 - Environment variables for project id, agent id, activation id, token, and configured model-provider key variables.
-- `host.docker.internal` mapping so the runner can call Suzumio support routes and `/activation-output` on the host.
+- `host.docker.internal` mapping for runner calls to Suzumio support routes and `/activation-output` on the host.
 
-Completed containers are currently kept for early debugging. Cleanup policy should become configurable as the Docker backend hardens.
+Completed containers are currently kept for early debugging. Cleanup policy is planned as a Docker backend setting.
 
 ## Tool Flow
 
@@ -95,17 +95,17 @@ Completed containers are currently kept for early debugging. Cleanup policy shou
       runner POSTs /runner/tool-calls/finish
       runner returns tool output to model
 
-The model does not receive arbitrary host tools by default. Tools are configured per agent. `shell.exec` and `web.fetch` run inside the Docker runner; message, completion, and coordination tools use Suzumio support APIs.
+The model does not receive arbitrary host tools by default. Tools are configured per agent. `file.read`, `file.write`, `file.patch`, `shell.exec`, and `web.fetch` run inside the Docker runner; message, completion, and coordination tools use Suzumio support APIs.
 
 ## Agent History
 
 Agent continuity is stored as append-only history rows in SQLite, not as a container-local session file. Before starting an activation, the backend snapshots the target agent's active history into `/activation/input.json`. The docker-chat runner turns that history into model messages, then appends visible assistant output and audited tool records through runner-internal support routes.
 
-Compaction is decided by the docker-chat runner only after the model provider reports that the request exceeds the available context window. The runner generates the summary, then calls a runner-internal persistence route so the Suzumio-side docker-chat support can archive the raw compacted range and append a compaction marker before retrying. The scheduler does not assign or decide compaction.
+Compaction is decided by the docker-chat runner only after the model provider reports that the request exceeds the available context window. The runner generates the summary, then calls a runner-internal persistence route. Suzumio-side docker-chat support archives the raw compacted range, appends a compaction marker, and then retries. The scheduler does not assign or decide compaction.
 
 ## Signal Delivery
 
-Agents do not poll for work. Suzumio appends pending signals into the target agent history and records which activation received each signal. This avoids polling loops and makes scheduling decisions auditable.
+Agents do not poll for work. Suzumio appends pending signals into the target agent history and records which activation received each signal. The scheduling record remains explicit and auditable.
 
 Priority controls when a pending signal becomes model-visible. `P0` cancels the current activation and restarts the agent with the new signal. `P1` is injected after the next completed tool call when possible, otherwise it waits for the next activation. `P2` waits until the current activation completes and is delivered at the next activation start.
 
@@ -128,7 +128,7 @@ Each project has one SQLite file. The container runner does not maintain the pro
 | `events`        | Append-style event timeline.                                       |
 | `tool_calls`    | Audited tool execution records.                                    |
 
-## Why the Boundary Matters
+## Boundary Result
 
 Keeping project truth in the core runtime makes agent execution disposable. A runner can fail, be replaced, or be upgraded while the project database, agent histories, shared artifact files, and user-control surface remain stable.
 

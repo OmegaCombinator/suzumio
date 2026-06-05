@@ -30,7 +30,7 @@ An agent is a configured participant with a role, prompt, model selection, works
 
 ## Message
 
-Messages are durable communication records. A message is either direct, with `recipient`, or channel-based, with `channel`. Unknown recipients and undeclared channels are rejected so project communication remains explicit.
+Messages are durable communication records. A message is either direct, with `recipient`, or channel-based, with `channel`. Unknown recipients and undeclared channels are rejected.
 
     {
       "sender": "user",
@@ -75,7 +75,7 @@ Targeted signals cannot be explicitly closed. To wake an agent, create a pending
 
 ## Useful Effect
 
-`usefulEffect` answers one question: did this activation do enough external coordination work to avoid an automatic nudge? Suzumio counts useful effects by `sourceActivation` when an activation completes.
+`usefulEffect` records external coordination work for the activation. Suzumio counts useful effects by `sourceActivation` when an activation completes.
 
 | Signal kind                         | Default useful effect | Reason                                                               |
 |-------------------------------------|-----------------------|----------------------------------------------------------------------|
@@ -96,9 +96,9 @@ An activation can send messages, publish artifacts, submit a report, or simply r
 
 ## Agent History
 
-Each agent has append-only model history stored in SQLite. Suzumio appends user prompts from delivered signals, visible assistant output, tool calls, tool results, and compaction markers. The runner sends the active history back to the model on the next call, so continuity lives in the core runtime rather than in a container-local file.
+Each agent has append-only model history stored in SQLite. Suzumio appends user prompts from delivered signals, visible assistant output, tool calls, tool results, and compaction markers. The runner sends the active history back to the model on the next call. Continuity lives in the core runtime rather than in a container-local file.
 
-When the provider rejects a request because the active history exceeds the context window, the runner asks the model for a compact summary and retries the activation with the compacted history. Suzumio archives the full raw compacted range locally, marks those messages archived, appends a compaction marker containing the summary, and keeps the latest tail messages verbatim.
+When the provider rejects a request for context-window overflow, the runner asks the model for a compact summary and retries the activation with the compacted history. Suzumio archives the full raw compacted range locally, marks those messages archived, appends a compaction marker containing the summary, and keeps the latest tail messages verbatim.
 
 ## Signal Scheduler
 
@@ -115,13 +115,19 @@ The default scheduler is `nonpreemptive-signals`. `nonpreemptive-mailbox` is sti
 
 ## Tools
 
-Tools are presented to the model by the Docker runner. Stateful tools call back to Suzumio for controller support such as messages, project submission, permission checks, and audit records. Local tools such as shell and web fetch run inside the runner container.
+Tools are presented to the model by the Docker runner. Stateful tools call back to Suzumio for controller support such as messages, project submission, permission checks, and audit records. File, shell, and web tools run inside the runner container.
 
 <div class="grid">
 
 <div class="card"><h3><code>messages.send</code></h3><p>Create a direct or channel message through Suzumio support APIs.</p></div>
 
 <div class="card"><h3><code>coordination.wait_for_signal</code></h3><p>Declare an intentional wait state. Non-PM agents notify <code>pm</code> by default; PM waits quietly.</p></div>
+
+<div class="card"><h3><code>file.read</code></h3><p>Read files or directories from <code>/workspace</code>, <code>/artifacts</code>, or <code>/mnt</code>.</p></div>
+
+<div class="card"><h3><code>file.write</code></h3><p>Write complete files under <code>/workspace</code> or the current agent's artifact directory.</p></div>
+
+<div class="card"><h3><code>file.patch</code></h3><p>Apply exact text edits under <code>/workspace</code> or the current agent's artifact directory.</p></div>
 
 <div class="card"><h3><code>shell.exec</code></h3><p>Run bash inside the Docker runner container.</p></div>
 
