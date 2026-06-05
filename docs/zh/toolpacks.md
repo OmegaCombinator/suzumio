@@ -1,11 +1,11 @@
 ---
-title: "Suzumio Toolpacks"
-eyebrow: "Toolpacks"
-heroTitle: "先注册工具，再按 agent 授权"
-lead: "Toolpacks 定义模型可见工具。项目配置注册 toolpacks，每个 agent 配置 allowlist 决定它能调用哪些已注册工具。"
+title: "Suzumio Custom Tools"
+eyebrow: "Custom Tools"
+heroTitle: "用 local toolpacks 添加项目工具"
+lead: "Tools 在 project level 注册，并按 agent allowlist 授权。Built-ins 覆盖 messaging、waiting、submission、file access、shell 和 web fetch；local toolpacks 添加 project-specific model-facing tools。"
 ---
 
-## 项目注册
+## Registration 和 Allowlists
 
 ```yaml
 tools:
@@ -13,31 +13,41 @@ tools:
     - core
     - shell
     - web
+    - path: ./toolpacks/review
+      id: review-tools
+
+agents:
+  reviewer:
+    tools:
+      - messages.send
+      - coordination.wait_for_signal
+      - review.summarize
 ```
 
-`tools.toolpacks` 注册项目可用 tool definitions。`agents.<id>.tools` 是 per-agent allowlist。如果 agent allowlist 中写了某个工具，但没有任何已注册 toolpack 提供它，调用仍会失败。
+`tools.toolpacks` 注册 tool definitions。`agents.<id>.tools` 决定 agent 可以看到哪些已注册 tools。Agent allowlists 支持 exact names、`file.*` 这类 namespace wildcards 和 `*`。
 
-Agent allowlist 支持精确名称、`file.*` 这类 namespace wildcard 和 `*`。
+## Built-In Toolpacks
 
-## 内置 Toolpacks
-
-| Toolpack | 注册工具 | 执行位置 |
-|----------|----------|----------|
+| Toolpack | Registered tools | Execution |
+|----------|------------------|-----------|
 | `core` | `messages.send`, `coordination.wait_for_signal`, `completion.submit`, `file.read`, `file.write`, `file.patch` | Runner container + Suzumio support API |
 | `shell` | `shell.exec` | Docker runner container |
 | `web` | `web.fetch` | Docker runner container |
 
-## File 和 Artifact 访问
+`file.read` 可以读取 `/workspace`、`/artifacts` 或 `/mnt`。`file.write` 和 `file.patch` 可以写入 `/workspace` 或当前 agent 自己的 `/artifacts/<agent-id>` directory。
 
-`file.read` 可以读取 `/workspace`、`/artifacts` 或 `/mnt`。`file.write` 和 `file.patch` 可以写入 `/workspace` 或当前 agent 自己的 `/artifacts/<agent-id>` 目录。
+Mounted inputs 是通过配置暴露到 container paths 的 host files 或 directories。当前 agent 的 artifact directory 可写；其他 agents 的 artifact directories 只读。
 
-Mounted inputs 是通过配置暴露到容器路径的 host 文件或目录。Suzumio 会把这些路径渲染进 activation prompt。当前 agent 的 artifact 目录可写；其他 agent 的 artifact 目录只读。
+## Local Toolpack Layout
 
-内置 file tools 可以授权 `file.*`，也可以写精确名称如 `file.read`、`file.write`、`file.patch`。
+```text
+toolpacks/review/
+  suzumio.toolpack.json
+  runner.mjs
+  controller.mjs
+```
 
-## Local Toolpacks
-
-Local toolpack 是 controller host 上的目录，会只读挂载进 runner containers。
+Local toolpacks 是 controller host 上的 directories。Suzumio 会把它们 read-only mount 到 runner containers。
 
 ```yaml
 tools:
@@ -47,7 +57,7 @@ tools:
       id: review-tools
 ```
 
-每个 local 目录包含 `suzumio.toolpack.json` 和 ESM `.mjs` 模块：
+## Manifest
 
 ```json
 {
@@ -58,63 +68,74 @@ tools:
     {
       "name": "review.summarize",
       "description": "Summarize review findings.",
-      "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "summary": { "type": "string" }
+        },
+        "required": ["summary"],
+        "additionalProperties": false
+      }
     }
   ]
 }
 ```
 
-id 只包含字母、数字、`.`、`_` 和 `-`。HTTP(S) toolpack path 会被拒绝。Runtime 不提供 TypeScript transpilation；模块是 JavaScript `.mjs` 文件。
+| Field | Required | Description |
+|-------|----------|-------------|
+| `id` | Yes | Toolpack id。如果 config 中也写了 `id`，两者必须一致。 |
+| `runner` | No | Runner-side module path，相对 toolpack root。默认 `runner.mjs`。 |
+| `controller` | No | Controller-side module path，相对 toolpack root。默认 `controller.mjs`。 |
+| `tools` | Yes | Tool definitions array，每个 definition 包含 `name`、`description` 和 JSON-schema-like `inputSchema`。 |
 
-## Manifest 字段
+Id 只包含 letters、digits、`.`、`_` 和 `-`。HTTP(S) toolpack paths 会被拒绝。Module paths 保持在 toolpack directory 内，以 `.mjs` 结尾，并指向已有文件。重复 toolpack ids 和跨 registered toolpacks 的重复 tool names 会被拒绝。
 
-| 字段 | 必填 | 说明 |
-|------|------|------|
-| `id` | 是 | Toolpack id。如果配置里也写了 `id`，两者必须一致。 |
-| `runner` | 否 | Runner-side module 路径，相对 toolpack root。默认 `runner.mjs`。 |
-| `controller` | 否 | Controller-side module 路径，相对 toolpack root。默认 `controller.mjs`。 |
-| `tools` | 是 | Tool definitions 数组，每个 definition 包含 `name`、`description` 和 JSON-schema-like `inputSchema`。 |
-
-Runner 和 controller module 路径留在 toolpack 目录内，以 `.mjs` 结尾，并指向已有文件。重复 toolpack id 和跨已注册 toolpacks 的重复 tool name 会被拒绝。
+Runtime 不提供 TypeScript transpilation。Toolpack modules 是 JavaScript ESM `.mjs` files。
 
 ## Runner Module
 
-Runner module 在容器内实现模型可见工具。导出 `createRunnerToolpack(context)` 或 default factory。返回值可以直接是 tool map，也可以是 `{ tools: { ... } }`；manifest 中声明的每个 tool name 都有 handler。Runner handler 接收模型输入，返回 `{ output, title?, metadata? }`。
+Runner modules 在 container 内实现 model-facing tools。导出 `createRunnerToolpack(context)` 或 default factory。返回 direct tool map 或 `{ tools: { ... } }`。Manifest 中声明的每个 tool name 都有 handler。
 
 ```js
 export function createRunnerToolpack(context) {
   return {
     tools: {
-      "review.ready": async (input) => {
-        await context.recordSignal({
-          kind: "review.ready",
-          targetAgent: "pm",
-          priority: "P1",
-          payload: { summary: input.summary },
-        });
-        return { output: "PM notified." };
+      "review.summarize": async (input) => {
+        await context.callSupport("review.summarize", input);
+        return { output: `Review summary recorded: ${input.summary}` };
       },
     },
   };
 }
 ```
 
-Runner context 字段包括 `project`、`agentId`、`activationId`、`workspace`、`toolpackId`、`callSupport(tool, input)` 和 `recordSignal(signal)`。
+Runner handler input 是 model-provided JSON。Runner handler output 是 `{ output, title?, metadata? }`。
 
-`callSupport` 会调用同一个 toolpack 的 controller module；controller 会先验证 token、activation ownership、toolpack membership 和 agent allowlist。
+Runner context fields:
+
+| Field | Description |
+|-------|-------------|
+| `project` | Project id。 |
+| `agentId` | Current agent id。 |
+| `activationId` | Current activation id。 |
+| `workspace` | Container workspace path。 |
+| `toolpackId` | Current toolpack id。 |
+| `callSupport(tool, input)` | 调用该 toolpack 的 controller module。 |
+| `recordSignal(signal)` | 通过 Suzumio support routes 记录 pending 或 closed signal。 |
 
 ## Controller Module
 
-Controller module 为需要项目状态的工具提供 support。导出 `createControllerToolpack(context)` 或 default factory。返回值可以是 `{ support(tool, input) { ... } }`、`{ tools: { ... } }` 或直接的 handler map。Controller handler 返回 `{ output, title?, metadata? }`。
+Controller modules 在 Suzumio controller side 运行并访问 project state。导出 `createControllerToolpack(context)` 或 default factory。返回 `{ support(tool, input) { ... } }`、`{ tools: { ... } }` 或 direct handler map。
 
 ```js
 export function createControllerToolpack(context) {
   return {
     async support(tool, input) {
       context.recordSignal({
-        kind: "review.cached",
-        payload: { cacheKey: input.cacheKey },
-        usefulEffect: true,
+        kind: "review.summarized",
+        targetAgent: "pm",
+        priority: "P2",
+        payload: { summary: input.summary },
       });
       return { output: `Handled ${tool}.` };
     },
@@ -122,8 +143,49 @@ export function createControllerToolpack(context) {
 }
 ```
 
-Controller context 字段包括 `store`、`agent`、`activationId` 和 `recordSignal(signal)`。
+Controller handler output 是 `{ output, title?, metadata? }`。
 
-`recordSignal` 设置 `targetAgent` 或 `targetChannel` 时创建 pending schedulable work。没有 target 且 `usefulEffect: true` 时，记录 closed useful effect，不唤醒 agent。
+Controller context fields:
+
+| Field | Description |
+|-------|-------------|
+| `store` | SQLite-backed project store。 |
+| `agent` | Current agent record。 |
+| `activationId` | Current activation id。 |
+| `recordSignal(signal)` | 创建 pending schedulable work 或记录 closed useful effect。 |
+
+`callSupport` 会先验证 token、activation ownership、toolpack membership 和 agent allowlist，再调用 controller support。
+
+## Recording Signals
+
+Custom tools 用 `recordSignal` 把 tool execution 接回 scheduler。
+
+```js
+context.recordSignal({
+  kind: "review.ready",
+  targetAgent: "pm",
+  priority: "P1",
+  payload: { artifact: "/artifacts/reviewer/report.md" },
+});
+```
+
+| Signal shape | Scheduler result |
+|--------------|------------------|
+| 设置 `targetAgent` | 为该 agent 创建 pending work。 |
+| 设置 `targetChannel` | 创建 pending channel work。 |
+| 无 target 且 `usefulEffect: true` | 记录 closed useful effect，不唤醒 agent。 |
+| 无 target 且无 useful effect | 记录 audit event，不调度 work。 |
+
+## Validation Checklist
+
+| Check | Command or location |
+|-------|---------------------|
+| Project config renders. | `suzumio config render project.yaml` |
+| Toolpack path resolves under the config directory. | Rendered `tools.toolpacks` output. |
+| Manifest id matches configured id. | `suzumio.toolpack.json` and YAML. |
+| Tool name is unique across registered toolpacks. | Config render validation. |
+| Agent allowlist includes the tool. | `agents.<id>.tools` in YAML. |
+| Runner module is ESM `.mjs`. | Toolpack directory. |
+| Controller support returns `{ output }`. | Toolpack tests or a local activation. |
 
 <div class="footer">下一步：<a href="cli.html">CLI 参考</a>。</div>

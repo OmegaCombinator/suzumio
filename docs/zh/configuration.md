@@ -1,102 +1,100 @@
 ---
-title: "Suzumio YAML 配置"
-eyebrow: "YAML 配置"
-heroTitle: "用 YAML 编写多 agent 行为"
-lead: "Suzumio 项目就是 YAML 文件。好的 YAML 会定义任务、分配 agent 职责、谨慎授予工具，并告诉团队什么时候等待、汇报、审查和提交。"
+title: "Suzumio YAML Reference"
+eyebrow: "YAML Reference"
+heroTitle: "所有项目字段集中说明"
+lead: "Suzumio 项目是 YAML 文件。Resolved YAML 定义 task、agents、tool registration、scheduler policy、Docker runner、model presets、channels 和本地 observability defaults。"
 ---
 
 ## 解析流程
 
-Suzumio 把配置当作 source material，而不是可变运行时状态。运行 `suzumio init` 时，loader 会执行与 `suzumio config render` 相同的步骤，并把结果保存为 `resolved.yaml`。
+`suzumio config render path/to/project.yaml` 会打印与 `suzumio init` 存入 `resolved.yaml` 相同的 resolved config。
 
-    source YAML
-      -> quote bare @import(...) markers
-      -> substitute environment placeholders in text
-      -> parse YAML
-      -> resolve whole-field imports recursively
-      -> apply extends profiles
-      -> apply defaults and validate
-      -> write resolved.yaml and SQLite project config
+```text
+source YAML
+  -> quote bare @import(...) markers
+  -> substitute environment placeholders in text
+  -> parse YAML
+  -> resolve whole-field imports recursively
+  -> apply extends profiles
+  -> apply defaults and validate
+  -> write resolved.yaml and SQLite project config
+```
 
-`suzumio config render path/to/project.yaml` 会打印 Suzumio 实际运行的完整配置。
+Resolved config 是 runtime source material。初始化后修改原始 YAML，不会自动改变已初始化 project；需要重新 render 和 init。
 
-## 最小项目
-
-    name: demo
-    task: |
-      Demonstrate one non-preemptive activation.
-
-    backend:
-      runner:
-        mode: ai
-        model: main
-        models:
-          providers:
-            gateway:
-              type: openai-compatible
-              baseURLEnv: SUZUMIO_GATEWAY_BASE_URL
-              apiKeyEnv: SUZUMIO_GATEWAY_API_KEY
-          presets:
-            main:
-              provider: gateway
-              model: gpt-5.5
-
-    tools:
-      toolpacks:
-        - core
-
-    agents:
-      pm:
-        role: project-manager
-        displayName: Yuki
-        prompt: |
-          Handle the user request and stay concise.
-        tools:
-          - messages.send
-
-这个项目只有一个 agent。Multi-agent 项目通常包含一个 coordinator 和至少一个 specialist。
-
-## 如何设计 Multi-Agent YAML
-
-可以把 YAML 想成团队的小型作业流程。好的文件会回答五个问题。
-
-| 问题 | YAML 位置 | 好答案 |
-|------|-----------|--------|
-| 什么算成功？ | `task` | 写清最终报告应包含什么，以及哪些结论不能假装已经证明。 |
-| 谁负责协调？ | `agents.pm` 或类似 agent | 只给一个 agent `completion.submit`，让它负责等待和整合。 |
-| 谁做实际工作？ | worker agents | 给 worker 狭窄 prompt，并且只给它需要的工具。 |
-| 谁检查质量？ | critic/checker agent | 给它审查指令，并要求 ACCEPT/REVISE 这类明确 verdict。 |
-| 证据如何共享？ | `shell.exec` 和 `/artifacts/<agent-id>` | 告诉会用工具的 agent 把脚本、日志、笔记、输出写到自己的 artifact 目录，再用 message 告知路径。 |
-
-### 通常有效的 Prompt 规则
-
-- 把持久项目要求放在 `task`，不要只放进某个 agent 的 prompt。
-- 每个 agent 都写 role-specific prompt，不要把整个流程脚本塞给所有人。
-- 告诉 PM：发出的请求在收到回复或明确作废前都算 outstanding。
-- 告诉 worker：先发送有用结果；如果已经汇报完、只是等待下一步，就调用 `coordination.wait_for_signal` 并设置 `notifyPm:false`。
-- 只把 `completion.submit` 给最终负责判断是否完成的 agent。
-- 只把 `shell.exec` 给需要运行代码或写文件的 agent。
-
-## 模式 1：PM + 两个 Worker + Critic
-
-模式范围：证明、研究摘要、设计评审，以及需要比较独立尝试的任务。
+## 最小结构
 
 ```yaml
-name: reviewed-research
+name: demo
 task: |
-  Produce a conservative research note. Separate checked facts,
-  plausible ideas, failed attempts, and remaining gaps.
+  Demonstrate one non-preemptive activation.
+
+backend:
+  runner:
+    mode: ai
+    model: main
+    models:
+      providers:
+        gateway:
+          type: openai-compatible
+          baseURLEnv: SUZUMIO_GATEWAY_BASE_URL
+          apiKeyEnv: SUZUMIO_GATEWAY_API_KEY
+      presets:
+        main:
+          provider: gateway
+          model: gpt-5.5
 
 tools:
-  toolpacks: [core, shell, web]
+  toolpacks:
+    - core
 
 agents:
   pm:
-    role: research-coordinator
+    role: project-manager
+    displayName: Yuki
     prompt: |
-      Delegate substantive work to the workers. Track outstanding requests.
-      Send candidate conclusions to critic before submitting. If waiting for
-      requested replies, call coordination.wait_for_signal.
+      Handle the user request and stay concise.
+    tools:
+      - messages.send
+      - coordination.wait_for_signal
+      - completion.submit
+```
+
+## 顶层字段
+
+| 字段 | 必填 | 默认值 | 说明 |
+|------|------|--------|------|
+| `name` | 是 | 无 | Project id，也是 `SUZUMIO_ROOT` 下的 runtime directory name。 |
+| `task` | 是 | 无 | 持久 task statement，会渲染进第一次 activation prompt，并通过 agent history 延续。 |
+| `agents` | 是 | 无 | Agent id 到 agent config 的 map。至少需要一个 agent。 |
+| `tools` | 否 | `toolpacks: [core, web]` | Project toolpack registration。Agent 仍需要 per-agent tool allowlist。 |
+| `scheduler` | 否 | Signal scheduler defaults | Signal delivery、nudges 和 quiet monitor 设置。 |
+| `communication` | 否 | Coordinator `pm`，不限制 coordinator-only | 渲染进 activation prompt 的 communication policy。 |
+| `backend` | 否 | Docker chat runner defaults | Docker image、controller URL、mounts、proxy、AI runner 和 model registry。 |
+| `channels` | 否 | `#project`, `#blocked` | Channel messages 允许使用的 channel names。 |
+| `extends` | 否 | 无 | 在 local fields 前合并的 profile object 或 profile object list。 |
+| `observability` | 否 | HTTP/WebUI enabled on `127.0.0.1:39400` | YAML 中记录的 server defaults。实际 bind address 由 CLI flags 控制。 |
+
+## `name` 和 `task`
+
+```yaml
+name: theorem-search
+task: |
+  Produce a concise report.
+  Separate proven facts, experiments, failed attempts, and remaining gaps.
+```
+
+`name` 是 CLI commands 使用的 project id，也是 `SUZUMIO_ROOT` 下的目录名。`task` 会渲染进每个 agent 的第一次 activation prompt。
+
+## `agents`
+
+```yaml
+agents:
+  pm:
+    role: project-manager
+    displayName: Yuki
+    prompt: @import(prompts/pm.md)
+    model: pm-main
     tools:
       - messages.send
       - coordination.wait_for_signal
@@ -106,557 +104,358 @@ agents:
     role: researcher
     count: 2
     names: [Akari, Ren]
-    prompt: |
-      Work independently on the request you receive. Send pm your best result,
-      including assumptions, uncertainty, and artifact paths. If you already
-      reported and are waiting, call coordination.wait_for_signal with notifyPm:false.
+    prompt: @import(prompts/worker.md)
+    model: worker-main
     tools:
       - messages.send
       - coordination.wait_for_signal
       - shell.exec
-      - web.fetch
-
-  critic:
-    role: reviewer
-    displayName: Mio
-    prompt: |
-      Review claims for unsupported leaps. Send pm ACCEPT, ACCEPT-with-edits,
-      or REVISE, with the smallest concrete issue to fix.
-    tools:
-      - messages.send
-      - coordination.wait_for_signal
+    mounts:
+      - source: ./reference
+        target: /mnt/reference
+        readonly: true
+    env:
+      EXPERIMENT_MODE: quick
 ```
 
-角色分工结果：
+| 字段 | 默认值 | 说明 |
+|------|--------|------|
+| `role` | Agent id | 随 agent 保存的人类可读 role。 |
+| `displayName` | Agent id | 人类可读 display name。 |
+| `names` | 无 | Counted agents 的可选名字，按 index 分配。 |
+| `count` | 无 | 将一个 config entry 展开为 `worker-1`、`worker-2` 等编号 agents。 |
+| `prompt` | Empty string | 每个 activation prompt 中包含的 agent instructions。 |
+| `model` | `backend.runner.model` | 该 agent 使用的 model preset。 |
+| `tools` | Empty list | Per-agent model-visible tool allowlist。支持 exact names、`namespace.*` 和 `*`。 |
+| `mounts` | Empty list | 只挂载给该 agent 的 host files 或 directories。 |
+| `env` | Empty map | 传给该 agent runner containers 的额外 environment variables。 |
+| `workspace` | Runtime default | Optional workspace override。 |
 
-- `pm` 负责提交和协调。
-- worker 可以使用工具和共享文件，但不能提交最终答案。
-- critic 默认不需要 shell；它审查文本和 artifact path。
+Counted agents 使用 generated ids。上面的例子会创建 `worker-1` 和 `worker-2`，display names 是 `Akari` 和 `Ren`。
 
-## 模式 2：Python 实验团队
-
-模式范围：带脚本、命令输出和 artifact 路径的小实验。
+## `tools`
 
 ```yaml
 tools:
-  toolpacks: [core, shell]
-
-agents:
-  pm:
-    role: experiment-lead
-    prompt: |
-      Ask the experimenter for a reproducible script and output. Do not submit
-      until the artifact path and conclusion are both in conversation history.
-    tools:
-      - messages.send
-      - coordination.wait_for_signal
-      - completion.submit
-
-  experimenter:
-    role: python-experimenter
-    prompt: |
-      Use shell.exec to write scripts and outputs under /artifacts/experimenter.
-      Keep scripts small and auditable. Send pm the path, command, output summary,
-      and limitations. Then wait with notifyPm:false.
-    tools:
-      - shell.exec
-      - messages.send
-      - coordination.wait_for_signal
+  toolpacks:
+    - core
+    - shell
+    - web
+    - path: ./toolpacks/review
+      id: review-tools
 ```
 
-Worker message 包含：
+| Entry | Registered tools |
+|-------|------------------|
+| `core` | `messages.send`, `coordination.wait_for_signal`, `completion.submit`, `file.read`, `file.write`, `file.patch` |
+| `shell` | `shell.exec` |
+| `web` | `web.fetch` |
+| Local `{ path, id }` | 该目录中 `suzumio.toolpack.json` 声明的 tools。 |
 
-```text
-Wrote /artifacts/experimenter/search.py and /artifacts/experimenter/run.log.
-Command: python3 /artifacts/experimenter/search.py
-Result: no counterexample found up to n=8.
-Limitations: brute force only, no proof beyond n=8.
-```
+`tools.toolpacks` 为 project 注册 definitions。`agents.<id>.tools` allowlist 决定模型可以看到哪些已注册 tools。内置 file tools 可以用 `file.*` 授权，也可以写 exact names，例如 `file.read` 和 `file.patch`。
 
-## 模式 3：Web Research + 保守 Summarizer
+自定义 toolpack 细节见 [Custom Tools](toolpacks.html)。
 
-模式范围：抓取来源并保持最终结论保守。
-
-```yaml
-tools:
-  toolpacks: [core, web]
-
-agents:
-  pm:
-    role: summary-editor
-    prompt: |
-      Ask researcher for source-backed notes. Keep claims conservative and cite
-      which statements came from fetched sources versus model memory.
-    tools:
-      - messages.send
-      - coordination.wait_for_signal
-      - completion.submit
-
-  researcher:
-    role: source-checker
-    prompt: |
-      Use web.fetch for lightweight source checks. Quote only short relevant
-      snippets and include URLs. If a source cannot be fetched, say so.
-    tools:
-      - web.fetch
-      - messages.send
-      - coordination.wait_for_signal
-```
-
-Proxy 设置可以在 YAML 中声明，也可以继承运行 Suzumio 进程的环境变量：
-
-```yaml
-backend:
-  docker:
-    network: host
-    proxy:
-      inheritEnv: true
-      rewriteLocalhost: false
-      http: ${HTTP_PROXY}
-      https: ${HTTPS_PROXY}
-```
-
-## 模式 4：Review Pipeline
-
-模式范围：code review、写作和设计任务，author 与 reviewer 分离。
-
-```yaml
-agents:
-  author:
-    role: draft-author
-    prompt: |
-      Produce the draft requested by pm. Write longer files under /artifacts/author
-      if useful, then message pm with the path.
-    tools:
-      - messages.send
-      - coordination.wait_for_signal
-      - shell.exec
-
-  reviewer:
-    role: reviewer
-    prompt: |
-      Review the draft. Prioritize concrete bugs, missing evidence, and unclear
-      claims. Send pm a verdict and minimal required edits.
-    tools:
-      - messages.send
-      - coordination.wait_for_signal
-
-  pm:
-    role: editor
-    prompt: |
-      Route the request to author, send the draft to reviewer, and submit only
-      after review is incorporated or explicitly rejected with reason.
-    tools:
-      - messages.send
-      - coordination.wait_for_signal
-      - completion.submit
-```
-
-## 模式 5：Counted Agents
-
-`count` 会把一个角色展开成多个可独立寻址的 agents。
-
-```yaml
-agents:
-  solver:
-    role: proof-worker
-    count: 3
-    names: [Akari, Ren, Sora]
-    prompt: |
-      Try an independent route. Do not coordinate with other solvers unless pm asks.
-      Report your route, exact assumptions, and smallest gap.
-    tools:
-      - messages.send
-      - coordination.wait_for_signal
-```
-
-这会创建 `solver-1`、`solver-2` 和 `solver-3`。第一次 activation prompt 会包含这些生成 id，可作为 direct message 的精确 recipient。
-
-## 完整结构
-
-下面的例子展示主要字段。大型项目通常会把 task、长 prompt 和可复用 backend 设置拆到 import 或 profile 中。
-
-    name: research-demo
-    task: @import(tasks/main.md)
-
-    channels:
-      - "#project"
-      - "#blocked"
-      - "#reviews"
-
-    backend:
-      kind: docker-chat
-      image: suzumio-runner:dev
-      controllerUrl: http://host.docker.internal:39400
-      docker:
-        network: bridge
-      runner:
-        mode: ai
-        model: worker-with-fallback
-        models:
-          providers:
-            gateway:
-              type: openai-compatible
-              baseURLEnv: SUZUMIO_GATEWAY_BASE_URL
-              apiKeyEnv: SUZUMIO_GATEWAY_API_KEY
-              timeoutMs: 300000
-          presets:
-            worker-main:
-              provider: gateway
-              model: gpt-5.5
-              toolChoice: auto
-              maxOutputTokens: 2000
-            pm-main:
-              provider: gateway
-              model: gpt-5.5
-              toolChoice: auto
-              maxOutputTokens: 2000
-            worker-with-fallback:
-              model-list:
-                - worker-main
-                - pm-main
-
-    tools:
-      toolpacks:
-        - core
-        - shell
-        - web
-
-    agents:
-      pm:
-        role: project-manager
-        displayName: Yuki
-        prompt: @import(prompts/pm.md)
-        model: pm-main
-        tools:
-          - messages.send
-          - coordination.wait_for_signal
-          - completion.submit
-      worker:
-        role: worker
-        count: 2
-        names:
-          - Akari
-          - Ren
-        prompt: @import(prompts/worker.md)
-        model: worker-with-fallback
-        tools:
-          - messages.send
-          - shell.exec
-          - web.fetch
-
-## 顶层字段
-
-| 字段            | 是否必需 | 说明                                                                                          |
-|-----------------|----------|-----------------------------------------------------------------------------------------------|
-| `name`          | 是       | `SUZUMIO_ROOT` 下的项目 id 和运行目录名。                                                     |
-| `task`          | 是       | 持久任务描述，会渲染进第一次 activation prompt，并通过 agent history 延续。                    |
-| `agents`        | 是       | Agent id 到 agent config 的映射。至少需要一个 agent。                                         |
-| `tools`         | 否       | 项目的 toolpack 注册。默认包含 `core` 和 `web`；`shell` 添加容器内 bash。详见 [Toolpacks](toolpacks.html)。 |
-| `extends`       | 否       | 一个 profile object 或 profile object 列表，在本地字段之前合并。                              |
-| `scheduler`     | 否       | Scheduler 选项。默认覆盖 signal delivery、`P0` interrupt、`P1` tool-boundary delivery 和 `P2` activation delivery。 |
-| `backend`       | 否       | Docker runner image、controller support URL、Docker options 和 model runner 设置。            |
-| `channels`      | 否       | 允许的频道名。默认包含 `#project` 和 `#blocked`。                                             |
-| `observability` | 否       | 文档层面的 HTTP/WebUI 默认值。实际 server bind 地址仍由 CLI flags 控制。                      |
-
-## YAML 写法约定
-
-Suzumio 使用普通 YAML map、array、scalar 和 block string。长 task 与 prompt 通常使用 block string 或导入文件。
-
-| 写法           | 用途                                         | 例子              |
-|----------------|----------------------------------------------|-------------------|
-| Block scalar   | 多行 task 和 prompt。                        | `task: |`         |
-| Quoted strings | Channel 名称和包含特殊符号的字符串。         | `"#project"`      |
-| Arrays         | Tools、channels、profile lists。             | `- messages.send` |
-| Maps           | Agents、providers、presets、Docker options。 | `agents: { ... }` |
-
-    task: |
-      Write the final result as a short report.
-      Mention any assumptions and artifacts.
-
-    channels:
-      - "#project"
-      - "#blocked"
-
-## Whole-field Imports
-
-当某个字段的完整值是 `@import(path)` 时，该字段会被导入文件替换。关键点是：import marker 必须占满整个字段值。Suzumio 不支持在更大的字符串里做插值。
-
-    task: @import(tasks/main.md)
-    agents:
-      pm: @import(agents/pm.yaml)
-      worker:
-        prompt: @import(prompts/worker.md)
-
-如果导入的 YAML 或 JSON 文件包含 object，该 object 会成为 import 位置的值。如果导入 Markdown 或 text 文件，完整文本会成为 import 位置的值。
-
-| 导入文件          | Suzumio 如何读取                          | 常见用途                                       |
-|-------------------|-------------------------------------------|------------------------------------------------|
-| `.yaml` 或 `.yml` | 作为 YAML 解析，并继续解析其中的 import。 | Agents、backend profiles、scheduler profiles。 |
-| `.json`           | 作为 JSON 解析，并继续解析其中的 import。 | 生成的 model preset maps 或 tool lists。       |
-| 其他扩展名        | 作为 UTF-8 原始文本导入。                 | Tasks、prompts、report templates。             |
-
-### Import 路径
-
-Import 路径相对包含该 import 的文件解析，而不是相对进程工作目录解析。嵌套 profile 可以稳定地导入自己旁边的 fragment。
-
-    # configs/project.yaml
-    agents:
-      pm: @import(agents/pm.yaml)
-
-    # configs/agents/pm.yaml
-    role: project-manager
-    prompt: @import(../prompts/pm.md)
-
-### 有效和无效写法
-
-| 写法                                       | 结果                                               |
-|--------------------------------------------|----------------------------------------------------|
-| `prompt: @import(prompts/pm.md)`           | 有效。字段值会被文件内容替换。                     |
-| `pm: @import(agents/pm.yaml)`              | 有效。导入对象成为 `agents.pm`。                   |
-| `prompt: "Read this: @import(x.md)"`       | 不会作为 import 处理。它只是普通字符串；不做插值。 |
-| `url: @import(https://example.com/x.yaml)` | 拒绝。禁用 HTTP import。                           |
-
-### 嵌套对象例子
-
-如果 `agents/pm.yaml` 内容如下，导入到 `agents.pm` 时会完整保留这个嵌套结构。
-
-    # agents/pm.yaml
-    role: project-manager
-    prompt: @import(../prompts/pm.md)
-    tools:
-      - messages.send
-      - completion.submit
-
-    # resolved shape
-    agents:
-      pm:
-        role: project-manager
-        prompt: "...contents of prompts/pm.md..."
-        tools:
-          - messages.send
-          - completion.submit
-
-Suzumio 会拒绝循环 import 和过深的 import 链。
-
-## Extends 和合并规则
-
-`extends` 用来复用 profile。每个 entry 必须解析成 object。Suzumio 会按顺序合并 profile，然后把当前文件合并到最上层。
-
-    extends:
-      - @import(profiles/base.yaml)
-      - @import(profiles/ai.yaml)
-
-    name: theorem-project
-    task: @import(tasks/theorem.md)
-
-    agents:
-      worker:
-        count: 3
-
-| 合并情况            | 行为                            |
-|---------------------|---------------------------------|
-| Object 合并 object  | 递归 deep-merge。               |
-| Array 合并 array    | 后面的 array 替换前面的 array。 |
-| Scalar 合并任意值   | 后面的 scalar 替换前面的值。    |
-| 当前文件 vs profile | 当前文件胜出。                  |
-
-### Profile 合并例子
-
-    # profiles/base.yaml
-    backend:
-      image: suzumio-runner:dev
-      runner:
-        mode: ai
-    channels:
-      - "#project"
-      - "#blocked"
-
-    # project.yaml
-    extends:
-      - @import(profiles/base.yaml)
-    name: demo
-    task: @import(tasks/demo.md)
-    backend:
-      runner:
-        mode: ai
-    channels:
-      - "#project"
-      - "#reviews"
-
-    # important resolved effects
-    backend.image: suzumio-runner:dev
-    backend.runner.mode: ai
-    channels: ["#project", "#reviews"]
-
-Resolved result：profile 中的 `backend.image` 保留，本地 `backend.runner.mode` 覆盖，`channels` 整体替换而不是 append。
-
-## Scheduler Defaults
-
-默认 scheduler 是 signal-driven：idle agent 会因 pending signal 醒来，`P0` 会中断并重启 running agent，`P1` 会尽量在下一次 tool boundary 投递，`P2` 等待下一次 activation。`scheduler.maxSignalsPerActivation` 默认值是 20。
-
-`scheduler.quietAgentMonitor` 会在配置的 agent 保持 `quiet` 超过指定时间后发送普通 `messages.send` 通知。不会创建真实 monitor agent。
+## `scheduler`
 
 ```yaml
 scheduler:
+  kind: nonpreemptive-signals
+  maxSignalsPerActivation: 20
+  noEffectNudge:
+    enabled: true
+    priority: P2
+    maxConsecutive: 0
+    initialDelayMs: 30000
+    backoffFactor: 2
+    maxDelayMs: 300000
+  allQuietNudge:
+    enabled: false
+    targetAgent: pm
+    priority: P2
+    cooldownMs: 300000
   quietAgentMonitor:
     enabled: true
     rules:
-      - id: formalizer-watch
-        agent: formalizer-1
+      - id: worker-watch
+        agent: worker-1
         recipient: pm
         sender: monitor
         priority: P2
-        initialDelayMs: 1800000   # quiet 30 分钟后首次提醒
-        repeatDelayMs: 900000     # 仍然 quiet 时每 15 分钟重复提醒
-        message: |
-          {{agent}} has been quiet for {{quietMinutes}} minutes.
-          Please check whether it needs a follow-up assignment.
+        initialDelayMs: 1800000
+        repeatDelayMs: 900000
+        message: "{{agent}} has been quiet for {{quietMinutes}} minutes."
 ```
 
-`message` 模板支持 `{{project}}`、`{{agent}}`、`{{recipient}}`、`{{sender}}`、`{{quietMs}}`、`{{quietMinutes}}`、`{{quietSince}}`、`{{now}}`、`{{attempt}}`、`{{initialDelayMs}}`、`{{repeatDelayMs}}` 和 `{{ruleId}}`。
+| 字段 | 默认值 | 说明 |
+|------|--------|------|
+| `kind` | `nonpreemptive-signals` | Signal-driven scheduler。`nonpreemptive-mailbox` 作为 alias 接受。 |
+| `maxSignalsPerActivation` | `20` | Activation start 时最多包含的 pending signals 数量。 |
+| `noEffectNudge.enabled` | `true` | Activation 完成但没有 useful effect 时创建 follow-up nudge。 |
+| `noEffectNudge.priority` | `P2` | No-effect nudge signal priority。 |
+| `noEffectNudge.maxConsecutive` | `0` | 连续 no-effect activations 后最多 nudge 次数。`0` 不重复 nudge。 |
+| `noEffectNudge.initialDelayMs` | `30000` | 初始 nudge delay。 |
+| `noEffectNudge.backoffFactor` | `2` | Exponential backoff multiplier。 |
+| `noEffectNudge.maxDelayMs` | `300000` | 最大 nudge delay。 |
+| `allQuietNudge.enabled` | `false` | 所有 agents quiet 且无 pending signals 时创建 scheduler signal。 |
+| `allQuietNudge.targetAgent` | `pm` | 接收 all-quiet nudge 的 agent。 |
+| `allQuietNudge.priority` | `P2` | All-quiet nudge signal priority。 |
+| `allQuietNudge.cooldownMs` | `300000` | All-quiet nudges 最小间隔。 |
+| `allQuietNudge.message` | Built-in text | 渲染进 scheduler signal 的 message。 |
+| `quietAgentMonitor.enabled` | `false` | 启用 quiet-agent monitor rules。 |
+| `quietAgentMonitor.rules` | Empty list | Quiet-agent monitor rule list。 |
 
-Suzumio 会在 SQLite 中保存每个 agent 的模型历史。每次 activation prompt、可见 assistant 输出、tool call、tool result 和 compaction marker 都会 append 到 history。Runner 下一次调用模型时会把 active history 重新传给模型。当 provider 因 context window 超限而拒绝请求时，旧 history 会被总结成 compaction message，compact 前的完整 raw 范围会本地归档，然后 runner retry 当前 activation。
+Quiet-agent monitor rule 字段：
 
-## Backend Config
+| 字段 | 默认值 | 说明 |
+|------|--------|------|
+| `id` | Derived from index, agent, sender, recipient | 稳定 rule key，用于 dedupe。 |
+| `enabled` | `true` | 启用该 rule。 |
+| `agent` | Required | 监控的 agent id，只在它是 `quiet` 时触发。 |
+| `recipient` | `pm` | Message recipient。必须是 `user` 或 existing agent。 |
+| `sender` | `monitor` | Virtual message sender。不会创建真实 sender agent。 |
+| `priority` | `P2` | Message priority。 |
+| `initialDelayMs` | `1800000` | 首次 message 前的 quiet duration。 |
+| `repeatDelayMs` | `900000` | 同一个 quiet state 继续存在时的 repeat interval。 |
+| `message` | Built-in text | Monitor message template body。 |
 
-    backend:
-      kind: docker-chat
-      image: suzumio-runner:dev
-      controllerUrl: http://host.docker.internal:39400
-      docker:
-        network: bridge
-        proxy:
-          inheritEnv: true
-          https: ${HTTPS_PROXY}
-          http: ${HTTP_PROXY}
-          all: ${ALL_PROXY}
-          noProxy: ${NO_PROXY}
-        mounts:
-          - source: ./reference
-            target: /mnt/reference
-            readonly: true
-            description: Project reference material for agents.
-      runner:
-        mode: ai
+Monitor template 支持 `{{project}}`、`{{agent}}`、`{{recipient}}`、`{{sender}}`、`{{quietMs}}`、`{{quietMinutes}}`、`{{quietSince}}`、`{{now}}`、`{{attempt}}`、`{{initialDelayMs}}`、`{{repeatDelayMs}}` 和 `{{ruleId}}`。
 
-| 字段             | 说明                                                                                                     |
-|------------------|----------------------------------------------------------------------------------------------------------|
-| `kind`           | Backend implementation。当前 backend 基于 Docker。                                                       |
-| `image`          | 每个 activation container 使用的 Docker image。                                                          |
-| `controllerUrl`  | 容器访问 Suzumio support routes 并提交 activation output 的 URL。本地 Docker 通常使用 `host.docker.internal`。 |
-| `docker.network` | 可选 Docker network mode。                                                                               |
-| `docker.proxy`   | 可选代理配置，会传入 runner 容器。显式配置会覆盖继承的环境变量。                                          |
-| `docker.mounts`  | 显式挂载到每个 activation container 的 host 文件或目录。Source 会在 render 时相对顶层项目配置解析。      |
-| `runner.mode`    | 只支持 `ai`。                                                                                            |
+## `communication`
 
-`docker.proxy` 字段包括 `inheritEnv`、`http`、`https`、`all`、`noProxy` 和 `rewriteLocalhost`。默认情况下，Suzumio 会继承 controller 进程中的标准代理环境变量，并在 bridge-network 容器中把 loopback 代理 host 改写为 `host.docker.internal`。Linux 上的 `network: host` 会让 host-loopback proxy URL 在容器中直接可达。
+```yaml
+communication:
+  coordinatorAgent: pm
+  restrictNonCoordinatorToCoordinator: true
+  nonCoordinatorMaxPriority: P2
+  pmRoutineVerifierPriority: P2
+```
 
-## AI Runner Config
+| 字段 | 默认值 | 说明 |
+|------|--------|------|
+| `coordinatorAgent` | `pm` | Rendered prompt 中的 coordinator agent。 |
+| `restrictNonCoordinatorToCoordinator` | `false` | Prompt contract：non-coordinator 只 message coordinator。 |
+| `nonCoordinatorMaxPriority` | `P2` | Non-coordinator routine messages 的 prompt-level max priority。 |
+| `pmRoutineVerifierPriority` | `P2` | PM routine review/delegation messages 的 prompt-level default。 |
 
-    backend:
-      runner:
-        mode: ai
-        model: worker-with-fallback
-        models:
-          providers:
-            gateway:
-              type: openai-compatible
-              baseURLEnv: SUZUMIO_GATEWAY_BASE_URL
-              apiKeyEnv: SUZUMIO_GATEWAY_API_KEY
-              timeoutMs: 300000
-          presets:
-            worker-main:
-              provider: gateway
-              model: gpt-5.5
-              reasoningEffort: high
-              toolChoice: auto
-              maxOutputTokens: 2000
-            pm-main:
-              provider: gateway
-              model: gpt-5.5
-            worker-with-fallback:
-              model-list:
-                - worker-main
-                - pm-main
+该 section 影响 activation instructions。Tool authorization 仍由 `agents.<id>.tools` 决定。
 
-Model 选择是显式的。`backend.runner.model` 设置项目级选择；`agents.*.model` 设置 per-agent 选择。带 `model-list` 的 preset 会展开成有序 fallback 列表，runner 会按顺序尝试其中的 concrete preset。多数配置里，`model` 同时也是 provider-facing model id。`apiModel` 用来分离本地 preset 名称和 provider-facing model id。
+## `backend`
 
-Agent history compaction 是 Docker chat runner 的一部分，不暴露成用户配置面。Model preset 的 `contextLimit` 默认值是 `260000`；它是模型配置 metadata，不会主动触发 compaction。Runner 只在 provider 报告 context-window overflow 时 compact。
+```yaml
+backend:
+  kind: docker-chat
+  image: suzumio-runner:dev
+  controllerUrl: http://host.docker.internal:39400
+  docker:
+    network: bridge
+    memory: 4g
+    cpus: 2
+    proxy:
+      inheritEnv: true
+      rewriteLocalhost: true
+      https: ${HTTPS_PROXY}
+      http: ${HTTP_PROXY}
+      all: ${ALL_PROXY}
+      noProxy: ${NO_PROXY}
+    mounts:
+      - source: ./reference
+        target: /mnt/reference
+        readonly: true
+        description: Project reference material.
+  runner:
+    mode: ai
+    model: worker-main
+```
 
-<div class="notice danger">
+| 字段 | 默认值 | 说明 |
+|------|--------|------|
+| `kind` | `docker-chat` | 当前 backend implementation。 |
+| `image` | `suzumio-runner:dev` | Activation containers 使用的 Docker image。 |
+| `controllerUrl` | `http://host.docker.internal:39400` | Containers 调用 Suzumio support routes 和提交 output 的 URL。 |
+| `docker.network` | None | Docker network mode。Linux host networking 使用 `host`。 |
+| `docker.memory` | None | Optional Docker memory limit。 |
+| `docker.cpus` | None | Optional Docker CPU limit。 |
+| `docker.mounts` | Empty list | 挂载到每个 activation container 的 host files 或 directories。 |
+| `docker.proxy` | Inherit env, rewrite localhost | 传入 runner containers 的 proxy config。 |
+| `runner` | `mode: ai` | AI runner config。 |
 
-提交到仓库的示例使用 `baseURLEnv` 和 `apiKeyEnv`。真实 endpoint 和 key 保留在环境变量中。
+Mount 字段：
 
-</div>
+| 字段 | 默认值 | 说明 |
+|------|--------|------|
+| `source` | Required | Host path。Relative paths 在 render 时相对 top-level project YAML 解析。 |
+| `target` | Required | Container path。使用 `/mnt/reference` 这类 non-reserved paths。 |
+| `readonly` | `true` | Mount access。 |
+| `description` | None | 渲染进 activation prompts 的描述。 |
 
-## Toolpacks
+Proxy 字段包括 `inheritEnv`、`http`、`https`、`all`、`noProxy` 和 `rewriteLocalhost`。Bridge networking 下，`rewriteLocalhost: true` 会把 loopback proxy hosts 改写为 `host.docker.internal`。`network: host` 下 host-loopback proxy URL 在容器中直接可达。
 
-    tools:
-      toolpacks:
-        - core
-        - shell
-        - web
+## `backend.runner` 和 Models
 
-| Toolpack    | 注册工具                                                                                                        | 运行位置                                  |
-|-------------|-----------------------------------------------------------------------------------------------------------------|-------------------------------------------|
-| `core`      | `messages.send`, `coordination.wait_for_signal`, `completion.submit`, `file.read`, `file.write`, `file.patch`   | Runner container + Suzumio support API    |
-| `shell`     | `shell.exec`                                                                                                    | Docker runner container                   |
-| `web`       | `web.fetch`                                                                                                     | Docker runner container                   |
+```yaml
+backend:
+  runner:
+    mode: ai
+    model: worker-with-fallback
+    maxIterations: 20
+    maxToolCalls: 80
+    finalPrompt: "Return a concise final activation summary."
+    models:
+      providers:
+        gateway:
+          type: openai-compatible
+          baseURLEnv: SUZUMIO_GATEWAY_BASE_URL
+          apiKeyEnv: SUZUMIO_GATEWAY_API_KEY
+          timeoutMs: 300000
+          chunkTimeoutMs: 60000
+          headers: {}
+          options: {}
+      presets:
+        worker-main:
+          provider: gateway
+          model: gpt-5.5
+          apiModel: gpt-5.5
+          reasoningEffort: high
+          temperature: 0.2
+          topP: 1
+          maxOutputTokens: 8000
+          contextLimit: 260000
+          toolChoice: auto
+        worker-with-fallback:
+          model-list:
+            - worker-main
+            - backup-main
+```
 
-`tools.toolpacks` 注册项目 tool definitions。`agents.<id>.tools` 控制 agent 可以看到哪些已注册工具。内置 file tools 可以授权 `file.*`，也可以写精确名称如 `file.read`、`file.patch`。
+Runner 字段：
 
-Local toolpacks、manifest 字段、runner module、controller module 和 file/artifact 行为见 [Toolpacks](toolpacks.html)。
+| 字段 | 默认值 | 说明 |
+|------|--------|------|
+| `mode` | `ai` | 只支持 `ai`。 |
+| `model` | None | Project-level model preset name。Agents 可以用 `agents.<id>.model` 覆盖。 |
+| `maxIterations` | Provider/runtime default | Optional model loop iterations cap。 |
+| `maxToolCalls` | Provider/runtime default | Optional tool calls cap for one activation。 |
+| `finalPrompt` | Runtime default | Optional final instruction for activation output。 |
+| `models.providers` | Empty map | Provider registry。 |
+| `models.presets` | Empty map | Named model presets 和 fallback lists。 |
 
-## Agent Config
+Provider 字段：
 
-    agents:
-      worker:
-        role: worker
-        count: 2
-        names:
-          - Akari
-          - Ren
-        prompt: @import(prompts/worker.md)
-        model: worker-with-fallback
-        tools:
-          - messages.send
-          - shell.exec
-          - web.fetch
-        mounts:
-          - source: ./worker-notes
-            target: /mnt/worker-notes
-            readonly: true
+| 字段 | 默认值 | 说明 |
+|------|--------|------|
+| `type` | Required | `openai`、`anthropic`、`google` 或 `openai-compatible`。 |
+| `apiKey` | None | Inline API key。Committed examples 不写真实值。 |
+| `apiKeyEnv` | None | API key environment variable name。 |
+| `baseURL` | None | Inline provider base URL。私有 endpoint 不写入 committed examples。 |
+| `baseURLEnv` | None | Provider base URL environment variable name。 |
+| `headers` | `{}` | Extra provider headers。 |
+| `timeoutMs` | Provider default | Total request timeout，或 `false`。 |
+| `chunkTimeoutMs` | Provider default | Streaming chunk timeout。 |
+| `options` | `{}` | Provider-specific options。 |
 
-| 字段          | 说明                                                                                                |
-|---------------|-----------------------------------------------------------------------------------------------------|
-| `role`        | 随 agent 保存的人类可读角色。                                                                       |
-| `displayName` | 单个 agent 的人类可读名字，或 counted agents 的 fallback 名字。                                     |
-| `names`       | Counted agents 的可选名字列表，按 index 分配。                                                      |
-| `count`       | 将一个配置项展开为 `worker-1`、`worker-2` 等编号 agents。                                           |
-| `prompt`      | 每个 activation prompt 中包含的 agent instructions，通常从 Markdown 导入。                          |
-| `model`       | 该 agent 的显式 model preset 选择。若省略，则必须设置 `backend.runner.model`。                      |
-| `tools`       | 该 agent 允许调用的工具名。支持精确名称、`namespace.*` 和 `*`，并且工具也必须由项目 toolpack 注册。 |
-| `mounts`      | 只挂载给这个 agent 的 host 文件或目录。                                                             |
-| `env`         | 传给 runner containers 的附加环境变量。                                                             |
+Preset 字段：
 
-`tools.toolpacks` 只是为项目注册可用 tool definitions；`agents.<id>.tools` 才是每个 agent 的 allowlist。内置 file tools 可以授权 `file.*`，也可以写精确名称如 `file.read`、`file.patch`。如果 agent allowlist 中写了某个工具，但没有任何已注册 toolpack 提供它，调用仍会失败。
+| 字段 | 默认值 | 说明 |
+|------|--------|------|
+| `provider` | Required for concrete preset | Provider registry key。 |
+| `model` | Required for concrete preset | Local and provider-facing model id，除非设置 `apiModel`。 |
+| `apiModel` | None | 与 local preset model 不同的 provider-facing model id。 |
+| `model-list` | None | Ordered fallback list。不能与 concrete provider/model fields 同时使用。 |
+| `reasoningEffort` | None | Provider-facing reasoning effort。 |
+| `temperature` | None | Provider-facing temperature。 |
+| `topP` | None | Provider-facing top-p。 |
+| `topK` | None | Provider-facing top-k。 |
+| `maxOutputTokens` | None | Provider-facing output token cap。 |
+| `contextLimit` | `260000` | Context overflow handling metadata。 |
+| `toolChoice` | None | `auto`、`required` 或 `none`。 |
+| `providerOptions` | `{}` | Preset-level provider-specific options。 |
+| `headers` | `{}` | Preset-level headers。 |
 
-## Channels
+Committed examples 使用 `baseURLEnv` 和 `apiKeyEnv`。真实 provider endpoints 和 keys 保留在环境变量中。
 
-    channels:
-      - "#project"
-      - "#blocked"
-      - "#reviews"
+## `channels`
 
-发送到未声明 channel 的消息会失败。
+```yaml
+channels:
+  - "#project"
+  - "#blocked"
+  - "#reviews"
+```
 
-## 验证流程
+发送到未声明 channel 的 message 会失败。默认 channels 是 `#project` 和 `#blocked`。
 
-    suzumio config render path/to/project.yaml
-    suzumio init path/to/project.yaml
-    suzumio status project-name
+## `observability`
 
-Rendered output 会显示 array replacement、继承来的 model 设置，以及 provider endpoint/key 环境变量名。
+```yaml
+observability:
+  http:
+    enabled: true
+    host: 127.0.0.1
+    port: 39400
+  webui:
+    enabled: true
+```
 
-<div class="footer">下一步：<a href="toolpacks.html">Toolpacks</a>。</div>
+这些值在 YAML 中记录 intended server defaults。实际 running process 的 bind address 和 port 由 `suzumio serve` flags 控制。
+
+## YAML Conventions
+
+| Pattern | Typical value | Example |
+|---------|---------------|---------|
+| Block scalar | Multi-line task 和 prompt text。 | `task: |` |
+| Quoted strings | Channel names 和 punctuation-heavy strings。 | `"#project"` |
+| Arrays | Tools、channels、profiles。 | `- messages.send` |
+| Maps | Agents、providers、presets、Docker options。 | `agents: { ... }` |
+
+## Whole-Field Imports
+
+完整字段值为 `@import(path)` 时，该字段会被 imported file 替换。Import marker 必须占满整个字段值。
+
+```yaml
+task: @import(tasks/main.md)
+agents:
+  pm: @import(agents/pm.yaml)
+  worker:
+    prompt: @import(prompts/worker.md)
+```
+
+| Imported file | Resolution |
+|---------------|------------|
+| `.yaml` 或 `.yml` | 作为 YAML 解析，然后继续解析其中的 imports。 |
+| `.json` | 作为 JSON 解析，然后继续解析其中的 imports。 |
+| 其他扩展名 | 作为 raw UTF-8 text 导入。 |
+
+Import path 相对包含该 import 的文件解析。HTTP imports 会被拒绝。Import loops 和过深 import depth 会被拒绝。
+
+## `extends` 和 Merge Rules
+
+```yaml
+extends:
+  - @import(profiles/base.yaml)
+  - @import(profiles/ai.yaml)
+
+name: theorem-project
+task: @import(tasks/theorem.md)
+```
+
+每个 `extends` entry 都解析成 object。Suzumio 从前到后合并 profile objects，再把 local file 合并到最上层。
+
+| Merge case | Behavior |
+|------------|----------|
+| Object into object | Recursively deep-merged。 |
+| Array into array | Later array replaces earlier array。 |
+| Scalar into any value | Later scalar replaces earlier value。 |
+| Local file vs profile | Local file wins。 |
+
+## Validation Workflow
+
+```bash
+suzumio config render path/to/project.yaml
+suzumio init path/to/project.yaml
+suzumio status project-name
+```
+
+Rendered output 会显示 defaults、imports、array replacement、inherited model settings、provider endpoint/key environment-variable names，以及 normalized local toolpack paths。
+
+<div class="footer">下一步：<a href="quickstart.html">初始化与运行</a>。</div>

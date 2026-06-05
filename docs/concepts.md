@@ -1,156 +1,187 @@
 ---
-title: "Suzumio Core Concepts"
-eyebrow: "Core Concepts"
-heroTitle: "How Suzumio thinks about work"
-lead: "Suzumio models a project as durable messages, signals, per-agent histories, and isolated activations. The scheduler starts work only when an agent has pending signals, with explicit priority rules for interrupting or deferring work."
+title: "Suzumio Signal Scheduling"
+eyebrow: "Signal Scheduling"
+heroTitle: "How signals drive every activation"
+lead: "Suzumio schedules agents from durable signals. Messages, waits, submissions, nudges, and custom tools all become records in SQLite, and the scheduler turns pending targeted signals into Docker activations."
 ---
 
-## Project
+## Runtime Objects
 
-A project is the durable unit of work. It has a name, task statement, resolved configuration, agent roster, channels, SQLite database, artifact directory, and event timeline.
+| Object | Runtime role |
+|--------|--------------|
+| Project | Durable unit of work with resolved YAML, agent roster, channels, SQLite database, artifacts, and event timeline. |
+| Agent | Configured participant with role, prompt, model selection, workspace, artifact directory, token, and tool allowlist. |
+| Message | Durable communication record. Direct messages target one agent or `user`; channel messages fan out to agents. |
+| Signal | Scheduler input and effect ledger. Pending targeted signals wake agents; closed signals record effects. |
+| Activation | One isolated Docker execution for one agent. The activation receives delivered signals in its prompt. |
+| Event | Append-style timeline entry for UI, audit, debugging, and replay tooling. |
 
-| Status        | Scheduling behavior               | Typical transition                  |
-|---------------|-----------------------------------|-------------------------------------|
-| `initialized` | No scheduling.                    | Created by `suzumio init`.          |
-| `running`     | Scheduler may start ready agents. | `suzumio start` or request changes. |
-| `submitted`   | Project waits for user approval.  | `completion.submit` tool.           |
-| `completed`   | No further scheduling expected.   | `suzumio approve`.                  |
-| `stopped`     | Scheduling disabled.              | `suzumio stop`.                     |
+## Project And Agent States
 
-## Agent
+| Project status | Scheduling behavior |
+|----------------|---------------------|
+| `initialized` | No automatic scheduling. |
+| `running` | Scheduler may start ready agents. |
+| `submitted` | Project waits for user approval. |
+| `completed` | Scheduling complete. |
+| `stopped` | Scheduling disabled. |
 
-An agent is a configured participant with a role, prompt, model selection, workspace, and tool allowlist. Agents do not own project state; they produce messages, tool calls, artifacts, and activation outputs through Suzumio.
+| Agent status | Scheduling behavior |
+|--------------|---------------------|
+| `quiet` | Eligible for a new activation when pending targeted signals exist. |
+| `running` | Has an active activation. `P0` can interrupt; `P1` may be injected at a tool boundary; `P2` waits. |
+| `failed` | Last activation or backend action failed. |
+| `stopped` | Agent is disabled. |
 
-| State     | Meaning                                                            |
-|-----------|--------------------------------------------------------------------|
-| `quiet`   | Idle and no pending signals.                                       |
-| `running` | A Docker activation is active. Only `P0` can interrupt and restart it. |
-| `failed`  | The last activation or backend operation failed.                         |
-| `stopped` | The agent is disabled.                                             |
+## Messages Become Signals
 
-## Message
+`messages.send` writes a message row, appends a `message.created` event, and records one or more signals.
 
-Messages are durable communication records. A message is either direct, with `recipient`, or channel-based, with `channel`. Unknown recipients and undeclared channels are rejected.
+```json
+{
+  "sender": "user",
+  "recipient": "pm",
+  "priority": "P1",
+  "body": "Start the project."
+}
+```
 
-    {
-      "sender": "user",
-      "recipient": "pm",
-      "priority": "P1",
-      "body": "Start the project."
-    }
+| Message target | Signal result |
+|----------------|---------------|
+| `recipient: "pm"` | One pending `message.created` signal for `pm`. |
+| `channel: "#reviews"` | One pending `message.created` signal for each other agent subscribed by config. |
+| `recipient: "user"` | Closed useful effect; no agent is woken. |
 
-A message creates a `message.created` signal. Direct messages to agents create one pending signal for that agent. Channel messages fan out into one pending signal per other agent. Messages to `recipient: "user"` are closed useful effects: they are visible to users but do not wake an agent.
+Unknown recipients and undeclared channels are rejected.
 
-## Signal
+## Signal Shape
 
-Signals are the scheduler input and the effect ledger. A signal with `targetAgent` and `status: "pending"` can wake that agent. A closed signal has no target and is retained for audit, useful-effect accounting, or both.
+```ts
+type SignalRecord = {
+  kind: string
+  sourceAgent?: string
+  sourceActivation?: string
+  targetAgent?: string
+  targetChannel?: string
+  priority: "P0" | "P1" | "P2"
+  status: "pending" | "delivered" | "closed"
+  usefulEffect: boolean
+  payload: Record<string, unknown>
+}
+```
 
-    type SignalRecord = {
-      kind: string
-      sourceAgent?: string
-      sourceActivation?: string
-      targetAgent?: string
-      targetChannel?: string
-      priority: "P0" | "P1" | "P2"
-      status: "pending" | "delivered" | "closed"
-      usefulEffect: boolean
-      payload: Record<string, unknown>
-    }
-
-| Status      | Meaning                                                                 |
-|-------------|-------------------------------------------------------------------------|
-| `pending`   | Waiting to be delivered to the target agent at an activation start or tool boundary. |
+| Status | Meaning |
+|--------|---------|
+| `pending` | Waiting to be delivered to a target agent at activation start or tool boundary. |
 | `delivered` | Already appended to agent history for one activation. It will not be delivered again. |
-| `closed`    | Audit or effect record that does not participate in scheduling.         |
+| `closed` | Audit or useful-effect record that does not participate in scheduling. |
 
-Targeted signals cannot be explicitly closed. To wake an agent, create a pending signal. To record an effect without waking anyone, omit the target and create a closed signal.
+To wake an agent, create a pending signal with `targetAgent`. To record an effect without waking anyone, omit `targetAgent` and `targetChannel`, then create a closed signal.
 
-## Priority
+## Priority Rules
 
-| Priority | Delivery rule                                                                 |
-|----------|-------------------------------------------------------------------------------|
-| `P0`     | Interrupt the current activation if the target is running, cancel it, and restart with the signal in agent history. |
-| `P1`     | Deliver at the next tool boundary when possible; otherwise deliver at the next activation start. |
-| `P2`     | Wait until the current activation finishes, then deliver at the next activation start. |
+| Priority | Delivery rule |
+|----------|---------------|
+| `P0` | Interrupts a running target agent. The current activation is cancelled and the agent restarts with the `P0` signal in history. |
+| `P1` | Delivered at the next tool boundary when possible. If there is no boundary, it is delivered at the next activation start. |
+| `P2` | Routine work. It waits until the current activation completes and is delivered at the next activation start. |
 
-## Useful Effect
+Default routine messages use `P2`. `P0` is reserved for human stop, destructive repository conflict, secret/safety issue, or a blocker where continuing the current activation is harmful.
 
-`usefulEffect` records external coordination work for the activation. Suzumio counts useful effects by `sourceActivation` when an activation completes.
+## Activation Start
 
-| Signal kind                         | Default useful effect | Reason                                                               |
-|-------------------------------------|-----------------------|----------------------------------------------------------------------|
-| pending signal to another agent     | Yes                   | It schedules follow-up work.                                         |
-| `message.created`                   | Yes                   | It communicates with an agent or the user.                           |
-| `completion.submitted`              | Yes                   | It hands the final report to the user.                               |
-| `coordination.wait_for_signal`      | Yes                   | It records an intentional wait state.                                |
-| `scheduler.no_effect_nudge`         | No                    | It is scheduler feedback, not agent progress.                        |
-| generic closed custom signal        | No                    | Custom tools opt in with `usefulEffect: true` when appropriate.      |
+For each running project, the scheduler checks the agent roster. A quiet agent with pending targeted signals gets one activation.
 
-## Activation
+1. Load pending signals for the agent by priority and creation time.
+2. Render an activation prompt containing current delivered signals and the tool/reporting contract.
+3. Append the prompt to the agent's SQLite history.
+4. Mark those signals `delivered` with the new activation id.
+5. Create an activation row and write read-only `input.json`.
+6. Start one Docker runner container.
 
-An activation is one isolated execution of one continuous agent. Suzumio creates an activation record, writes read-only `input.json`, starts a Docker container, receives completion through `POST /activation-output`, and records completion or failure.
+The activation prompt is the only place where newly delivered signals become model-visible. Earlier model history is included for continuity, but new assignments come from the delivered signals.
 
-    activation.started -> container runs -> POST /activation-output -> activation.completed
+## Running Agent Behavior
 
-An activation can send messages, publish artifacts, submit a report, or simply return text. The text is not treated as a message unless the agent uses `messages.send`.
+When an agent is already running, the scheduler does not start a second activation for it.
 
-## Agent History
+| Incoming signal | Running-agent behavior |
+|-----------------|------------------------|
+| `P0` | Cancel current activation, stop the backend container, and restart with pending `P0` and `P1` signals. |
+| `P1` | Leave the activation running. Deliver at the next completed tool call if the runner reaches a tool boundary. |
+| `P2` | Leave the activation running. Deliver on the next activation after current completion. |
 
-Each agent has append-only model history stored in SQLite. Suzumio appends user prompts from delivered signals, visible assistant output, tool calls, tool results, and compaction markers. The runner sends the active history back to the model on the next call. Continuity lives in the core runtime rather than in a container-local file.
+The runner asks Suzumio for tool-boundary signal delivery after completed tool calls. Pending `P1` signals are appended into the active model context at that boundary.
 
-When the provider rejects a request for context-window overflow, the runner asks the model for a compact summary and retries the activation with the compacted history. Suzumio archives the full raw compacted range locally, marks those messages archived, appends a compaction marker containing the summary, and keeps the latest tail messages verbatim.
+## Useful Effects And Nudges
 
-## Signal Scheduler
+`usefulEffect` records externally visible coordination work for an activation. Suzumio counts useful effects by `sourceActivation` when the activation completes.
 
-The default scheduler is `nonpreemptive-signals`. `nonpreemptive-mailbox` is still accepted as a compatibility name, but it runs the same signal-driven scheduler.
+| Signal kind | Default useful effect |
+|-------------|-----------------------|
+| Pending signal to another agent | Yes |
+| `message.created` | Yes |
+| `completion.submitted` | Yes |
+| `coordination.wait_for_signal` | Yes |
+| `scheduler.no_effect_nudge` | No |
+| Generic closed custom signal | No unless the custom tool sets `usefulEffect: true`. |
 
-1.  Skip projects that are not `running`.
-2.  For running agents, only act on pending `P0`: cancel the active activation and restart with the new signal.
-3.  For idle agents, fetch pending signals by priority and creation time.
-4.  If there are no pending signals, leave the agent quiet.
-5.  If there are pending signals, append one activation prompt to agent history and start one activation.
-6.  Mark those signals delivered when the activation is created.
-7.  If a `P1` signal arrives during a running activation, deliver it at the next completed tool call when possible.
-8.  If the activation completes with no useful effects, create one `scheduler.no_effect_nudge` signal unless that activation was itself created by such a nudge.
+If an activation completes without a useful effect, `scheduler.noEffectNudge` can create a follow-up signal. The default nudge is enabled, uses `P2`, and is controlled by `maxConsecutive`, `initialDelayMs`, `backoffFactor`, and `maxDelayMs`.
 
-## Tools
+## All-Quiet Nudge
 
-Tools are presented to the model by the Docker runner. Stateful tools call back to Suzumio for controller support such as messages, project submission, permission checks, and audit records. File, shell, and web tools run inside the runner container.
+`scheduler.allQuietNudge` watches for a project where all agents are `quiet` and no pending signals exist. When enabled, it creates a pending scheduler signal for the configured target agent, usually `pm`.
 
-<div class="grid">
+```yaml
+scheduler:
+  allQuietNudge:
+    enabled: true
+    targetAgent: pm
+    priority: P2
+    cooldownMs: 300000
+```
 
-<div class="card"><h3><code>messages.send</code></h3><p>Create a direct or channel message through Suzumio support APIs.</p></div>
+## Quiet Agent Monitor
 
-<div class="card"><h3><code>coordination.wait_for_signal</code></h3><p>Declare an intentional wait state. Non-PM agents notify <code>pm</code> by default; PM waits quietly.</p></div>
+`scheduler.quietAgentMonitor` watches named agents that remain `quiet` longer than a configured delay. It sends an ordinary message through the same path as `messages.send`; no monitor agent is created.
 
-<div class="card"><h3><code>file.read</code></h3><p>Read files or directories from <code>/workspace</code>, <code>/artifacts</code>, or <code>/mnt</code>.</p></div>
+```yaml
+scheduler:
+  quietAgentMonitor:
+    enabled: true
+    rules:
+      - id: worker-watch
+        agent: worker-1
+        recipient: pm
+        sender: monitor
+        priority: P2
+        initialDelayMs: 1800000
+        repeatDelayMs: 900000
+        message: "{{agent}} has been quiet for {{quietMinutes}} minutes."
+```
 
-<div class="card"><h3><code>file.write</code></h3><p>Write complete files under <code>/workspace</code> or the current agent's artifact directory.</p></div>
+The scheduler records monitor-send events by rule, agent, and quiet timestamp, then repeats only after `repeatDelayMs` while the agent remains in the same quiet state.
 
-<div class="card"><h3><code>file.patch</code></h3><p>Apply exact text edits under <code>/workspace</code> or the current agent's artifact directory.</p></div>
+## Full Tick Order
 
-<div class="card"><h3><code>shell.exec</code></h3><p>Run bash inside the Docker runner container.</p></div>
+The default scheduler is `nonpreemptive-signals`. `nonpreemptive-mailbox` is accepted as a compatibility alias for the same signal-driven scheduler.
 
-<div class="card"><h3><code>completion.submit</code></h3><p>Write the final report and mark the project submitted.</p></div>
+1. Skip projects that are not `running`.
+2. Load agents.
+3. For each running agent, act only on pending `P0` interruption signals.
+4. For each quiet agent, start one activation when pending targeted signals exist.
+5. Refresh the agent list.
+6. Apply quiet-agent monitor rules.
+7. Apply all-quiet nudge rules.
 
-<div class="card"><h3><code>web.fetch</code></h3><p>Fetch an HTTP(S) URL from inside the runner container.</p></div>
+## Common Flows
 
-</div>
+| Flow | Signal sequence |
+|------|-----------------|
+| User starts PM | User message creates pending `message.created` for `pm`; scheduler starts `pm`. |
+| PM delegates | PM calls `messages.send` to a worker; worker gets pending `message.created`; PM can wait. |
+| Worker waits | Worker calls `coordination.wait_for_signal`; activation ends with a useful effect and no polling loop. |
+| Worker reports | Worker calls `messages.send` to `pm`; PM gets pending `message.created`. |
+| PM submits | PM calls `completion.submit`; project becomes `submitted` and waits for approval. |
 
-## Shared Artifacts
-
-Every activation gets `/artifacts/<agent-id>` mounts. The current agent's directory is read-write, and other agents' directories are read-only. The first activation prompt lists the artifact paths; later activations rely on the agent's persisted history. This is the lightweight artifact workflow: agents with `shell.exec` can write scripts, outputs, notes, and data directly to their own shared directory, then send a message pointing other agents at the path.
-
-## Event
-
-Events form the project timeline. They are useful for WebUI updates, debugging, auditing, and later replay tools.
-
-    project.initialized
-    message.created
-    signal.created
-    activation.started
-    tool.called
-    activation.completed
-    project.submitted
-
-<div class="footer">Next: <a href="configuration.html">Configuration</a>.</div>
+<div class="footer">Next: <a href="configuration.html">YAML Reference</a>.</div>

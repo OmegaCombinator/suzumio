@@ -132,4 +132,4 @@ Each project has one SQLite file. The container runner does not maintain the pro
 
 Keeping project truth in the core runtime makes agent execution disposable. A runner can fail, be replaced, or be upgraded while the project database, agent histories, shared artifact files, and user-control surface remain stable.
 
-<div class="footer">Next: <a href="operations.html">Operations</a>.</div>
+<div class="footer">Source: <a href="https://github.com/OmegaCombinator/suzumio">OmegaCombinator/suzumio</a>.</div>

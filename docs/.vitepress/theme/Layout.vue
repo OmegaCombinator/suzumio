@@ -17,25 +17,18 @@ const englishNav: NavGroup[] = [
     title: "Start",
     items: [
       { text: "Overview", link: "/index.html" },
-      { text: "Quickstart", link: "/quickstart.html" },
-      { text: "Core Concepts", link: "/concepts.html" }
-    ]
-  },
-  {
-    title: "Build",
-    items: [
-      { text: "Configuration", link: "/configuration.html" },
-      { text: "Toolpacks", link: "/toolpacks.html" },
-      { text: "CLI Reference", link: "/cli.html" },
-      { text: "Architecture", link: "/architecture.html" },
-      { text: "Operations", link: "/operations.html" }
+      { text: "Signal Scheduling", link: "/concepts.html" },
+      { text: "YAML Reference", link: "/configuration.html" },
+      { text: "Run Projects", link: "/quickstart.html" },
+      { text: "Custom Tools", link: "/toolpacks.html" }
     ]
   },
   {
     title: "Reference",
     items: [
+      { text: "CLI Reference", link: "/cli.html" },
       { text: "HTTP API", link: "/api.html" },
-      { text: "Roadmap", link: "/roadmap.html" },
+      { text: "Architecture", link: "/architecture.html" },
       { text: "GitHub", link: "https://github.com/OmegaCombinator/suzumio" }
     ]
   }
@@ -46,25 +39,18 @@ const chineseNav: NavGroup[] = [
     title: "开始",
     items: [
       { text: "概览", link: "/zh/index.html" },
-      { text: "快速开始", link: "/zh/quickstart.html" },
-      { text: "核心概念", link: "/zh/concepts.html" }
-    ]
-  },
-  {
-    title: "构建",
-    items: [
-      { text: "配置", link: "/zh/configuration.html" },
-      { text: "Toolpacks", link: "/zh/toolpacks.html" },
-      { text: "CLI 参考", link: "/zh/cli.html" },
-      { text: "架构", link: "/zh/architecture.html" },
-      { text: "运维", link: "/zh/operations.html" }
+      { text: "Signal 调度", link: "/zh/concepts.html" },
+      { text: "YAML 参考", link: "/zh/configuration.html" },
+      { text: "运行项目", link: "/zh/quickstart.html" },
+      { text: "Custom Tools", link: "/zh/toolpacks.html" }
     ]
   },
   {
     title: "参考",
     items: [
+      { text: "CLI 参考", link: "/zh/cli.html" },
       { text: "HTTP API", link: "/zh/api.html" },
-      { text: "路线图", link: "/zh/roadmap.html" },
+      { text: "架构", link: "/zh/architecture.html" },
       { text: "GitHub", link: "https://github.com/OmegaCombinator/suzumio" }
     ]
   }

@@ -132,4 +132,4 @@ Message 会创建 `message.created` signal。Shared artifact 文件是普通持�
 
 项目事实留在 core 中，agent execution 就可以是一次性的。Runner 可以失败、替换或升级，而项目数据库、agent histories、artifact 和用户控制面保持稳定。
 
-<div class="footer">下一步：<a href="operations.html">运维</a>。</div>
+<div class="footer">源码：<a href="https://github.com/OmegaCombinator/suzumio">OmegaCombinator/suzumio</a>。</div>

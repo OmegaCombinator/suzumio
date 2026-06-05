@@ -1,18 +1,9 @@
 ---
-title: "Suzumio Quickstart"
-eyebrow: "Quickstart"
-heroTitle: "Your first YAML multi-agent project"
-lead: "This tutorial starts from a project YAML file, renders it, initializes runtime state, starts the Docker-backed scheduler, and sends the first message."
+title: "Initialize And Run Suzumio Projects"
+eyebrow: "Run Projects"
+heroTitle: "Render YAML, initialize state, start agents"
+lead: "This chapter covers local setup, project initialization, terminal control, WebUI usage, runtime inspection, artifacts, secrets, proxies, and basic cleanup."
 ---
-
-## What You Are Building
-
-You will create a small project with two agents:
-
-- `pm`, the coordinator that receives the user request and decides when to submit;
-- `researcher`, a worker that can run Python in Docker and write shared files under `/artifacts/researcher`.
-
-The project shape is the same one used by larger teams: PM delegates, worker reports, PM waits or submits.
 
 ## Prerequisites
 
@@ -21,9 +12,9 @@ The project shape is the same one used by larger teams: PM delegates, worker rep
 | Node.js 24+ | CLI, server, runner build, built-in SQLite module. | `node --version` |
 | npm | Install TypeScript and runtime dependencies. | `npm --version` |
 | Docker | Every agent activation runs in a container. | `docker ps` |
-| Model gateway credentials | The AI runner needs a provider endpoint and API key. | provider-specific |
+| Model gateway credentials | AI runner provider endpoint and API key. | Provider-specific. |
 
-## 1. Build Suzumio
+## Build Suzumio
 
 ```bash
 git clone git@github.com:OmegaCombinator/suzumio.git
@@ -35,9 +26,78 @@ docker build -t suzumio-runner:dev .
 
 The default runner image includes Node.js, `python3`, `curl`, and `git`.
 
-## 2. Write The YAML
+## Runtime Root
 
-Save this as `/tmp/suzumio-tutorial.yaml` and replace the gateway URL if needed.
+```bash
+export SUZUMIO_ROOT=/tmp/suzumio-root
+```
+
+The runtime root contains project databases, activation inputs, agent workspaces, artifacts, and logs.
+
+```text
+$SUZUMIO_ROOT/project-name/
+  suzumio.sqlite      durable project database
+  source.yaml         original project config
+  resolved.yaml       fully resolved config
+  agents/             per-agent workspaces
+  artifacts/          per-agent shared files
+  activations/        activation input directories
+  logs/               reserved runtime logs
+```
+
+## Secrets And Provider Environment
+
+Use environment variables for provider keys and local, untracked config for private gateway URLs.
+
+```bash
+export SUZUMIO_GATEWAY_API_KEY=...
+export SUZUMIO_GATEWAY_BASE_URL=...
+```
+
+The process that launches an activation must have the configured provider environment variables. This can be the long-running server or a CLI command that directly triggers a scheduler tick.
+
+Run these with the same provider/proxy environment:
+
+```bash
+suzumio serve --host 0.0.0.0 --port 39400
+suzumio start project-name
+suzumio send project-name pm P1 "Start."
+suzumio tick
+```
+
+## Proxy Environment
+
+Suzumio passes standard proxy variables into runner containers when they exist: `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`, and lowercase variants.
+
+```bash
+export HTTPS_PROXY=http://127.0.0.1:7890
+export HTTP_PROXY=http://127.0.0.1:7890
+```
+
+Bridge-network containers cannot reach host loopback directly. With `rewriteLocalhost: true`, Suzumio rewrites loopback proxy hosts to `host.docker.internal` for bridge-network containers.
+
+```yaml
+backend:
+  docker:
+    proxy:
+      inheritEnv: true
+      rewriteLocalhost: true
+      https: ${HTTPS_PROXY}
+      http: ${HTTP_PROXY}
+```
+
+Linux host networking keeps `127.0.0.1` proxy URLs unchanged and uses a host-local controller URL.
+
+```yaml
+backend:
+  controllerUrl: http://127.0.0.1:39400
+  docker:
+    network: host
+```
+
+## Example Project YAML
+
+Save this as `/tmp/suzumio-tutorial.yaml`.
 
 ```yaml
 name: yaml-tutorial
@@ -103,84 +163,108 @@ agents:
       - shell.exec
 ```
 
-This YAML does four important things:
-
-- it gives `pm` the authority to submit, but not shell access;
-- it gives `researcher` shell access, but not submit authority;
-- it tells the worker where to write shared files;
-- it tells both agents how to wait without polling.
-
-## 3. Configure Secrets Locally
-
-Do not commit real keys or private gateway URLs.
-
-```bash
-export SUZUMIO_ROOT=/tmp/suzumio-root
-export SUZUMIO_GATEWAY_API_KEY=...
-```
-
-If Docker containers need an HTTP proxy, either export proxy env vars before running commands that may launch activations, or put `backend.docker.proxy` in a local untracked YAML file.
-
-```bash
-export HTTPS_PROXY=http://127.0.0.1:7890
-export HTTP_PROXY=http://127.0.0.1:7890
-```
-
-On Linux, if the proxy only listens on host loopback, use `backend.docker.network: host` and set `backend.controllerUrl` to `http://127.0.0.1:<port>`.
-
-## 4. Render Before Running
+## Render And Initialize
 
 ```bash
 suzumio config render /tmp/suzumio-tutorial.yaml
+suzumio init /tmp/suzumio-tutorial.yaml
+suzumio status yaml-tutorial
 ```
 
-Rendering shows imports, environment substitutions, defaults, and the exact YAML shape that will be stored with the project.
+`config render` shows imports, environment substitutions, defaults, merge results, model settings, and the exact YAML stored by `init`.
 
-## 5. Initialize And Serve
+## Start The Server
 
 ```bash
-suzumio init /tmp/suzumio-tutorial.yaml
 suzumio serve --host 0.0.0.0 --port 39400
 ```
 
-Open another terminal with the same env vars:
+The server exposes HTTP API routes, controller support routes used by runner containers, Server-Sent Events, and the packaged WebUI.
+
+Use `127.0.0.1` for local-only access. Use `0.0.0.0` when Docker bridge containers need to reach host support routes through `host.docker.internal`.
+
+For a long-running server, use systemd, a container supervisor, or a supervised shell session. Bind only to trusted interfaces until user-facing API authentication is in place.
+
+## Terminal Control
+
+Open another terminal with the same `SUZUMIO_ROOT` and provider/proxy env.
 
 ```bash
 export SUZUMIO_ROOT=/tmp/suzumio-root
 export SUZUMIO_GATEWAY_API_KEY=...
+
 suzumio start yaml-tutorial
 suzumio send yaml-tutorial pm P1 "Run the small Ramsey example and submit a short note."
 ```
 
-`start` and `send` can run scheduler ticks directly. Run them with the same provider/proxy environment as the server.
+Core control commands:
 
-The packaged WebUI is served from `http://127.0.0.1:39400`. When working on WebUI code, run `npm run webui:dev` in another terminal and open `http://127.0.0.1:5173`; Vite proxies `/api` and `/health` to the backend on `39400`.
+| Command | Effect |
+|---------|--------|
+| `suzumio status project` | Show project status and agent states. |
+| `suzumio start project` | Mark project running and run a scheduler tick. |
+| `suzumio stop project` | Stop scheduling for the project. |
+| `suzumio send project agent P1 "..."` | Send a direct message and run a scheduler tick. |
+| `suzumio tick` | Run scheduler ticks for projects under the root. |
+| `suzumio approve project` | Mark a submitted project completed. |
+| `suzumio messages project --limit 20` | Show recent messages. |
+| `suzumio activations project --limit 20` | Show activation records. |
+| `suzumio events project --limit 40` | Show event timeline. |
 
-## 6. Inspect The Run
+## WebUI
+
+The packaged WebUI is served from the same server, usually `http://127.0.0.1:39400`.
+
+The WebUI shows:
+
+| View | Contents |
+|------|----------|
+| Project overview | Status, agents, latest activity, controls. |
+| Messages | Direct and channel messages. |
+| Agent history | Per-agent model-visible history, compaction markers, archives. |
+| Activations | Activation status, input snapshots, output, failures. |
+| Tool calls | Tool-call start/finish records, output summaries, errors. |
+| Events | SQLite event timeline. |
+| Resolved YAML | Stored project config. |
+| Submitted report | Final report after `completion.submit`. |
+
+For WebUI development:
 
 ```bash
-suzumio status yaml-tutorial
-suzumio messages yaml-tutorial --limit 20
-suzumio activations yaml-tutorial --limit 20
-suzumio events yaml-tutorial --limit 40
+npm run webui:dev
 ```
 
-Files written by the worker appear on the host under:
+Open `http://127.0.0.1:5173`. Vite proxies `/api` and `/health` to the backend on `39400`.
+
+## Inspect Activations
+
+Each activation directory contains the exact runner input.
 
 ```text
-$SUZUMIO_ROOT/yaml-tutorial/artifacts/researcher/
+$SUZUMIO_ROOT/yaml-tutorial/activations/act_.../
+  input.json
 ```
 
-Inside containers, agents see shared artifact paths like:
+The input includes the rendered prompt, agent identity, controller URL, token, runner config, history, and tool definitions available to the model. Activation output is submitted through `POST /activation-output` and stored in SQLite.
+
+## Shared Artifacts
+
+Agents see shared artifact paths inside containers.
 
 ```text
 /artifacts/pm          read-write for pm, read-only for others
 /artifacts/researcher  read-write for researcher, read-only for others
 ```
 
-## 7. What To Look For
+Host files written by the tutorial worker appear under:
 
-A healthy run usually contains this sequence:
+```text
+$SUZUMIO_ROOT/yaml-tutorial/artifacts/researcher/
+```
+
+File writes do not wake another agent. The writing agent sends a message or submits completion when the artifact is ready.
+
+## Healthy Run Shape
 
 1. User message wakes `pm`.
 2. `pm` sends a request to `researcher`.
@@ -188,14 +272,29 @@ A healthy run usually contains this sequence:
 4. `researcher` runs `shell.exec`, writes `/artifacts/researcher/...`, and sends a report to `pm`.
 5. `pm` gets a new activation with the worker report in conversation history.
 6. `pm` calls `completion.submit` with the final Markdown report.
+7. Project status becomes `submitted`.
+8. User or operator runs `suzumio approve yaml-tutorial` when accepted.
 
 ## Troubleshooting
 
 | Symptom | Likely cause | Action |
 |---------|--------------|--------|
-| Activation fails before submitting a result. | Runner image not built, wrong image name, Docker startup failure, or model/provider error. | Run `docker build -t suzumio-runner:dev .` and inspect `suzumio activations` plus `docker logs <container>`. |
-| Support tool connection refused. | Container cannot reach the Suzumio server. | Run server with `--host 0.0.0.0` and use `http://host.docker.internal:39400`, or use host networking with `127.0.0.1`. |
-| Agent does not start. | Project is not `running` or no pending signal targets that agent. | Run `suzumio start project` and send a direct message to an agent. |
-| API key missing inside Docker. | The process that launched the activation did not have the provider env var. | Export the key before `serve`, `start`, `send`, and `tick`. |
+| Project never starts an activation. | Project is not `running`. | `suzumio start project` |
+| Agent stays quiet. | No pending signals target that agent. | `suzumio send project agent P1 "..."` |
+| Message exists but no activation starts. | Agent is already `running`, project is stopped, or message targeted `user`. | Wait for completion or send a direct message to an agent. |
+| Activation fails before submitting output. | Runner image, mount, Docker daemon, or provider issue. | Inspect `suzumio activations`, activation input, and `docker logs <container>`. |
+| Support tool connection refused. | Container cannot reach Suzumio server. | Bind server to a Docker-reachable address and match `backend.controllerUrl`. |
+| API key missing inside Docker. | Activation-launching process did not have the provider env var. | Export provider env before `serve`, `start`, `send`, and `tick`. |
 
-<div class="footer">Next: <a href="configuration.html">YAML Configuration</a>.</div>
+## Debug Container Cleanup
+
+Completed activation containers are kept for debugging. Remove only containers that Suzumio created.
+
+```bash
+docker ps -a --filter name=suzumio
+docker rm <container-name>
+```
+
+Do not run broad Docker prune commands on shared machines.
+
+<div class="footer">Next: <a href="toolpacks.html">Custom Tools</a>.</div>

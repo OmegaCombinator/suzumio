@@ -5,19 +5,19 @@ eyebrow: "用 YAML 定义多智能体项目"
 heroTitle: "写一个 YAML，运行一组智能体"
 lead: "Suzumio 让你用一个 YAML 项目文件描述 multi-agent workflow：任务、agents、prompts、tools、Docker runner、模型 presets 和调度策略。Runtime 会把 YAML 变成持久消息、signals、activations、共享文件和最终提交。"
 actions:
-  - text: "从 YAML 开始"
-    link: "quickstart.html"
+  - text: "Signal 调度"
+    link: "concepts.html"
     variant: "primary"
   - text: "YAML 参考"
     link: "configuration.html"
-  - text: "Toolpacks"
-    link: "toolpacks.html"
+  - text: "运行项目"
+    link: "quickstart.html"
     variant: "blue"
 ---
 
 ## 核心想法
 
-Suzumio 是一个 YAML-based multi-agent system。你不是先写 orchestration code，而是先写一个项目文件，说明：
+Suzumio 是一个 YAML-based multi-agent system。项目文件说明：
 
 - 项目要完成什么；
 - 有哪些 agents；
@@ -64,16 +64,14 @@ suzumio start tiny-research
 suzumio send tiny-research pm P1 "Start."
 ```
 
-## YAML 如何变成多智能体行为
+## 文档顺序
 
-| YAML 字段 | 控制什么 | Runtime 中发生什么 |
-|-----------|----------|--------------------|
-| `task` | 共享项目目标 | 渲染进第一次 activation prompt。 |
-| `agents` | roster 和 prompts | 每个 agent 都变成一个持久参与者，有自己的 workspace 和共享 artifact 目录。 |
-| `agents.<id>.tools` | 模型可见工具 allowlist | worker 不能调用未授权工具。 |
-| `tools.toolpacks` | 可用工具家族 | `core` 提供 messages/wait/submit/file tools；`shell` 提供 bash；`web` 提供 HTTP fetch。 |
-| `scheduler` | signal 投递策略 | 有 pending signal 的 idle agent 会获得一次 activation；`P0` 可以中断 running activation。 |
-| `backend` | Docker/model/proxy 设置 | runner image、controller URL、模型 presets、mounts、network 和 proxy 都从 YAML 解析。 |
+| Chapter | 内容 |
+|---------|------|
+| [Signal 调度](concepts.html) | Messages、signals、priorities、activation starts、running-agent behavior、nudges 和 quiet monitor rules。 |
+| [YAML 参考](configuration.html) | 每个 project field：agents、tools、scheduler、communication、backend、models、channels、imports 和 profiles。 |
+| [运行项目](quickstart.html) | Build、initialize、serve、terminal control、WebUI、artifacts、secrets、proxies、inspection 和 cleanup。 |
+| [Custom Tools](toolpacks.html) | Built-in tools、local toolpack manifests、runner modules、controller modules 和 custom signals。 |
 
 ## 默认协作循环
 
@@ -113,10 +111,6 @@ Critic/checker 用于：
 - 结果保存到 `/artifacts/<agent-id>`；
 - 证据比纯文字更重要。
 
-## 可复制模式
-
-先看 [快速开始](quickstart.html) 跑一个完整 YAML 项目，再看 [配置](configuration.html) 里的可复制模式：PM + workers、PM + critic、Python 实验团队、web research 和 review pipeline。
-
 ## 项目目录
 
 `suzumio init` 后，runtime root 中会出现由 YAML 生成的项目状态：
@@ -136,11 +130,11 @@ $SUZUMIO_ROOT/tiny-research/
 
 | 目标 | 阅读 |
 |------|------|
-| 跑第一个 YAML 项目 | [快速开始](quickstart.html) |
-| 学习所有 YAML 字段 | [配置](configuration.html) |
-| 配置内置或 local tools | [Toolpacks](toolpacks.html) |
-| 理解 messages、signals 和 activations | [核心概念](concepts.html) |
-| 用终端运维项目 | [CLI 参考](cli.html) |
+| 理解调度 | [Signal 调度](concepts.html) |
+| 学习所有 YAML 字段 | [YAML 参考](configuration.html) |
+| 初始化、控制和检查 projects | [运行项目](quickstart.html) |
+| 配置内置或 local tools | [Custom Tools](toolpacks.html) |
+| 用终端控制项目 | [CLI 参考](cli.html) |
 | 集成或围绕 Suzumio 做 UI | [HTTP API](api.html) |
 
 <div class="footer">当前站点：<a href="https://suzumio.aixmath.org">suzumio.aixmath.org</a>。源码：<a href="https://github.com/OmegaCombinator/suzumio">OmegaCombinator/suzumio</a>。</div>

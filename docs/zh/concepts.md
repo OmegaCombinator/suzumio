@@ -1,150 +1,187 @@
 ---
-title: "Suzumio 核心概念"
-eyebrow: "核心概念"
-heroTitle: "Suzumio 如何组织工作"
-lead: "Suzumio 把项目建模为持久消息、signal、每个 agent 的 history 和隔离 activation。Scheduler 只有在 agent 有 pending signal 时才开始工作，并用明确 priority 规则决定中断或延后。"
+title: "Suzumio Signal 调度"
+eyebrow: "Signal 调度"
+heroTitle: "Signal 如何驱动每一次 activation"
+lead: "Suzumio 从持久 signal 调度 agent。消息、等待、提交、nudge 和自定义工具都会写入 SQLite，scheduler 把 pending targeted signals 变成 Docker activations。"
 ---
 
-## Project
+## Runtime Objects
 
-Project 是持久工作单元，包含名称、任务描述、解析后的配置、agent roster、channel、SQLite 数据库、artifact 目录和事件时间线。
+| Object | Runtime 角色 |
+|--------|--------------|
+| Project | 持久工作单元，包含 resolved YAML、agent roster、channels、SQLite database、artifacts 和 event timeline。 |
+| Agent | 配置好的参与者，包含 role、prompt、model selection、workspace、artifact directory、token 和 tool allowlist。 |
+| Message | 持久通信记录。Direct message 指向一个 agent 或 `user`；channel message fan out 到 agents。 |
+| Signal | Scheduler 输入和 effect ledger。Pending targeted signal 唤醒 agent；closed signal 记录 effect。 |
+| Activation | 一个 agent 的一次隔离 Docker 执行。Activation prompt 中包含 delivered signals。 |
+| Event | Append-style timeline entry，用于 UI、audit、debug 和 replay tooling。 |
 
-| 状态          | 调度行为                         | 常见来源                             |
-|---------------|----------------------------------|--------------------------------------|
-| `initialized` | 不调度。                         | `suzumio init`                       |
-| `running`     | Scheduler 可以启动 ready agent。 | `suzumio start` 或 request changes。 |
-| `submitted`   | 等待用户审批。                   | `completion.submit`                  |
-| `completed`   | 不再调度。                       | `suzumio approve`                    |
-| `stopped`     | 调度关闭。                       | `suzumio stop`                       |
+## Project 和 Agent 状态
 
-## Agent
+| Project status | 调度行为 |
+|----------------|----------|
+| `initialized` | 不自动调度。 |
+| `running` | Scheduler 可以启动 ready agents。 |
+| `submitted` | Project 等待用户 approval。 |
+| `completed` | 调度完成。 |
+| `stopped` | 调度禁用。 |
 
-Agent 是带 role、prompt、model、workspace 和 tool allowlist 的参与者。Agent 不拥有项目状态；它通过 Suzumio 产生消息、工具调用、artifact 和 activation output。
+| Agent status | 调度行为 |
+|--------------|----------|
+| `quiet` | 有 pending targeted signals 时可启动新 activation。 |
+| `running` | 有 active activation。`P0` 可 interrupt；`P1` 可在 tool boundary 注入；`P2` 等待。 |
+| `failed` | 上一次 activation 或 backend action 失败。 |
+| `stopped` | Agent 禁用。 |
 
-| 状态      | 含义                                                  |
-|-----------|-------------------------------------------------------|
-| `quiet`   | 空闲且没有 pending signal。                           |
-| `running` | 一个 Docker activation 正在运行，只有 `P0` 可以中断并重启它。 |
-| `failed`  | 上一次 activation 或 backend 操作失败。                     |
-| `stopped` | 该 agent 被禁用。                                     |
+## Message 变成 Signal
 
-## Message
+`messages.send` 会写入 message row，append `message.created` event，并记录一个或多个 signals。
 
-Message 是持久沟通记录。可以是带 `recipient` 的直接消息，也可以是带 `channel` 的频道消息。未知 recipient 和未声明 channel 都会被拒绝。
+```json
+{
+  "sender": "user",
+  "recipient": "pm",
+  "priority": "P1",
+  "body": "Start the project."
+}
+```
 
-    {
-      "sender": "user",
-      "recipient": "pm",
-      "priority": "P1",
-      "body": "Start the project."
-    }
+| Message target | Signal result |
+|----------------|---------------|
+| `recipient: "pm"` | 给 `pm` 创建一个 pending `message.created` signal。 |
+| `channel: "#reviews"` | 给 config 中的其他 agents 各创建一个 pending `message.created` signal。 |
+| `recipient: "user"` | Closed useful effect；不唤醒 agent。 |
 
-Message 会创建 `message.created` signal。发给 agent 的直接消息会创建一条给该 agent 的 pending signal；频道消息会 fan out 成给其他 agent 的 pending signal。发给 `recipient: "user"` 的消息是 closed useful effect，用户能看到，但不会唤醒 agent。
+未知 recipient 和未声明 channel 会被拒绝。
 
-## Signal
+## Signal Shape
 
-Signal 同时是 scheduler 输入和 effect ledger。带 `targetAgent` 且 `status: "pending"` 的 signal 可以唤醒该 agent；closed signal 没有目标，只用于审计、useful-effect 统计，或两者兼有。
+```ts
+type SignalRecord = {
+  kind: string
+  sourceAgent?: string
+  sourceActivation?: string
+  targetAgent?: string
+  targetChannel?: string
+  priority: "P0" | "P1" | "P2"
+  status: "pending" | "delivered" | "closed"
+  usefulEffect: boolean
+  payload: Record<string, unknown>
+}
+```
 
-    type SignalRecord = {
-      kind: string
-      sourceAgent?: string
-      sourceActivation?: string
-      targetAgent?: string
-      targetChannel?: string
-      priority: "P0" | "P1" | "P2"
-      status: "pending" | "delivered" | "closed"
-      usefulEffect: boolean
-      payload: Record<string, unknown>
-    }
+| Status | 含义 |
+|--------|------|
+| `pending` | 等待在 activation start 或 tool boundary 投递给 target agent。 |
+| `delivered` | 已 append 到某次 activation 的 agent history，不会再次投递。 |
+| `closed` | 不参与调度的 audit 或 useful-effect 记录。 |
 
-| 状态        | 含义                                             |
-|-------------|--------------------------------------------------|
-| `pending`   | 等待在 activation start 或 tool boundary 投递给目标 agent。 |
-| `delivered` | 已经 append 到某次 activation 的 agent history，不会再次投递。 |
-| `closed`    | 不参与调度的审计或 effect 记录。                 |
+唤醒 agent 时创建带 `targetAgent` 的 pending signal。只记录 effect 时省略 `targetAgent` 和 `targetChannel`，创建 closed signal。
 
-带目标的 signal 不能显式 closed。要唤醒 agent 就创建 pending signal；只想记录 effect 而不唤醒任何人，就不要给 target，创建 closed signal。
+## Priority Rules
 
-## Priority
+| Priority | 投递规则 |
+|----------|----------|
+| `P0` | Interrupt running target agent。当前 activation 被取消，agent 带着 `P0` signal 重启。 |
+| `P1` | 尽量在下一次 tool boundary 投递；没有 boundary 时在下一次 activation start 投递。 |
+| `P2` | Routine work。等待当前 activation 完成，在下一次 activation start 投递。 |
 
-| Priority | 投递规则                                                      |
-|----------|---------------------------------------------------------------|
-| `P0`     | 如果目标正在运行，中断并取消当前 activation，然后把 signal 写入 agent history 并重启。 |
-| `P1`     | 尽量在下一次 tool boundary 投递；如果没有 tool boundary，则在下一次 activation start 投递。 |
-| `P2`     | 等当前 activation 完成后，在下一次 activation start 投递。    |
+Routine messages 默认使用 `P2`。`P0` 保留给 human stop、destructive repository conflict、secret/safety issue，或继续当前 activation 会有害的 blocker。
 
-## Useful Effect
+## Activation Start
 
-`usefulEffect` 记录 activation 的外部协调工作。Activation 完成时，Suzumio 会按 `sourceActivation` 统计 useful effect。
+对于 running project，scheduler 会检查 agent roster。Quiet agent 有 pending targeted signals 时获得一次 activation。
 
-| Signal kind                         | 默认 useful effect | 原因                                                |
-|-------------------------------------|--------------------|-----------------------------------------------------|
-| 给其他 agent 的 pending signal      | 是                 | 它安排了后续工作。                                  |
-| `message.created`                   | 是                 | 它和 agent 或用户进行了沟通。                       |
-| `completion.submitted`              | 是                 | 它把最终报告交给用户。                              |
-| `coordination.wait_for_signal`      | 是                 | 它记录了明确的等待状态。                            |
-| `scheduler.no_effect_nudge`         | 否                 | 这是 scheduler 反馈，不是 agent 进展。              |
-| generic closed custom signal        | 否                 | 自定义工具需要时可显式设置 `usefulEffect: true`。   |
+1. 按 priority 和创建时间加载该 agent 的 pending signals。
+2. 渲染 activation prompt，包含当前 delivered signals 和 tool/reporting contract。
+3. 把 prompt append 到 agent 的 SQLite history。
+4. 将这些 signals 标记为 `delivered`，并记录 activation id。
+5. 创建 activation row，写入只读 `input.json`。
+6. 启动一个 Docker runner container。
 
-## Activation
+Activation prompt 是新 delivered signals 对模型可见的位置。Earlier model history 用于 continuity；新的 assignments 来自 delivered signals。
 
-Activation 是一个连续 agent 的一次隔离执行。Suzumio 创建 activation record，写入只读 `input.json`，启动 Docker 容器，通过 `POST /activation-output` 接收完成结果，并记录成功或失败。
+## Running Agent Behavior
 
-    activation.started -> container runs -> POST /activation-output -> activation.completed
+Agent 已经 running 时，scheduler 不会为它启动第二个 activation。
 
-## Agent History
+| Incoming signal | Running-agent 行为 |
+|-----------------|--------------------|
+| `P0` | Cancel 当前 activation，停止 backend container，带 pending `P0` 和 `P1` signals 重启。 |
+| `P1` | 当前 activation 继续运行。如果 runner 到达 tool boundary，则在下一次完成 tool call 后投递。 |
+| `P2` | 当前 activation 继续运行。当前 activation 完成后的下一次 activation 投递。 |
 
-每个 agent 都有 append-only 模型历史，保存在 SQLite 中。Suzumio 会 append 已投递 signal 形成的 user prompt、可见 assistant 输出、tool call、tool result 和 compaction marker。Runner 下一次调用模型时会把 active history 重新传给模型。连续性存在 core runtime 中，而不是容器本地文件里。
+Runner 在完成 tool call 后向 Suzumio 请求 tool-boundary signal delivery。Pending `P1` signals 会在该 boundary append 到 active model context。
 
-当 provider 因 active history 超过 context window 而拒绝请求时，runner 会让模型生成 compact summary，并用 compacted history retry 当前 activation。Suzumio 会把 compact 前的完整 raw 范围本地归档，将这些消息标记为 archived，append 一个包含 summary 的 compaction marker，并保留最新 tail messages 原文。
+## Useful Effects 和 Nudges
 
-## Signal Scheduler
+`usefulEffect` 记录 activation 的外部协调工作。Activation 完成时，Suzumio 按 `sourceActivation` 统计 useful effects。
 
-默认 scheduler 是 `nonpreemptive-signals`。`nonpreemptive-mailbox` 仍作为兼容名称接受，但实际运行同一个 signal-driven scheduler。
+| Signal kind | 默认 useful effect |
+|-------------|--------------------|
+| Pending signal to another agent | Yes |
+| `message.created` | Yes |
+| `completion.submitted` | Yes |
+| `coordination.wait_for_signal` | Yes |
+| `scheduler.no_effect_nudge` | No |
+| Generic closed custom signal | No，除非 custom tool 设置 `usefulEffect: true`。 |
 
-1.  跳过非 `running` 项目。
-2.  对 running agent，只有 pending `P0` 会触发动作：取消当前 activation 并用新 signal 重启。
-3.  对 idle agent，按 priority 和创建时间读取 pending signals。
-4.  没有 pending signal 时保持 quiet。
-5.  有 pending signal 时，把一个 activation prompt append 到 agent history 并启动 activation。
-6.  创建 activation 后把这些 signal 标记为 delivered。
-7.  如果 running activation 期间来了 `P1`，尽量在下一次完成的 tool call 后投递。
-8.  如果 activation 完成时没有 useful effect，就创建一次 `scheduler.no_effect_nudge`，但由 nudge 唤醒的 activation 不会继续无限 nudge。
+Activation 完成时没有 useful effect，`scheduler.noEffectNudge` 可以创建 follow-up signal。默认 nudge 启用，使用 `P2`，由 `maxConsecutive`、`initialDelayMs`、`backoffFactor` 和 `maxDelayMs` 控制。
 
-## Tools
+## All-Quiet Nudge
 
-工具由 Docker runner 展示给模型。需要持久状态的工具会回调 Suzumio support API，用于消息、项目提交、权限检查和审计记录；file、shell 和 web tools 在 runner 容器内执行。
+`scheduler.allQuietNudge` 监听所有 agents 都是 `quiet` 且没有 pending signals 的 project。启用后，它会给配置的 target agent 创建 pending scheduler signal，通常是 `pm`。
 
-<div class="grid">
+```yaml
+scheduler:
+  allQuietNudge:
+    enabled: true
+    targetAgent: pm
+    priority: P2
+    cooldownMs: 300000
+```
 
-<div class="card"><h3><code>messages.send</code></h3><p>通过 Suzumio support API 创建直接或频道消息。</p></div>
+## Quiet Agent Monitor
 
-<div class="card"><h3><code>coordination.wait_for_signal</code></h3><p>声明当前正在等待未来 signal。非 PM agent 默认通知 <code>pm</code>；PM 自己会安静等待。</p></div>
+`scheduler.quietAgentMonitor` 监听指定 agents 是否保持 `quiet` 超过配置时间。它通过和 `messages.send` 相同的路径发送普通消息；不会创建 monitor agent。
 
-<div class="card"><h3><code>file.read</code></h3><p>读取 <code>/workspace</code>、<code>/artifacts</code> 或 <code>/mnt</code> 下的文件或目录。</p></div>
+```yaml
+scheduler:
+  quietAgentMonitor:
+    enabled: true
+    rules:
+      - id: worker-watch
+        agent: worker-1
+        recipient: pm
+        sender: monitor
+        priority: P2
+        initialDelayMs: 1800000
+        repeatDelayMs: 900000
+        message: "{{agent}} has been quiet for {{quietMinutes}} minutes."
+```
 
-<div class="card"><h3><code>file.write</code></h3><p>在 <code>/workspace</code> 或当前 agent 自己的 artifact 目录下完整写入文件。</p></div>
+Scheduler 按 rule、agent 和 quiet timestamp 记录 monitor-send events。同一个 quiet state 中，只有超过 `repeatDelayMs` 后才会重复发送。
 
-<div class="card"><h3><code>file.patch</code></h3><p>在 <code>/workspace</code> 或当前 agent 自己的 artifact 目录下应用精确文本编辑。</p></div>
+## Full Tick Order
 
-<div class="card"><h3><code>shell.exec</code></h3><p>在 Docker runner 容器内运行 bash。</p></div>
+默认 scheduler 是 `nonpreemptive-signals`。`nonpreemptive-mailbox` 作为 compatibility alias 接受，运行同一个 signal-driven scheduler。
 
-<div class="card"><h3><code>completion.submit</code></h3><p>写入最终报告并标记项目 submitted。</p></div>
+1. 跳过非 `running` projects。
+2. 加载 agents。
+3. 对 running agents，只处理 pending `P0` interruption signals。
+4. 对 quiet agents，如果存在 pending targeted signals，启动一个 activation。
+5. 刷新 agent list。
+6. 应用 quiet-agent monitor rules。
+7. 应用 all-quiet nudge rules。
 
-<div class="card"><h3><code>web.fetch</code></h3><p>从 runner 容器内获取 HTTP(S) URL。</p></div>
+## Common Flows
 
-</div>
+| Flow | Signal sequence |
+|------|-----------------|
+| User starts PM | User message 给 `pm` 创建 pending `message.created`；scheduler 启动 `pm`。 |
+| PM delegates | PM 调用 `messages.send` 给 worker；worker 获得 pending `message.created`；PM 可以 wait。 |
+| Worker waits | Worker 调用 `coordination.wait_for_signal`；activation 带 useful effect 结束，无 polling loop。 |
+| Worker reports | Worker 调用 `messages.send` 给 `pm`；PM 获得 pending `message.created`。 |
+| PM submits | PM 调用 `completion.submit`；project 变成 `submitted` 并等待 approval。 |
 
-## Shared Artifacts 和 Event
-
-每个 activation 都会挂载 `/artifacts/<agent-id>`。当前 agent 的目录可写，其他 agent 的目录只读。第一次 activation prompt 会列出 artifact path；后续 activation 依赖持久化 agent history。这就是轻量 artifact 工作流：拥有 `shell.exec` 的 agent 可以直接把脚本、输出、笔记和数据写进自己的共享目录，然后发消息告诉其他 agent 路径。Event 是项目时间线，用于 WebUI、debug、审计和未来 replay 工具。
-
-    project.initialized
-    message.created
-    signal.created
-    activation.started
-    tool.called
-    activation.completed
-    project.submitted
-
-<div class="footer">下一步：<a href="configuration.html">配置</a>。</div>
+<div class="footer">下一步：<a href="configuration.html">YAML 配置</a>。</div>

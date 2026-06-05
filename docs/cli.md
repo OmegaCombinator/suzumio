@@ -107,4 +107,4 @@ Runs one scheduler pass across all projects or one project. This is useful when 
 
 Commands exit non-zero on validation errors, missing projects, invalid priorities, or store failures. Use `config render` and `status` in scripts to check readiness before starting long runs.
 
-<div class="footer">Next: <a href="architecture.html">Architecture</a>.</div>
+<div class="footer">Next: <a href="api.html">HTTP API</a>.</div>

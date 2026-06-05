@@ -88,4 +88,4 @@ lead: "CLI 是初始化项目、渲染配置、发送任务、查看运行状态
 
 命令遇到配置错误、项目缺失、priority 无效或 store 失败时返回非零。脚本可先用 `config render` 和 `status` 检查，再启动长任务。
 
-<div class="footer">下一步：<a href="architecture.html">架构</a>。</div>
+<div class="footer">下一步：<a href="api.html">HTTP API</a>。</div>

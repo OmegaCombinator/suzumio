@@ -5,19 +5,19 @@ eyebrow: "YAML-based multi-agent projects"
 heroTitle: "Write a YAML file. Run a team of agents."
 lead: "Suzumio lets you describe a multi-agent workflow in one YAML project file: task, agents, prompts, tools, Docker runner, model presets, and scheduling policy. The runtime turns that YAML into durable messages, signals, activations, shared files, and final submissions."
 actions:
-  - text: "Start with YAML"
-    link: "quickstart.html"
+  - text: "Signal scheduling"
+    link: "concepts.html"
     variant: "primary"
   - text: "YAML reference"
     link: "configuration.html"
-  - text: "Toolpacks"
-    link: "toolpacks.html"
+  - text: "Run projects"
+    link: "quickstart.html"
     variant: "blue"
 ---
 
 ## The Idea
 
-Suzumio is a YAML-based multi-agent system. You do not start by writing orchestration code. You start by writing a project file that says:
+Suzumio is a YAML-based multi-agent system. You write a project file that says:
 
 - what the project is trying to accomplish;
 - which agents exist;
@@ -25,7 +25,7 @@ Suzumio is a YAML-based multi-agent system. You do not start by writing orchestr
 - agent coordination rules;
 - which Docker runner and model presets to use.
 
-The runtime then handles the boring coordination mechanics: storing state in SQLite, starting Docker activations, delivering messages as signals, applying priority rules, mounting shared files, and recording tool calls.
+The runtime stores state in SQLite, starts Docker activations, delivers messages as signals, applies priority rules, mounts shared files, and records tool calls.
 
 ## A Tiny Project
 
@@ -64,16 +64,14 @@ suzumio start tiny-research
 suzumio send tiny-research pm P1 "Start."
 ```
 
-## How YAML Becomes Multi-Agent Behavior
+## Documentation Order
 
-| YAML field | What it controls | What happens at runtime |
-|------------|------------------|--------------------------|
-| `task` | The shared project goal | Rendered into the first activation prompt. |
-| `agents` | The roster and prompts | Each agent becomes a durable participant with its own workspace and shared artifact directory. |
-| `agents.<id>.tools` | The model-visible allowlist | A worker cannot call tools it was not given. |
-| `tools.toolpacks` | Which tool families exist | `core` gives messages/wait/submit/file tools; `shell` gives bash; `web` gives HTTP fetch. |
-| `scheduler` | Signal delivery policy | Idle agents with pending signals get one activation; `P0` can interrupt a running activation. |
-| `backend` | Docker/model/proxy settings | The runner image, controller URL, model presets, mounts, network, and proxy are resolved from YAML. |
+| Chapter | What it covers |
+|---------|----------------|
+| [Signal Scheduling](concepts.html) | Messages, signals, priorities, activation starts, running-agent behavior, nudges, and quiet monitor rules. |
+| [YAML Reference](configuration.html) | Every project field: agents, tools, scheduler, communication, backend, models, channels, imports, and profiles. |
+| [Run Projects](quickstart.html) | Build, initialize, serve, terminal control, WebUI, artifacts, secrets, proxies, inspection, and cleanup. |
+| [Custom Tools](toolpacks.html) | Built-in tools, local toolpack manifests, runner modules, controller modules, and custom signals. |
 
 ## The Default Collaboration Loop
 
@@ -113,10 +111,6 @@ Use `shell.exec` when:
 - the result is saved under `/artifacts/<agent-id>`;
 - evidence matters more than prose.
 
-## Copyable Patterns
-
-Start with [Quickstart](quickstart.html) for a runnable tutorial, then use [Configuration](configuration.html) for copyable YAML patterns: PM plus workers, PM plus critic, Python experiment teams, web research, and review pipelines.
-
 ## Project Layout
 
 After `suzumio init`, the runtime root contains the project state generated from YAML:
@@ -136,10 +130,10 @@ $SUZUMIO_ROOT/tiny-research/
 
 | Goal | Read |
 |------|------|
-| Run your first YAML project | [Quickstart](quickstart.html) |
-| Learn every YAML field | [Configuration](configuration.html) |
-| Configure built-in or local tools | [Toolpacks](toolpacks.html) |
-| Understand messages, signals, and activations | [Core Concepts](concepts.html) |
+| Understand scheduling | [Signal Scheduling](concepts.html) |
+| Learn every YAML field | [YAML Reference](configuration.html) |
+| Initialize, control, and inspect projects | [Run Projects](quickstart.html) |
+| Configure built-in or local tools | [Custom Tools](toolpacks.html) |
 | Operate projects from the terminal | [CLI Reference](cli.html) |
 | Integrate or build UI around Suzumio | [HTTP API](api.html) |
 
