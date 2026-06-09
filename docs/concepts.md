@@ -124,9 +124,12 @@ The runner asks Suzumio for tool-boundary signal delivery after completed tool c
 | `completion.submitted` | Yes |
 | `coordination.wait_for_signal` | Yes |
 | `scheduler.no_effect_nudge` | No |
+| `scheduler.failed_nudge` | No |
 | Generic closed custom signal | No unless the custom tool sets `usefulEffect: true`. |
 
 If an activation completes without a useful effect, `scheduler.noEffectNudge` can create a follow-up signal. The default nudge is enabled, uses `P2`, and is controlled by `maxConsecutive`, `initialDelayMs`, `backoffFactor`, and `maxDelayMs`.
+
+If an activation fails before submitting output, `scheduler.failedNudge` can create a delayed retry signal for the same agent. This is separate from provider-level retry/backoff inside the runner; it revives an agent that reached Suzumio's `failed` state.
 
 ## All-Quiet Nudge
 
@@ -162,6 +165,10 @@ scheduler:
 
 The scheduler records monitor-send events by rule, agent, and quiet timestamp, then repeats only after `repeatDelayMs` while the agent remains in the same quiet state.
 
+## Failed Agent Monitor
+
+`scheduler.failedAgentMonitor` watches named agents that remain `failed` longer than a configured delay. It sends ordinary monitor messages, usually to `pm`, and repeats while the same failed activation remains current.
+
 ## Full Tick Order
 
 The default scheduler is `nonpreemptive-signals`. `nonpreemptive-mailbox` is accepted as a compatibility alias for the same signal-driven scheduler.
@@ -171,8 +178,10 @@ The default scheduler is `nonpreemptive-signals`. `nonpreemptive-mailbox` is acc
 3. For each running agent, act only on pending `P0` interruption signals.
 4. For each quiet agent, start one activation when pending targeted signals exist.
 5. Refresh the agent list.
-6. Apply quiet-agent monitor rules.
-7. Apply all-quiet nudge rules.
+6. Apply failed-agent retry nudge rules.
+7. Apply failed-agent monitor rules.
+8. Apply quiet-agent monitor rules.
+9. Apply all-quiet nudge rules.
 
 ## Common Flows
 

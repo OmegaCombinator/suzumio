@@ -124,9 +124,12 @@ Runner 在完成 tool call 后向 Suzumio 请求 tool-boundary signal delivery�
 | `completion.submitted` | Yes |
 | `coordination.wait_for_signal` | Yes |
 | `scheduler.no_effect_nudge` | No |
+| `scheduler.failed_nudge` | No |
 | Generic closed custom signal | No，除非 custom tool 设置 `usefulEffect: true`。 |
 
 Activation 完成时没有 useful effect，`scheduler.noEffectNudge` 可以创建 follow-up signal。默认 nudge 启用，使用 `P2`，由 `maxConsecutive`、`initialDelayMs`、`backoffFactor` 和 `maxDelayMs` 控制。
+
+Activation 在提交 output 前失败时，`scheduler.failedNudge` 可以给同一个 agent 创建 delayed retry signal。它和 runner/provider 内部 retry/backoff 是分开的；作用是复活已经进入 Suzumio `failed` 状态的 agent。
 
 ## All-Quiet Nudge
 
@@ -162,6 +165,10 @@ scheduler:
 
 Scheduler 按 rule、agent 和 quiet timestamp 记录 monitor-send events。同一个 quiet state 中，只有超过 `repeatDelayMs` 后才会重复发送。
 
+## Failed Agent Monitor
+
+`scheduler.failedAgentMonitor` 监听指定 agents 是否保持 `failed` 超过配置时间。它发送普通 monitor message，通常发给 `pm`，并在同一个 failed activation 仍是当前失败状态时重复提醒。
+
 ## Full Tick Order
 
 默认 scheduler 是 `nonpreemptive-signals`。`nonpreemptive-mailbox` 作为 compatibility alias 接受，运行同一个 signal-driven scheduler。
@@ -171,8 +178,10 @@ Scheduler 按 rule、agent 和 quiet timestamp 记录 monitor-send events。同�
 3. 对 running agents，只处理 pending `P0` interruption signals。
 4. 对 quiet agents，如果存在 pending targeted signals，启动一个 activation。
 5. 刷新 agent list。
-6. 应用 quiet-agent monitor rules。
-7. 应用 all-quiet nudge rules。
+6. 应用 failed-agent retry nudge rules。
+7. 应用 failed-agent monitor rules。
+8. 应用 quiet-agent monitor rules。
+9. 应用 all-quiet nudge rules。
 
 ## Common Flows
 

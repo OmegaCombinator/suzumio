@@ -18,9 +18,22 @@ const DEFAULT_QUIET_AGENT_MONITOR_MESSAGE = [
   "If this is unexpected, send it a follow-up assignment or ask for status. If it is intentionally waiting, no action is needed.",
 ].join("\n\n");
 
+const DEFAULT_FAILED_NUDGE_MESSAGE = [
+  "Your previous activation failed before submitting output.",
+  "Retry from the existing history and workspace. If the failure repeats or appears persistent, report the exact blocker to the coordinator instead of ending silently.",
+].join("\n\n");
+
+const DEFAULT_FAILED_AGENT_MONITOR_MESSAGE = [
+  "Agent `{{agent}}` has been failed for {{failedMinutes}} minutes after activation `{{activationId}}`.",
+  "Last error: {{error}}",
+  "PM: send a concrete retry/follow-up or reassign the lane. If failedNudge is enabled, check whether an automatic retry is already pending before intervening.",
+].join("\n\n");
+
 const DEFAULT_NO_EFFECT_NUDGE = { enabled: true, priority: "P2" as const, maxConsecutive: 0, initialDelayMs: 30_000, backoffFactor: 2, maxDelayMs: 300_000 };
+const DEFAULT_FAILED_NUDGE = { enabled: false, priority: "P2" as const, maxConsecutive: 3, initialDelayMs: 60_000, backoffFactor: 2, maxDelayMs: 900_000, message: DEFAULT_FAILED_NUDGE_MESSAGE };
 const DEFAULT_ALL_QUIET_NUDGE = { enabled: false, targetAgent: "pm", priority: "P2" as const, cooldownMs: 300_000, message: DEFAULT_ALL_QUIET_NUDGE_MESSAGE };
 const DEFAULT_QUIET_AGENT_MONITOR = { enabled: false, rules: [] };
+const DEFAULT_FAILED_AGENT_MONITOR = { enabled: false, rules: [] };
 
 const QuietAgentMonitorRuleSchema = z.object({
   id: z.string().min(1).optional(),
@@ -32,6 +45,18 @@ const QuietAgentMonitorRuleSchema = z.object({
   initialDelayMs: z.number().int().min(0).default(30 * 60_000),
   repeatDelayMs: z.number().int().positive().default(15 * 60_000),
   message: z.string().min(1).default(DEFAULT_QUIET_AGENT_MONITOR_MESSAGE),
+});
+
+const FailedAgentMonitorRuleSchema = z.object({
+  id: z.string().min(1).optional(),
+  enabled: z.boolean().default(true),
+  agent: z.string().min(1),
+  recipient: z.string().min(1).default("pm"),
+  sender: z.string().min(1).default("monitor"),
+  priority: MessagePrioritySchema.default("P2"),
+  initialDelayMs: z.number().int().min(0).default(5 * 60_000),
+  repeatDelayMs: z.number().int().positive().default(15 * 60_000),
+  message: z.string().min(1).default(DEFAULT_FAILED_AGENT_MONITOR_MESSAGE),
 });
 
 const SchedulerSchema = z.preprocess(
@@ -56,6 +81,17 @@ const SchedulerSchema = z.preprocess(
           maxDelayMs: z.number().int().min(0).default(300_000),
         })
         .default(DEFAULT_NO_EFFECT_NUDGE),
+      failedNudge: z
+        .object({
+          enabled: z.boolean().default(false),
+          priority: MessagePrioritySchema.default("P2"),
+          maxConsecutive: z.number().int().min(0).default(3),
+          initialDelayMs: z.number().int().min(0).default(60_000),
+          backoffFactor: z.number().min(1).default(2),
+          maxDelayMs: z.number().int().min(0).default(900_000),
+          message: z.string().min(1).default(DEFAULT_FAILED_NUDGE_MESSAGE),
+        })
+        .default(DEFAULT_FAILED_NUDGE),
       allQuietNudge: z
         .object({
           enabled: z.boolean().default(false),
@@ -71,8 +107,14 @@ const SchedulerSchema = z.preprocess(
           rules: z.array(QuietAgentMonitorRuleSchema).default([]),
         })
         .default(DEFAULT_QUIET_AGENT_MONITOR),
+      failedAgentMonitor: z
+        .object({
+          enabled: z.boolean().default(false),
+          rules: z.array(FailedAgentMonitorRuleSchema).default([]),
+        })
+        .default(DEFAULT_FAILED_AGENT_MONITOR),
     })
-    .default({ kind: "nonpreemptive-signals", maxSignalsPerActivation: 20, noEffectNudge: DEFAULT_NO_EFFECT_NUDGE, allQuietNudge: DEFAULT_ALL_QUIET_NUDGE, quietAgentMonitor: DEFAULT_QUIET_AGENT_MONITOR }),
+    .default({ kind: "nonpreemptive-signals", maxSignalsPerActivation: 20, noEffectNudge: DEFAULT_NO_EFFECT_NUDGE, failedNudge: DEFAULT_FAILED_NUDGE, allQuietNudge: DEFAULT_ALL_QUIET_NUDGE, quietAgentMonitor: DEFAULT_QUIET_AGENT_MONITOR, failedAgentMonitor: DEFAULT_FAILED_AGENT_MONITOR }),
 );
 
 const CommunicationSchema = z

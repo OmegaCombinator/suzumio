@@ -169,6 +169,13 @@ scheduler:
     initialDelayMs: 30000
     backoffFactor: 2
     maxDelayMs: 300000
+  failedNudge:
+    enabled: false
+    priority: P2
+    maxConsecutive: 3
+    initialDelayMs: 60000
+    backoffFactor: 2
+    maxDelayMs: 900000
   allQuietNudge:
     enabled: false
     targetAgent: pm
@@ -185,6 +192,17 @@ scheduler:
         initialDelayMs: 1800000
         repeatDelayMs: 900000
         message: "{{agent}} has been quiet for {{quietMinutes}} minutes."
+  failedAgentMonitor:
+    enabled: true
+    rules:
+      - id: worker-failed-watch
+        agent: worker-1
+        recipient: pm
+        sender: monitor
+        priority: P2
+        initialDelayMs: 300000
+        repeatDelayMs: 900000
+        message: "{{agent}} has been failed for {{failedMinutes}} minutes after {{activationId}}."
 ```
 
 | Field | Default | Description |
@@ -193,10 +211,17 @@ scheduler:
 | `maxSignalsPerActivation` | `20` | Maximum pending signals included at activation start. |
 | `noEffectNudge.enabled` | `true` | Creates a follow-up nudge when an activation completes with no useful effect. |
 | `noEffectNudge.priority` | `P2` | Priority for no-effect nudge signals. |
-| `noEffectNudge.maxConsecutive` | `0` | Maximum consecutive nudges after no-effect activations. `0` disables repeated nudging. |
+| `noEffectNudge.maxConsecutive` | `0` | Maximum consecutive nudges after no-effect activations. `0` means no limit. |
 | `noEffectNudge.initialDelayMs` | `30000` | Initial nudge delay. |
 | `noEffectNudge.backoffFactor` | `2` | Exponential backoff multiplier. |
 | `noEffectNudge.maxDelayMs` | `300000` | Maximum nudge delay. |
+| `failedNudge.enabled` | `false` | Creates a delayed self-directed retry signal when an agent remains `failed` with no pending signal. |
+| `failedNudge.priority` | `P2` | Priority for failed retry signals. |
+| `failedNudge.maxConsecutive` | `3` | Maximum consecutive automatic retries after failed activations. `0` means no limit. |
+| `failedNudge.initialDelayMs` | `60000` | Delay before the first failed retry signal. |
+| `failedNudge.backoffFactor` | `2` | Exponential backoff multiplier for later failed retry signals. |
+| `failedNudge.maxDelayMs` | `900000` | Maximum failed retry delay. |
+| `failedNudge.message` | Built-in text | Nudge body rendered to the failed agent. |
 | `allQuietNudge.enabled` | `false` | Creates a scheduler signal when all agents are quiet and no pending signals exist. |
 | `allQuietNudge.targetAgent` | `pm` | Agent that receives the all-quiet nudge. |
 | `allQuietNudge.priority` | `P2` | Priority for all-quiet nudge signals. |
@@ -204,6 +229,8 @@ scheduler:
 | `allQuietNudge.message` | Built-in text | Nudge body rendered into the scheduler signal. |
 | `quietAgentMonitor.enabled` | `false` | Enables quiet-agent monitor rules. |
 | `quietAgentMonitor.rules` | Empty list | List of quiet-agent monitor rules. |
+| `failedAgentMonitor.enabled` | `false` | Enables failed-agent monitor rules. |
+| `failedAgentMonitor.rules` | Empty list | List of failed-agent monitor rules. |
 
 Quiet-agent monitor rule fields:
 
@@ -220,6 +247,8 @@ Quiet-agent monitor rule fields:
 | `message` | Built-in text | Template body for the monitor message. |
 
 Monitor templates support `{{project}}`, `{{agent}}`, `{{recipient}}`, `{{sender}}`, `{{quietMs}}`, `{{quietMinutes}}`, `{{quietSince}}`, `{{now}}`, `{{attempt}}`, `{{initialDelayMs}}`, `{{repeatDelayMs}}`, and `{{ruleId}}`.
+
+Failed-agent monitor rules use the same fields, but trigger while the agent is `failed`. Their templates also support `{{failedMs}}`, `{{failedMinutes}}`, `{{failedSince}}`, `{{activationId}}`, and `{{error}}`.
 
 ## `communication`
 

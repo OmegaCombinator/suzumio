@@ -1,8 +1,19 @@
-import type { AgentConfig, AgentRecord, DockerMountConfig, ProjectConfig, QuietAgentMonitorRuleConfig, SignalRecord } from "./types.js";
+import type { AgentConfig, AgentRecord, DockerMountConfig, FailedAgentMonitorRuleConfig, FailedNudgeConfig, ProjectConfig, QuietAgentMonitorRuleConfig, SignalRecord } from "./types.js";
 import { DockerChatBackend } from "./backend.js";
 import { ProjectStore } from "./store.js";
 
 const QUIET_AGENT_MONITOR_EVENT = "scheduler.quiet_agent_monitor.message_sent";
+const FAILED_AGENT_MONITOR_EVENT = "scheduler.failed_agent_monitor.message_sent";
+
+const DEFAULT_FAILED_NUDGE: FailedNudgeConfig = {
+  enabled: false,
+  priority: "P2",
+  maxConsecutive: 3,
+  initialDelayMs: 60_000,
+  backoffFactor: 2,
+  maxDelayMs: 900_000,
+  message: "Your previous activation failed before submitting output. Retry from the existing history and workspace. If the failure repeats or appears persistent, report the exact blocker to the coordinator instead of ending silently.",
+};
 
 export class NonPreemptiveSignalScheduler {
   private readonly backend: DockerChatBackend;
@@ -18,7 +29,10 @@ export class NonPreemptiveSignalScheduler {
       if (projectRow.status !== "running") return;
       const agents = store.listAgents();
       for (const agent of agents) await this.tickAgent(store, agent, agents);
-      this.maybeMonitorQuietAgents(store, store.listAgents());
+      const currentAgents = store.listAgents();
+      this.maybeNudgeFailedAgents(store, currentAgents);
+      this.maybeMonitorFailedAgents(store, currentAgents);
+      this.maybeMonitorQuietAgents(store, currentAgents);
       this.maybeNudgeAllQuiet(store);
     } finally {
       store.close();
@@ -156,6 +170,110 @@ export class NonPreemptiveSignalScheduler {
       messageId: message.id,
     });
   }
+
+  private maybeNudgeFailedAgents(store: ProjectStore, agents: AgentRecord[]): void {
+    const nudge = store.config().scheduler.failedNudge ?? DEFAULT_FAILED_NUDGE;
+    if (!nudge.enabled) return;
+    for (const agent of agents) {
+      if (agent.status !== "failed") continue;
+      if (store.hasPendingSignalsForAgent(agent.id, true)) continue;
+      const failedActivation = store.latestFailedActivation(agent.id);
+      if (!failedActivation) continue;
+      const previousAttempt = store.deliveredSchedulerNudgeAttempt("scheduler.failed_nudge", failedActivation.id);
+      const maxConsecutive = nudge.maxConsecutive ?? 0;
+      if (maxConsecutive !== 0 && previousAttempt >= maxConsecutive) continue;
+      const attempt = previousAttempt + 1;
+      const delayMs = failedNudgeDelayMs(nudge, attempt);
+      const notBefore = delayMs === 0 ? undefined : new Date(Date.now() + delayMs).toISOString();
+      store.recordSignal({
+        kind: "scheduler.failed_nudge",
+        targetAgent: agent.id,
+        priority: nudge.priority,
+        notBefore,
+        usefulEffect: false,
+        payload: {
+          previousActivationId: failedActivation.id,
+          attempt,
+          maxConsecutive,
+          delayMs,
+          notBefore,
+          error: failedActivation.error,
+          message: nudge.message,
+        },
+      });
+    }
+  }
+
+  private maybeMonitorFailedAgents(store: ProjectStore, agents: AgentRecord[]): void {
+    const config = store.config();
+    const monitor = config.scheduler.failedAgentMonitor;
+    const rules = monitor?.rules ?? [];
+    if (!monitor?.enabled || rules.length === 0) return;
+    const agentsById = new Map(agents.map((agent) => [agent.id, agent]));
+    const now = Date.now();
+    for (const [index, rule] of rules.entries()) {
+      this.maybeSendFailedAgentMonitorMessage(store, agentsById, rule, index, now);
+    }
+  }
+
+  private maybeSendFailedAgentMonitorMessage(store: ProjectStore, agentsById: Map<string, AgentRecord>, rule: FailedAgentMonitorRuleConfig, index: number, now: number): void {
+    if (rule.enabled === false) return;
+    const agent = agentsById.get(rule.agent);
+    if (!agent || agent.status !== "failed") return;
+    const failedActivation = store.latestFailedActivation(agent.id);
+    if (!failedActivation) return;
+    const recipient = rule.recipient ?? "pm";
+    if (recipient !== "user" && !agentsById.has(recipient)) return;
+    const failedSince = failedActivation.completedAt ?? agent.updatedAt;
+    const failedSinceMs = Date.parse(failedSince);
+    if (!Number.isFinite(failedSinceMs)) return;
+    const failedMs = now - failedSinceMs;
+    if (failedMs < 0) return;
+    const initialDelayMs = Math.max(0, Math.trunc(rule.initialDelayMs ?? 5 * 60_000));
+    const repeatDelayMs = Math.max(1, Math.trunc(rule.repeatDelayMs ?? 15 * 60_000));
+    const ruleKey = failedAgentMonitorRuleKey(rule, index);
+    const last = store.latestEvent({
+      type: FAILED_AGENT_MONITOR_EVENT,
+      match: (data) => data.ruleKey === ruleKey && data.agent === agent.id && data.failedActivationId === failedActivation.id,
+    });
+    if (!last && failedMs < initialDelayMs) return;
+    if (last && now - Date.parse(last.createdAt) < repeatDelayMs) return;
+
+    const attempt = last ? Math.max(1, Math.trunc(Number(last.data.attempt) || 1)) + 1 : 1;
+    const sender = rule.sender ?? "monitor";
+    const body = renderFailedAgentMonitorMessage(rule, {
+      project: store.project,
+      agent: agent.id,
+      recipient,
+      sender,
+      failedMs,
+      failedMinutes: Math.floor(failedMs / 60_000),
+      failedSince,
+      now: new Date(now).toISOString(),
+      initialDelayMs,
+      repeatDelayMs,
+      attempt,
+      ruleId: rule.id ?? ruleKey,
+      activationId: failedActivation.id,
+      error: trimForTemplate(failedActivation.error ?? "unknown failure"),
+    });
+    const message = store.sendMessage({ sender, recipient, priority: rule.priority ?? "P2", body });
+    store.appendEvent(FAILED_AGENT_MONITOR_EVENT, {
+      ruleKey,
+      ruleId: rule.id,
+      agent: agent.id,
+      failedActivationId: failedActivation.id,
+      recipient,
+      sender,
+      priority: rule.priority ?? "P2",
+      failedSince,
+      failedMs,
+      initialDelayMs,
+      repeatDelayMs,
+      attempt,
+      messageId: message.id,
+    });
+  }
 }
 
 export class NonPreemptiveMailboxScheduler extends NonPreemptiveSignalScheduler {}
@@ -265,6 +383,9 @@ function renderSignal(signal: SignalRecord): string {
   if (signal.kind === "scheduler.no_effect_nudge") {
     return [`## ${signal.id} scheduler.no_effect_nudge`, `Priority: ${signal.priority}`, "", String(signal.payload.message ?? "Your previous activation produced no externally visible effect. Before ending, call messages.send, coordination.wait_for_signal, or completion.submit as appropriate.")].join("\n");
   }
+  if (signal.kind === "scheduler.failed_nudge") {
+    return [`## ${signal.id} scheduler.failed_nudge`, `Priority: ${signal.priority}`, "", String(signal.payload.message ?? "Your previous activation failed before submitting output. Retry from existing history and report a blocker if the failure repeats.")].join("\n");
+  }
   if (signal.kind === "scheduler.all_quiet_nudge") {
     return [`## ${signal.id} scheduler.all_quiet_nudge`, `Priority: ${signal.priority}`, "", String(signal.payload.message ?? "All agents are quiet and no pending signals exist. Rehydrate work by sending targeted messages before waiting.")].join("\n");
   }
@@ -295,8 +416,32 @@ function quietAgentMonitorRuleKey(rule: QuietAgentMonitorRuleConfig, index: numb
   return rule.id ?? `${index}:${rule.agent}:${rule.sender ?? "monitor"}->${rule.recipient ?? "pm"}`;
 }
 
+function failedAgentMonitorRuleKey(rule: FailedAgentMonitorRuleConfig, index: number): string {
+  return rule.id ?? `${index}:${rule.agent}:${rule.sender ?? "monitor"}->${rule.recipient ?? "pm"}`;
+}
+
 function renderQuietAgentMonitorMessage(rule: QuietAgentMonitorRuleConfig, values: Record<string, string | number>): string {
   const template = rule.message || "Agent `{{agent}}` has been quiet for {{quietMinutes}} minutes.";
   const replacements: Record<string, string | number> = { ...values, agentId: values.agent, quietMinutes: Math.floor(Number(values.quietMs) / 60_000) };
   return template.replace(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g, (match, key: string) => String(replacements[key] ?? match));
+}
+
+function renderFailedAgentMonitorMessage(rule: FailedAgentMonitorRuleConfig, values: Record<string, string | number>): string {
+  const template = rule.message || "Agent `{{agent}}` has been failed for {{failedMinutes}} minutes after activation `{{activationId}}`.";
+  const replacements: Record<string, string | number> = { ...values, agentId: values.agent };
+  return template.replace(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g, (match, key: string) => String(replacements[key] ?? match));
+}
+
+function failedNudgeDelayMs(config: Partial<FailedNudgeConfig>, attempt: number): number {
+  const initialDelayMs = Math.max(0, Math.trunc(config.initialDelayMs ?? 60_000));
+  const maxDelayMs = Math.max(0, Math.trunc(config.maxDelayMs ?? 900_000));
+  const factor = Math.max(1, config.backoffFactor ?? 2);
+  const uncapped = initialDelayMs * factor ** Math.max(0, attempt - 1);
+  if (!Number.isFinite(uncapped)) return maxDelayMs;
+  return Math.min(maxDelayMs, Math.trunc(uncapped));
+}
+
+function trimForTemplate(value: string): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  return normalized.length <= 700 ? normalized : `${normalized.slice(0, 697)}...`;
 }

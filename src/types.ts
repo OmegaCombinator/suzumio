@@ -48,8 +48,10 @@ export interface SchedulerConfig {
   maxSignalsPerActivation: number;
   maxPromptMessages?: number;
   noEffectNudge: NoEffectNudgeConfig;
+  failedNudge: FailedNudgeConfig;
   allQuietNudge: AllQuietNudgeConfig;
   quietAgentMonitor: QuietAgentMonitorConfig;
+  failedAgentMonitor: FailedAgentMonitorConfig;
 }
 
 export interface NoEffectNudgeConfig {
@@ -59,6 +61,16 @@ export interface NoEffectNudgeConfig {
   initialDelayMs: number;
   backoffFactor: number;
   maxDelayMs: number;
+}
+
+export interface FailedNudgeConfig {
+  enabled: boolean;
+  priority: MessagePriority;
+  maxConsecutive: number;
+  initialDelayMs: number;
+  backoffFactor: number;
+  maxDelayMs: number;
+  message: string;
 }
 
 export interface AllQuietNudgeConfig {
@@ -74,7 +86,24 @@ export interface QuietAgentMonitorConfig {
   rules: QuietAgentMonitorRuleConfig[];
 }
 
+export interface FailedAgentMonitorConfig {
+  enabled: boolean;
+  rules: FailedAgentMonitorRuleConfig[];
+}
+
 export interface QuietAgentMonitorRuleConfig {
+  id?: string;
+  enabled: boolean;
+  agent: string;
+  recipient: string;
+  sender: string;
+  priority: MessagePriority;
+  initialDelayMs: number;
+  repeatDelayMs: number;
+  message: string;
+}
+
+export interface FailedAgentMonitorRuleConfig {
   id?: string;
   enabled: boolean;
   agent: string;

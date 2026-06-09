@@ -338,3 +338,148 @@ test("quiet agent monitor sends PM messages and repeats after interval", async (
     }
   });
 });
+
+test("failed nudge creates delayed retry signals with backoff", async () => {
+  const config = projectConfig("policy-failed-nudge", {
+    scheduler: {
+      failedNudge: {
+        enabled: true,
+        priority: "P2",
+        maxConsecutive: 2,
+        initialDelayMs: 1000,
+        backoffFactor: 2,
+        maxDelayMs: 5000,
+        message: "Retry after failure.",
+      },
+    },
+  });
+  await withProject(config, async (root) => {
+    const store = new ProjectStore(config.name, root);
+    try {
+      store.setProjectStatus("running");
+      const worker = store.requireAgent("worker");
+      const first = store.createActivation(worker, "first");
+      store.failActivation(first.id, "provider timeout");
+    } finally {
+      store.close();
+    }
+
+    await new NonPreemptiveSignalScheduler(root).tickProject(config.name);
+
+    const afterFirst = new ProjectStore(config.name, root);
+    let firstNudge;
+    try {
+      firstNudge = afterFirst.db.prepare("SELECT id, payload_json, not_before FROM signals WHERE project = ? AND kind = 'scheduler.failed_nudge' ORDER BY created_at DESC LIMIT 1").get(config.name);
+      assert.ok(firstNudge);
+      const payload = JSON.parse(firstNudge.payload_json);
+      assert.equal(payload.attempt, 1);
+      assert.equal(payload.delayMs, 1000);
+      assert.equal(payload.error, "provider timeout");
+      assert.ok(Date.parse(firstNudge.not_before) > Date.now());
+
+      afterFirst.db.prepare("UPDATE signals SET not_before = created_at WHERE project = ? AND id = ?").run(config.name, firstNudge.id);
+      const ready = afterFirst.pendingSignals("worker", 10);
+      assert.equal(ready.length, 1);
+      assert.equal(ready[0].kind, "scheduler.failed_nudge");
+
+      const worker = afterFirst.requireAgent("worker");
+      const second = afterFirst.createActivation(worker, "second");
+      afterFirst.markSignalsDelivered("worker", ready, second.id);
+      afterFirst.failActivation(second.id, "provider timeout again");
+    } finally {
+      afterFirst.close();
+    }
+
+    await new NonPreemptiveSignalScheduler(root).tickProject(config.name);
+
+    const afterSecond = new ProjectStore(config.name, root);
+    try {
+      const secondNudge = afterSecond.db.prepare("SELECT payload_json, not_before FROM signals WHERE project = ? AND kind = 'scheduler.failed_nudge' AND status = 'pending' ORDER BY created_at DESC LIMIT 1").get(config.name);
+      assert.ok(secondNudge);
+      const payload = JSON.parse(secondNudge.payload_json);
+      assert.equal(payload.attempt, 2);
+      assert.equal(payload.delayMs, 2000);
+      assert.ok(Date.parse(secondNudge.not_before) > Date.now());
+    } finally {
+      afterSecond.close();
+    }
+  });
+});
+
+test("failed agent monitor sends PM messages and repeats after interval", async () => {
+  const config = projectConfig("policy-failed-monitor", {
+    scheduler: {
+      failedAgentMonitor: {
+        enabled: true,
+        rules: [
+          {
+            id: "worker-failed",
+            agent: "worker",
+            recipient: "pm",
+            sender: "monitor",
+            priority: "P2",
+            initialDelayMs: 30 * 60 * 1000,
+            repeatDelayMs: 15 * 60 * 1000,
+            message: "{{agent}} failed for {{failedMinutes}} minutes after {{activationId}}; attempt {{attempt}}; error {{error}}.",
+          },
+        ],
+      },
+    },
+  });
+  await withProject(config, async (root) => {
+    let activationId;
+    const failedSince = new Date(Date.now() - 31 * 60 * 1000).toISOString();
+    const store = new ProjectStore(config.name, root);
+    try {
+      store.setProjectStatus("running");
+      const worker = store.requireAgent("worker");
+      const activation = store.createActivation(worker, "failed");
+      activationId = activation.id;
+      store.failActivation(activation.id, "model timeout");
+      store.db.prepare("UPDATE activations SET completed_at = ? WHERE project = ? AND id = ?").run(failedSince, config.name, activation.id);
+      store.db.prepare("UPDATE agents SET updated_at = ? WHERE project = ? AND id = ?").run(failedSince, config.name, "worker");
+    } finally {
+      store.close();
+    }
+
+    await new NonPreemptiveSignalScheduler(root).tickProject(config.name);
+
+    const checked = new ProjectStore(config.name, root);
+    try {
+      const messages = checked.listMessages(10).filter((message) => message.sender === "monitor");
+      assert.equal(messages.length, 1);
+      assert.equal(messages[0].recipient, "pm");
+      assert.equal(messages[0].priority, "P2");
+      assert.match(messages[0].body, new RegExp(`worker failed for 31 minutes after ${activationId}; attempt 1; error model timeout\\.`));
+
+      const signals = checked.pendingSignals("pm", 10);
+      assert.equal(signals.length, 1);
+      assert.equal(signals[0].kind, "message.created");
+      checked.markSignalsDelivered("pm", signals, "act_test_failed_monitor_delivery");
+    } finally {
+      checked.close();
+    }
+
+    await new NonPreemptiveSignalScheduler(root).tickProject(config.name);
+
+    const afterImmediateTick = new ProjectStore(config.name, root);
+    try {
+      assert.equal(afterImmediateTick.listMessages(10).filter((message) => message.sender === "monitor").length, 1);
+      const oldEventTime = new Date(Date.now() - 16 * 60 * 1000).toISOString();
+      afterImmediateTick.db.prepare("UPDATE events SET created_at = ? WHERE project = ? AND type = ?").run(oldEventTime, config.name, "scheduler.failed_agent_monitor.message_sent");
+    } finally {
+      afterImmediateTick.close();
+    }
+
+    await new NonPreemptiveSignalScheduler(root).tickProject(config.name);
+
+    const afterRepeat = new ProjectStore(config.name, root);
+    try {
+      const messages = afterRepeat.listMessages(10).filter((message) => message.sender === "monitor");
+      assert.equal(messages.length, 2);
+      assert.match(messages[1].body, /attempt 2/);
+    } finally {
+      afterRepeat.close();
+    }
+  });
+});

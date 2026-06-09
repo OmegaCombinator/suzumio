@@ -454,6 +454,28 @@ export class ProjectStore {
     return row !== undefined;
   }
 
+  hasPendingSignalsForAgent(agentId: string, includeNotReady = false): boolean {
+    const row = includeNotReady
+      ? (this.db.prepare("SELECT id FROM signals WHERE project = ? AND target_agent = ? AND status = 'pending' LIMIT 1").get(this.project, agentId) as { id: string } | undefined)
+      : (this.db.prepare("SELECT id FROM signals WHERE project = ? AND target_agent = ? AND status = 'pending' AND not_before <= ? LIMIT 1").get(this.project, agentId, nowIso()) as { id: string } | undefined);
+    return row !== undefined;
+  }
+
+  latestFailedActivation(agentId: string): ActivationRecord | undefined {
+    const row = this.db
+      .prepare("SELECT * FROM activations WHERE project = ? AND agent_id = ? AND status = 'failed' ORDER BY completed_at DESC, started_at DESC LIMIT 1")
+      .get(this.project, agentId) as DbActivation | undefined;
+    return row ? activationFromRow(row) : undefined;
+  }
+
+  deliveredSchedulerNudgeAttempt(kind: string, activationId: string): number {
+    const row = this.db.prepare("SELECT payload_json FROM signals WHERE project = ? AND delivered_activation_id = ? AND kind = ? ORDER BY created_at DESC LIMIT 1").get(this.project, activationId, kind) as { payload_json: string } | undefined;
+    if (!row) return 0;
+    const payload = JSON.parse(row.payload_json) as Record<string, unknown>;
+    const attempt = payload.attempt;
+    return typeof attempt === "number" && Number.isFinite(attempt) ? Math.max(1, Math.trunc(attempt)) : 1;
+  }
+
   latestSignalCreatedAt(input: { kind: string; targetAgent?: string }): string | undefined {
     const row = this.db
       .prepare(
@@ -540,11 +562,7 @@ export class ProjectStore {
   }
 
   private deliveredNoEffectNudgeAttempt(activationId: string): number {
-    const row = this.db.prepare("SELECT payload_json FROM signals WHERE project = ? AND delivered_activation_id = ? AND kind = 'scheduler.no_effect_nudge' ORDER BY created_at DESC LIMIT 1").get(this.project, activationId) as { payload_json: string } | undefined;
-    if (!row) return 0;
-    const payload = JSON.parse(row.payload_json) as Record<string, unknown>;
-    const attempt = payload.attempt;
-    return typeof attempt === "number" && Number.isFinite(attempt) ? Math.max(1, Math.trunc(attempt)) : 1;
+    return this.deliveredSchedulerNudgeAttempt("scheduler.no_effect_nudge", activationId);
   }
 
   private signalTargets(input: { sourceAgent?: string; targetAgent?: string; targetChannel?: string }): Array<{ targetAgent?: string; targetChannel?: string }> {
@@ -748,6 +766,7 @@ function signalStatus(value: unknown, fallback: SignalRecord["status"]): SignalR
 
 function defaultUsefulEffect(kind: string, status: SignalRecord["status"]): boolean {
   if (kind === "scheduler.no_effect_nudge") return false;
+  if (kind === "scheduler.failed_nudge") return false;
   if (status === "pending") return true;
   return kind === "message.created" || kind === "completion.submitted" || kind === "coordination.wait_for_signal";
 }
@@ -797,6 +816,9 @@ function renderSignalForHistory(signal: SignalRecord): string {
   }
   if (signal.kind === "scheduler.no_effect_nudge") {
     return [`## ${signal.id} scheduler.no_effect_nudge`, `Priority: ${signal.priority}`, "", String(signal.payload.message ?? "Your previous activation produced no externally visible effect. Before ending, call messages.send, coordination.wait_for_signal, or completion.submit as appropriate.")].join("\n");
+  }
+  if (signal.kind === "scheduler.failed_nudge") {
+    return [`## ${signal.id} scheduler.failed_nudge`, `Priority: ${signal.priority}`, "", String(signal.payload.message ?? "Your previous activation failed before submitting output. Retry from existing history and report a blocker if the failure repeats.")].join("\n");
   }
   if (signal.kind === "scheduler.all_quiet_nudge") {
     return [`## ${signal.id} scheduler.all_quiet_nudge`, `Priority: ${signal.priority}`, "", String(signal.payload.message ?? "All agents are quiet and no pending signals exist. Rehydrate work by sending targeted messages before waiting.")].join("\n");

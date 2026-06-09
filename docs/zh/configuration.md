@@ -169,6 +169,13 @@ scheduler:
     initialDelayMs: 30000
     backoffFactor: 2
     maxDelayMs: 300000
+  failedNudge:
+    enabled: false
+    priority: P2
+    maxConsecutive: 3
+    initialDelayMs: 60000
+    backoffFactor: 2
+    maxDelayMs: 900000
   allQuietNudge:
     enabled: false
     targetAgent: pm
@@ -185,6 +192,17 @@ scheduler:
         initialDelayMs: 1800000
         repeatDelayMs: 900000
         message: "{{agent}} has been quiet for {{quietMinutes}} minutes."
+  failedAgentMonitor:
+    enabled: true
+    rules:
+      - id: worker-failed-watch
+        agent: worker-1
+        recipient: pm
+        sender: monitor
+        priority: P2
+        initialDelayMs: 300000
+        repeatDelayMs: 900000
+        message: "{{agent}} has been failed for {{failedMinutes}} minutes after {{activationId}}."
 ```
 
 | 字段 | 默认值 | 说明 |
@@ -193,10 +211,17 @@ scheduler:
 | `maxSignalsPerActivation` | `20` | Activation start 时最多包含的 pending signals 数量。 |
 | `noEffectNudge.enabled` | `true` | Activation 完成但没有 useful effect 时创建 follow-up nudge。 |
 | `noEffectNudge.priority` | `P2` | No-effect nudge signal priority。 |
-| `noEffectNudge.maxConsecutive` | `0` | 连续 no-effect activations 后最多 nudge 次数。`0` 不重复 nudge。 |
+| `noEffectNudge.maxConsecutive` | `0` | 连续 no-effect activations 后最多 nudge 次数。`0` 表示不设上限。 |
 | `noEffectNudge.initialDelayMs` | `30000` | 初始 nudge delay。 |
 | `noEffectNudge.backoffFactor` | `2` | Exponential backoff multiplier。 |
 | `noEffectNudge.maxDelayMs` | `300000` | 最大 nudge delay。 |
+| `failedNudge.enabled` | `false` | Agent 保持 `failed` 且没有 pending signal 时，创建 delayed self-directed retry signal。 |
+| `failedNudge.priority` | `P2` | Failed retry signal priority。 |
+| `failedNudge.maxConsecutive` | `3` | Failed activations 后最多自动 retry 次数。`0` 表示不设上限。 |
+| `failedNudge.initialDelayMs` | `60000` | 第一次 failed retry signal 前的 delay。 |
+| `failedNudge.backoffFactor` | `2` | 后续 failed retry signals 的 exponential backoff multiplier。 |
+| `failedNudge.maxDelayMs` | `900000` | 最大 failed retry delay。 |
+| `failedNudge.message` | Built-in text | 渲染给 failed agent 的 nudge body。 |
 | `allQuietNudge.enabled` | `false` | 所有 agents quiet 且无 pending signals 时创建 scheduler signal。 |
 | `allQuietNudge.targetAgent` | `pm` | 接收 all-quiet nudge 的 agent。 |
 | `allQuietNudge.priority` | `P2` | All-quiet nudge signal priority。 |
@@ -204,6 +229,8 @@ scheduler:
 | `allQuietNudge.message` | Built-in text | 渲染进 scheduler signal 的 message。 |
 | `quietAgentMonitor.enabled` | `false` | 启用 quiet-agent monitor rules。 |
 | `quietAgentMonitor.rules` | Empty list | Quiet-agent monitor rule list。 |
+| `failedAgentMonitor.enabled` | `false` | 启用 failed-agent monitor rules。 |
+| `failedAgentMonitor.rules` | Empty list | Failed-agent monitor rule list。 |
 
 Quiet-agent monitor rule 字段：
 
@@ -220,6 +247,8 @@ Quiet-agent monitor rule 字段：
 | `message` | Built-in text | Monitor message template body。 |
 
 Monitor template 支持 `{{project}}`、`{{agent}}`、`{{recipient}}`、`{{sender}}`、`{{quietMs}}`、`{{quietMinutes}}`、`{{quietSince}}`、`{{now}}`、`{{attempt}}`、`{{initialDelayMs}}`、`{{repeatDelayMs}}` 和 `{{ruleId}}`。
+
+Failed-agent monitor rules 使用同样字段，但只在 agent 是 `failed` 时触发。它们的 templates 还支持 `{{failedMs}}`、`{{failedMinutes}}`、`{{failedSince}}`、`{{activationId}}` 和 `{{error}}`。
 
 ## `communication`
 
