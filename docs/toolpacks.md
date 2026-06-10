@@ -195,6 +195,19 @@ Toolpacks can register user-facing controls in the WebUI without writing browser
 }
 ```
 
+Built-in toolpacks register these WebUI controls when enabled in `tools.toolpacks`:
+
+| Toolpack | WebUI entry | Purpose |
+|----------|-------------|---------|
+| `core` | `project.stats` | Project, agent, message, activation, history, and tool-call counts. |
+| `core` | `messages.conversation` | View direct conversation history between two participants. |
+| `core` | `messages.send` | Send a user-facing message to an agent or channel. |
+| `core` | `coordination.signals` | Inspect pending, delivered, and closed scheduler signals. |
+| `core` | `completion.report` | Show `completion.submit` status and the submitted report path/content. |
+| `core` | `file.activity` | Aggregate file.read, file.write, and file.patch calls without exposing file contents. |
+| `shell` | `shell.activity` | Aggregate shell.exec calls, recent commands, failures, and running commands. |
+| `web` | `web.activity` | Aggregate web.fetch calls, recent URLs, failures, and running fetches. |
+
 The controller module handles WebUI entries by exporting `createWebuiToolpack(context)`, a `webui` handler map, or a default handler map. Handlers return the same `{ output, title?, metadata? }` shape as tool support handlers.
 
 ```js

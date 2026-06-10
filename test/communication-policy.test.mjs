@@ -128,6 +128,15 @@ test("core toolpack registers project stats for WebUI", async () => {
   await withProject(config, async (root) => {
     const host = new ToolSupportHost(root);
     const entries = await host.listWebui(config.name);
+    const ids = entries.map((entry) => `${entry.toolpackId}/${entry.id}`).sort();
+    assert.deepEqual(ids, [
+      "core/completion.report",
+      "core/coordination.signals",
+      "core/file.activity",
+      "core/messages.conversation",
+      "core/messages.send",
+      "core/project.stats",
+    ]);
     const stats = entries.find((entry) => entry.toolpackId === "core" && entry.id === "project.stats");
     assert.ok(stats);
     assert.equal(stats.kind, "panel");
@@ -136,6 +145,56 @@ test("core toolpack registers project stats for WebUI", async () => {
     assert.equal(result.title, "Project statistics");
     assert.match(result.output, /Agents: 3/);
     assert.ok(Array.isArray(result.metadata.metrics));
+  });
+});
+
+test("builtin WebUI controls send messages and summarize activity", async () => {
+  const config = projectConfig("policy-builtin-webui-controls");
+  config.tools = { toolpacks: ["core", "shell", "web"] };
+  config.agents.pm.tools = ["*"];
+  config.agents.worker.tools = ["*"];
+  await withProject(config, async (root) => {
+    const host = new ToolSupportHost(root);
+    const entries = await host.listWebui(config.name);
+    const ids = entries.map((entry) => `${entry.toolpackId}/${entry.id}`);
+    assert.ok(ids.includes("core/messages.send"));
+    assert.ok(ids.includes("core/messages.conversation"));
+    assert.ok(ids.includes("core/coordination.signals"));
+    assert.ok(ids.includes("core/completion.report"));
+    assert.ok(ids.includes("core/file.activity"));
+    assert.ok(ids.includes("shell/shell.activity"));
+    assert.ok(ids.includes("web/web.activity"));
+
+    const sent = await host.invokeWebui(config.name, "core", "messages.send", { sender: "user", recipient: "worker", priority: "P2", body: "Please inspect the artifact." });
+    assert.match(sent.output, /Message sent/);
+
+    const conversation = await host.invokeWebui(config.name, "core", "messages.conversation", { agentA: "user", agentB: "worker", limit: 10 });
+    assert.match(conversation.output, /Please inspect the artifact/);
+
+    const signals = await host.invokeWebui(config.name, "core", "coordination.signals", { targetAgent: "worker", limit: 10 });
+    assert.match(signals.output, /message\.created/);
+
+    const { activation, token } = await createRunningActivation(root, config.name, "worker");
+    const fileCall = await host.startToolCall({ project: config.name, agentId: "worker", activationId: activation.id, token, tool: "file.read", input: { path: "/workspace/README.md" } });
+    await host.finishToolCall({ project: config.name, agentId: "worker", activationId: activation.id, token, toolCallId: fileCall.toolCallId, status: "completed", output: "ok" });
+    const shellCall = await host.startToolCall({ project: config.name, agentId: "worker", activationId: activation.id, token, tool: "shell.exec", input: { command: "npm test", cwd: "/workspace" } });
+    await host.finishToolCall({ project: config.name, agentId: "worker", activationId: activation.id, token, toolCallId: shellCall.toolCallId, status: "failed", error: "exit 1" });
+    const webCall = await host.startToolCall({ project: config.name, agentId: "worker", activationId: activation.id, token, tool: "web.fetch", input: { url: "https://example.com/", format: "text" } });
+    await host.finishToolCall({ project: config.name, agentId: "worker", activationId: activation.id, token, toolCallId: webCall.toolCallId, status: "completed", output: "example" });
+
+    const fileActivity = await host.invokeWebui(config.name, "core", "file.activity", { limit: 10 });
+    assert.match(fileActivity.output, /file\.read/);
+    assert.match(fileActivity.output, /\/workspace\/README\.md/);
+    const shellActivity = await host.invokeWebui(config.name, "shell", "shell.activity", { limit: 10 });
+    assert.match(shellActivity.output, /npm test/);
+    assert.match(shellActivity.output, /exit 1/);
+    const webActivity = await host.invokeWebui(config.name, "web", "web.activity", { limit: 10 });
+    assert.match(webActivity.output, /https:\/\/example\.com\//);
+
+    const pmActivation = await createRunningActivation(root, config.name, "pm");
+    await host.support("core", { project: config.name, agentId: "pm", activationId: pmActivation.activation.id, token: pmActivation.token, tool: "completion.submit", input: { report: "Final report from PM." } });
+    const report = await host.invokeWebui(config.name, "core", "completion.report", {});
+    assert.match(report.output, /Final report from PM/);
   });
 });
 

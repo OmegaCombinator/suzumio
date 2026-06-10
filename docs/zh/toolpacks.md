@@ -193,6 +193,19 @@ Toolpacks 可以注册 user-facing WebUI controls，不需要写 browser code。
 }
 ```
 
+启用对应 `tools.toolpacks` 后，内置 toolpacks 会注册这些 WebUI controls：
+
+| Toolpack | WebUI entry | 用途 |
+|----------|-------------|------|
+| `core` | `project.stats` | Project、agent、message、activation、history 和 tool-call counts。 |
+| `core` | `messages.conversation` | 查看两个 participants 之间的 direct conversation history。 |
+| `core` | `messages.send` | 向 agent 或 channel 发送 user-facing message。 |
+| `core` | `coordination.signals` | 查看 pending、delivered 和 closed scheduler signals。 |
+| `core` | `completion.report` | 显示 `completion.submit` 状态，以及 submitted report path/content。 |
+| `core` | `file.activity` | 聚合 file.read、file.write、file.patch 调用，不暴露 file contents。 |
+| `shell` | `shell.activity` | 聚合 shell.exec 调用、recent commands、failures 和 running commands。 |
+| `web` | `web.activity` | 聚合 web.fetch 调用、recent URLs、failures 和 running fetches。 |
+
 Controller module 可以导出 `createWebuiToolpack(context)`、`webui` handler map，或 default handler map 来处理 WebUI entries。Handler 返回值与 tool support handler 相同，都是 `{ output, title?, metadata? }`。
 
 ```js

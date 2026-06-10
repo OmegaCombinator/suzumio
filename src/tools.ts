@@ -255,6 +255,244 @@ type LatestToolCallRow = {
   error?: string;
 };
 
+type DirectMessageRow = {
+  id: string;
+  sender: string;
+  recipient?: string;
+  channel?: string;
+  priority: MessagePriority;
+  body: string;
+  createdAt: string;
+};
+
+type DirectMessagePairRow = {
+  sender: string;
+  recipient: string;
+  count: number;
+  lastAt: string;
+};
+
+type SignalAggregateRow = {
+  status: "pending" | "delivered" | "closed";
+  priority: MessagePriority;
+  count: number;
+};
+
+type RecentSignalRow = {
+  id: string;
+  kind: string;
+  sourceAgent?: string;
+  targetAgent?: string;
+  targetChannel?: string;
+  priority: MessagePriority;
+  status: "pending" | "delivered" | "closed";
+  createdAt: string;
+  payloadSummary: string;
+};
+
+type RecentToolActivityRow = {
+  id: string;
+  tool: string;
+  agentId: string;
+  status: "running" | "completed" | "failed";
+  createdAt: string;
+  completedAt?: string;
+  summary: string;
+  error?: string;
+};
+
+function directConversationMessages(store: ProjectStore, agentA: string, agentB: string, limit: number): DirectMessageRow[] {
+  const rows = store.db.prepare(
+    `SELECT id, sender, recipient, channel, priority, body, created_at
+     FROM messages
+     WHERE project = ?
+       AND channel IS NULL
+       AND ((sender = ? AND recipient = ?) OR (sender = ? AND recipient = ?))
+     ORDER BY created_at DESC
+     LIMIT ?`,
+  ).all(store.project, agentA, agentB, agentB, agentA, limit) as Array<Record<string, unknown>>;
+  return rows.reverse().map(messageRowFromDb);
+}
+
+function recentDirectMessagePairs(store: ProjectStore, limit: number): DirectMessagePairRow[] {
+  const rows = store.db.prepare(
+    `SELECT sender, recipient, COUNT(*) AS count, MAX(created_at) AS last_at
+     FROM messages
+     WHERE project = ? AND channel IS NULL AND recipient IS NOT NULL
+     GROUP BY sender, recipient
+     ORDER BY last_at DESC
+     LIMIT ?`,
+  ).all(store.project, limit) as Array<Record<string, unknown>>;
+  return rows.map((row) => ({ sender: String(row.sender), recipient: String(row.recipient), count: numberField(row.count), lastAt: String(row.last_at) }));
+}
+
+function messageRowFromDb(row: Record<string, unknown>): DirectMessageRow {
+  return {
+    id: String(row.id),
+    sender: String(row.sender),
+    recipient: optionalString(row.recipient),
+    channel: optionalString(row.channel),
+    priority: priorityArg(row.priority),
+    body: String(row.body ?? ""),
+    createdAt: String(row.created_at),
+  };
+}
+
+function formatMessageRecord(message: DirectMessageRow): string {
+  const target = message.recipient ?? message.channel ?? "broadcast";
+  return [`## ${message.createdAt} ${message.priority} ${message.sender} -> ${target}`, `id: ${message.id}`, "", truncateForStatus(message.body, 12_000) ?? ""].join("\n");
+}
+
+function signalAggregateRows(store: ProjectStore): SignalAggregateRow[] {
+  const rows = store.db.prepare(
+    `SELECT status, priority, COUNT(*) AS count
+     FROM signals
+     WHERE project = ?
+     GROUP BY status, priority
+     ORDER BY status, priority`,
+  ).all(store.project) as Array<Record<string, unknown>>;
+  return rows.flatMap((row) => {
+    const status = signalStatusArg(row.status);
+    if (!status) return [];
+    return [{ status, priority: priorityArg(row.priority), count: numberField(row.count) }];
+  });
+}
+
+function recentSignalRows(store: ProjectStore, input: { targetAgent?: string; status?: "pending" | "delivered" | "closed"; limit: number }): RecentSignalRow[] {
+  const filters = ["project = ?"];
+  const params: Array<string | number> = [store.project];
+  if (input.targetAgent) {
+    filters.push("target_agent = ?");
+    params.push(input.targetAgent);
+  }
+  if (input.status) {
+    filters.push("status = ?");
+    params.push(input.status);
+  }
+  params.push(input.limit);
+  const rows = store.db.prepare(
+    `SELECT id, kind, source_agent, target_agent, target_channel, priority, status, payload_json, created_at
+     FROM signals
+     WHERE ${filters.join(" AND ")}
+     ORDER BY created_at DESC
+     LIMIT ?`,
+  ).all(...params) as Array<Record<string, unknown>>;
+  return rows.flatMap((row) => {
+    const status = signalStatusArg(row.status);
+    if (!status) return [];
+    return [{
+      id: String(row.id),
+      kind: String(row.kind),
+      sourceAgent: optionalString(row.source_agent),
+      targetAgent: optionalString(row.target_agent),
+      targetChannel: optionalString(row.target_channel),
+      priority: priorityArg(row.priority),
+      status,
+      createdAt: String(row.created_at),
+      payloadSummary: summarizeSignalPayload(row.payload_json),
+    }];
+  });
+}
+
+function signalStatusCounts(rows: SignalAggregateRow[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const row of rows) counts[row.status] = (counts[row.status] ?? 0) + row.count;
+  return counts;
+}
+
+function formatSignalRecord(signal: RecentSignalRow): string {
+  const target = signal.targetAgent ?? signal.targetChannel ?? "no target";
+  const source = signal.sourceAgent ? ` from ${signal.sourceAgent}` : "";
+  return `- ${signal.createdAt} [${signal.priority}/${signal.status}] ${signal.kind}${source} -> ${target}: ${signal.payloadSummary}`;
+}
+
+function summarizeSignalPayload(value: unknown): string {
+  const payload = parseJsonObject(value);
+  if (typeof payload.id === "string" && typeof payload.body === "string") return `message ${payload.id}, ${payload.body.length} chars`;
+  if (typeof payload.reason === "string") return truncateOneLine(payload.reason, 180);
+  if (typeof payload.message === "string") return truncateOneLine(payload.message, 180);
+  const keys = Object.keys(payload);
+  return keys.length ? `keys: ${keys.slice(0, 8).join(", ")}` : "no payload";
+}
+
+function toolActivityReport(store: ProjectStore, title: string, tools: string[], input: unknown, summarize: (tool: string, input: JsonObject) => string): ToolCallOutput {
+  const args = objectInput(input);
+  const limit = boundedNumber(args.limit, 20, 100);
+  const aggregateByTool = new Map(toolCallAggregateRows(store).filter((row) => tools.includes(row.tool)).map((row) => [row.tool, row]));
+  const metrics = tools.map((tool) => {
+    const row = aggregateByTool.get(tool);
+    return {
+      label: tool,
+      value: row?.callCount ?? 0,
+      description: `${row?.runningCount ?? 0} running, ${row?.completedCount ?? 0} completed, ${row?.failedCount ?? 0} failed`,
+    };
+  });
+  const recent = recentToolActivityRows(store, tools, limit, summarize);
+  const output = [
+    `${title}:`,
+    ...metrics.map((metric) => `- ${metric.label}: ${metric.value} (${metric.description})`),
+    "",
+    "Recent activity:",
+    ...(recent.length ? recent.map(formatToolActivityRecord) : ["- none"]),
+  ].join("\n");
+  return { title, output, metadata: { metrics, recent } };
+}
+
+function recentToolActivityRows(store: ProjectStore, tools: string[], limit: number, summarize: (tool: string, input: JsonObject) => string): RecentToolActivityRow[] {
+  if (tools.length === 0) return [];
+  const placeholders = tools.map(() => "?").join(", ");
+  const rows = store.db.prepare(
+    `SELECT id, tool, agent_id, status, input_json, error, created_at, completed_at
+     FROM tool_calls
+     WHERE project = ? AND tool IN (${placeholders})
+     ORDER BY created_at DESC
+     LIMIT ?`,
+  ).all(store.project, ...tools, limit) as Array<Record<string, unknown>>;
+  return rows.flatMap((row) => {
+    const status = toolCallStatusArg(row.status);
+    if (!status) return [];
+    const tool = String(row.tool);
+    const input = parseJsonObject(row.input_json);
+    return [{
+      id: String(row.id),
+      tool,
+      agentId: String(row.agent_id),
+      status,
+      createdAt: String(row.created_at),
+      completedAt: optionalString(row.completed_at),
+      summary: summarize(tool, input),
+      error: truncateForStatus(optionalString(row.error), 600),
+    }];
+  });
+}
+
+function formatToolActivityRecord(row: RecentToolActivityRow): string {
+  const closed = row.completedAt ? `, closed ${row.completedAt}` : "";
+  const error = row.error ? `\n  error: ${truncateOneLine(row.error, 220)}` : "";
+  return `- ${row.createdAt} [${row.status}] ${row.agentId} ${row.tool}: ${row.summary}${closed}${error}`;
+}
+
+function summarizeFileToolInput(tool: string, input: JsonObject): string {
+  if (tool === "file.patch") {
+    const operations = Array.isArray(input.operations) ? input.operations.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item)) : [];
+    const paths = operations.flatMap((item) => optionalString(item.path) ? [optionalString(item.path)!] : []);
+    return `${operations.length} operations${paths.length ? `: ${paths.slice(0, 6).join(", ")}${paths.length > 6 ? ", ..." : ""}` : ""}`;
+  }
+  return optionalString(input.path) ?? "path not recorded";
+}
+
+function summarizeShellInput(_tool: string, input: JsonObject): string {
+  const command = optionalString(input.command) ?? "command not recorded";
+  const cwd = optionalString(input.cwd);
+  return `${cwd ? `${cwd}: ` : ""}${truncateOneLine(command, 220)}`;
+}
+
+function summarizeWebInput(_tool: string, input: JsonObject): string {
+  const url = optionalString(input.url) ?? "url not recorded";
+  const format = optionalString(input.format);
+  return `${truncateOneLine(url, 220)}${format ? ` (${format})` : ""}`;
+}
+
 function toolCallAggregateRows(store: ProjectStore): ToolCallAggregateRow[] {
   const rows = store.db.prepare(
     `SELECT tool,
@@ -451,11 +689,25 @@ const BUILTIN_TOOLPACKS: Record<string, BuiltinToolpack> = {
       "coordination.wait_for_signal": waitForSignalSupport,
       "completion.submit": completionSubmitSupport,
     },
-    webui: [projectStatsWebuiDefinition()],
-    webuiSupport: { "project.stats": projectStatsWebuiSupport },
+    webui: [
+      projectStatsWebuiDefinition(),
+      messagesConversationWebuiDefinition(),
+      messagesSendWebuiDefinition(),
+      coordinationSignalsWebuiDefinition(),
+      completionReportWebuiDefinition(),
+      fileActivityWebuiDefinition(),
+    ],
+    webuiSupport: {
+      "project.stats": projectStatsWebuiSupport,
+      "messages.conversation": messagesConversationWebuiSupport,
+      "messages.send": messagesSendWebuiSupport,
+      "coordination.signals": coordinationSignalsWebuiSupport,
+      "completion.report": completionReportWebuiSupport,
+      "file.activity": fileActivityWebuiSupport,
+    },
   },
-  shell: { id: "shell", tools: [shellExecDefinition()], support: {}, webui: [], webuiSupport: {} },
-  web: { id: "web", tools: [webFetchDefinition()], support: {}, webui: [], webuiSupport: {} },
+  shell: { id: "shell", tools: [shellExecDefinition()], support: {}, webui: [shellActivityWebuiDefinition()], webuiSupport: { "shell.activity": shellActivityWebuiSupport } },
+  web: { id: "web", tools: [webFetchDefinition()], support: {}, webui: [webActivityWebuiDefinition()], webuiSupport: { "web.activity": webActivityWebuiSupport } },
 };
 
 function projectStatsWebuiDefinition(): ToolWebuiDefinition {
@@ -486,6 +738,228 @@ async function projectStatsWebuiSupport({ store }: ToolWebuiContext): Promise<To
     output: metrics.map((item) => `${item.label}: ${item.value}${item.description ? ` (${item.description})` : ""}`).join("\n"),
     metadata: { metrics, stats, agentStatuses, projectStatus: row.status },
   };
+}
+
+function messagesConversationWebuiDefinition(): ToolWebuiDefinition {
+  return {
+    id: "messages.conversation",
+    title: "Agent conversation",
+    description: "Inspect direct messages between two participants, such as user and pm or two agents.",
+    kind: "panel",
+    submitLabel: "Load conversation",
+    inputSchema: {
+      type: "object",
+      properties: {
+        agentA: { type: "string", default: "user", description: "First participant id. Use user for user-originated messages." },
+        agentB: { type: "string", default: "pm", description: "Second participant id." },
+        limit: { type: "number", default: 40, description: "Maximum direct messages to show." },
+      },
+      additionalProperties: false,
+    },
+  };
+}
+
+async function messagesConversationWebuiSupport({ store }: ToolWebuiContext, input: unknown): Promise<ToolCallOutput> {
+  const args = objectInput(input);
+  const agentA = optionalString(args.agentA);
+  const agentB = optionalString(args.agentB);
+  const limit = boundedNumber(args.limit, 40, 200);
+  const agents = store.listAgents();
+  const roster = ["user", ...agents.map((agent) => agent.id)].join(", ");
+  if (!agentA || !agentB) {
+    const pairs = recentDirectMessagePairs(store, 12);
+    const output = [
+      "Choose two participants and refresh this panel.",
+      `Known participants: ${roster}`,
+      "",
+      "Recent direct pairs:",
+      ...(pairs.length ? pairs.map((pair) => `- ${pair.sender} -> ${pair.recipient}: ${pair.count} messages, last ${pair.lastAt}`) : ["- none"]),
+    ].join("\n");
+    return { title: "Agent conversation", output, metadata: { participants: roster, recentPairs: pairs } };
+  }
+  const messages = directConversationMessages(store, agentA, agentB, limit);
+  const metrics = [
+    { label: "Messages", value: messages.length, description: `${agentA} <-> ${agentB}` },
+    { label: "Participants", value: 2, description: `${agentA}, ${agentB}` },
+  ];
+  const output = [
+    `Conversation: ${agentA} <-> ${agentB}`,
+    `Known participants: ${roster}`,
+    "",
+    ...(messages.length ? messages.map(formatMessageRecord) : ["No direct messages found for this pair."]),
+  ].join("\n\n");
+  return { title: "Agent conversation", output, metadata: { metrics, messages } };
+}
+
+function messagesSendWebuiDefinition(): ToolWebuiDefinition {
+  return {
+    id: "messages.send",
+    title: "Send agent message",
+    description: "Send a user-facing message to an agent or channel. This creates the same scheduler signal as the public messages API.",
+    kind: "action",
+    submitLabel: "Send message",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sender: { type: "string", default: "user", description: "Sender id. Use user for human-originated messages." },
+        recipient: { type: "string", description: "Direct recipient agent id, or user. Leave empty to use the coordinator or first agent." },
+        channel: { type: "string", description: "Optional project channel such as #project. Leave recipient empty when using a channel." },
+        priority: { type: "string", enum: ["P0", "P1", "P2"], default: "P2", description: "Message priority." },
+        body: { type: "string", description: "Markdown body to send." },
+      },
+      required: ["body"],
+      additionalProperties: false,
+    },
+  };
+}
+
+async function messagesSendWebuiSupport({ store }: ToolWebuiContext, input: unknown): Promise<ToolCallOutput> {
+  const args = objectInput(input);
+  const agents = store.listAgents();
+  const sender = optionalString(args.sender) ?? "user";
+  if (sender !== "user" && !agents.some((agent) => agent.id === sender)) throw new Error(`Unknown sender: ${sender}`);
+  const channel = optionalString(args.channel);
+  let recipient = optionalString(args.recipient);
+  if (!recipient && !channel) {
+    const coordinator = store.config().communication?.coordinatorAgent ?? "pm";
+    recipient = agents.some((agent) => agent.id === coordinator) ? coordinator : agents[0]?.id;
+  }
+  const priority = priorityArg(args.priority ?? "P2");
+  const body = stringArg(args, "body");
+  const message = store.sendMessage({ sender, recipient, channel, priority, body });
+  const target = message.recipient ?? message.channel ?? "broadcast";
+  const metrics = [
+    { label: "Priority", value: message.priority },
+    { label: "Body chars", value: message.body.length },
+  ];
+  return {
+    title: "message sent",
+    output: [`Message sent: ${message.id}`, `Route: ${message.sender} -> ${target}`, `Priority: ${message.priority}`, "", message.body].join("\n"),
+    metadata: { metrics, messageId: message.id, message },
+  };
+}
+
+function coordinationSignalsWebuiDefinition(): ToolWebuiDefinition {
+  return {
+    id: "coordination.signals",
+    title: "Signal queue",
+    description: "Inspect pending, delivered, and closed scheduler signals created by messages and coordination tools.",
+    kind: "panel",
+    submitLabel: "Refresh signals",
+    inputSchema: {
+      type: "object",
+      properties: {
+        targetAgent: { type: "string", description: "Optional target agent filter." },
+        status: { type: "string", enum: ["pending", "delivered", "closed"], description: "Optional signal status filter." },
+        limit: { type: "number", default: 25, description: "Maximum recent signals to show." },
+      },
+      additionalProperties: false,
+    },
+  };
+}
+
+async function coordinationSignalsWebuiSupport({ store }: ToolWebuiContext, input: unknown): Promise<ToolCallOutput> {
+  const args = objectInput(input);
+  const targetAgent = optionalString(args.targetAgent);
+  const status = signalStatusArg(args.status);
+  const limit = boundedNumber(args.limit, 25, 100);
+  const aggregates = signalAggregateRows(store);
+  const recent = recentSignalRows(store, { targetAgent, status, limit });
+  const statusCounts = signalStatusCounts(aggregates);
+  const metrics = [
+    { label: "Pending", value: statusCounts.pending ?? 0 },
+    { label: "Delivered", value: statusCounts.delivered ?? 0 },
+    { label: "Closed", value: statusCounts.closed ?? 0 },
+    { label: "Recent", value: recent.length, description: targetAgent ? `target ${targetAgent}` : "all targets" },
+  ];
+  const output = [
+    "Signal summary:",
+    ...aggregates.map((row) => `- ${row.status} ${row.priority}: ${row.count}`),
+    "",
+    "Recent signals:",
+    ...(recent.length ? recent.map(formatSignalRecord) : ["- none"]),
+  ].join("\n");
+  return { title: "Signal queue", output, metadata: { metrics, aggregates, recent } };
+}
+
+function completionReportWebuiDefinition(): ToolWebuiDefinition {
+  return {
+    id: "completion.report",
+    title: "Completion report",
+    description: "Show the current completion.submit state and the submitted report path/content when present.",
+    kind: "panel",
+  };
+}
+
+async function completionReportWebuiSupport({ store }: ToolWebuiContext): Promise<ToolCallOutput> {
+  const row = store.projectRow();
+  const reportPath = typeof row.submitted_report === "string" && row.submitted_report ? row.submitted_report : undefined;
+  if (!reportPath) {
+    const metrics = [{ label: "Submit status", value: "not submitted", description: String(row.status) }];
+    return { title: "Completion report", output: `Project status: ${String(row.status)}\nNo completion.submit report has been recorded.`, metadata: { metrics, projectStatus: row.status } };
+  }
+  let report = "";
+  let readError: string | undefined;
+  try {
+    report = await readFile(reportPath, "utf8");
+  } catch (cause) {
+    readError = cause instanceof Error ? cause.message : String(cause);
+  }
+  const metrics = [
+    { label: "Submit status", value: "submitted", description: String(row.status) },
+    { label: "Report chars", value: report.length },
+  ];
+  const output = readError
+    ? `Project status: ${String(row.status)}\nReport path: ${reportPath}\nRead error: ${readError}`
+    : `Project status: ${String(row.status)}\nReport path: ${reportPath}\n\n${truncateForStatus(report, 20_000) ?? ""}`;
+  return { title: "Completion report", output, metadata: { metrics, reportPath, projectStatus: row.status, readError } };
+}
+
+const FILE_TOOL_NAMES = ["file.read", "file.write", "file.patch"];
+
+function fileActivityWebuiDefinition(): ToolWebuiDefinition {
+  return {
+    id: "file.activity",
+    title: "File tool activity",
+    description: "Aggregate file.read, file.write, and file.patch calls without exposing file contents.",
+    kind: "panel",
+    submitLabel: "Refresh file stats",
+    inputSchema: { type: "object", properties: { limit: { type: "number", default: 20, description: "Maximum recent file tool calls to show." } }, additionalProperties: false },
+  };
+}
+
+async function fileActivityWebuiSupport({ store }: ToolWebuiContext, input: unknown): Promise<ToolCallOutput> {
+  return toolActivityReport(store, "File tool activity", FILE_TOOL_NAMES, input, summarizeFileToolInput);
+}
+
+function shellActivityWebuiDefinition(): ToolWebuiDefinition {
+  return {
+    id: "shell.activity",
+    title: "Shell activity",
+    description: "Aggregate shell.exec calls, recent commands, failures, and running commands.",
+    kind: "panel",
+    submitLabel: "Refresh shell stats",
+    inputSchema: { type: "object", properties: { limit: { type: "number", default: 20, description: "Maximum recent shell commands to show." } }, additionalProperties: false },
+  };
+}
+
+async function shellActivityWebuiSupport({ store }: ToolWebuiContext, input: unknown): Promise<ToolCallOutput> {
+  return toolActivityReport(store, "Shell activity", ["shell.exec"], input, summarizeShellInput);
+}
+
+function webActivityWebuiDefinition(): ToolWebuiDefinition {
+  return {
+    id: "web.activity",
+    title: "Web fetch activity",
+    description: "Aggregate web.fetch calls, recent URLs, failures, and running fetches.",
+    kind: "panel",
+    submitLabel: "Refresh web stats",
+    inputSchema: { type: "object", properties: { limit: { type: "number", default: 20, description: "Maximum recent web.fetch calls to show." } }, additionalProperties: false },
+  };
+}
+
+async function webActivityWebuiSupport({ store }: ToolWebuiContext, input: unknown): Promise<ToolCallOutput> {
+  return toolActivityReport(store, "Web fetch activity", ["web.fetch"], input, summarizeWebInput);
 }
 
 function messagesSendDefinition(): ToolDefinition {
@@ -696,6 +1170,32 @@ function optionalBoolean(value: unknown): boolean | undefined {
 function priorityArg(value: unknown): MessagePriority {
   if (value === "P0" || value === "P1" || value === "P2") return value;
   throw new Error(`Invalid priority: ${String(value)}`);
+}
+
+function signalStatusArg(value: unknown): "pending" | "delivered" | "closed" | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (value === "pending" || value === "delivered" || value === "closed") return value;
+  throw new Error(`Invalid signal status: ${String(value)}`);
+}
+
+function toolCallStatusArg(value: unknown): "running" | "completed" | "failed" | undefined {
+  if (value === "running" || value === "completed" || value === "failed") return value;
+  return undefined;
+}
+
+function parseJsonObject(value: unknown): JsonObject {
+  try {
+    const parsed = typeof value === "string" ? JSON.parse(value) : value;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as JsonObject : {};
+  } catch {
+    return {};
+  }
+}
+
+function truncateOneLine(value: string, maxChars: number): string {
+  const oneLine = value.replace(/\s+/g, " ").trim();
+  if (oneLine.length <= maxChars) return oneLine;
+  return `${oneLine.slice(0, maxChars).trimEnd()}...`;
 }
 
 function validateMessagePolicy(config: ProjectConfig, agent: AgentRecord, recipient: string | undefined, channel: string | undefined, priority: MessagePriority): void {
