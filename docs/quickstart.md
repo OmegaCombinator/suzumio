@@ -222,7 +222,7 @@ The WebUI shows:
 | Project overview | Status, agents, lightweight counters, controls. |
 | Messages | Direct and channel messages. |
 | Agent history | Per-agent model-visible history, compaction markers, archives. |
-| Tool status | Per-tool aggregate status, submit report path, and registered WebUI controls. |
+| Tool status | A per-tool workspace with aggregate status, submit report path, and one selected WebUI control page at a time. Built-in message/signal controls use dropdowns populated from the current project agents. |
 
 For WebUI development:
 

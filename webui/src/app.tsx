@@ -192,7 +192,7 @@ export function App() {
               {view === "overview" && <Overview project={project} onSent={() => refreshProjects(selected, true)} />}
               {view === "history" && <HistoryPanel project={project} />}
               {view === "messages" && <MessagesPanel projectId={project.id} messages={messages} loading={panelLoading} />}
-              {view === "tools" && <ToolsPanel projectId={project.id} entries={toolUiEntries} statuses={toolStatuses} loading={panelLoading} />}
+              {view === "tools" && <ToolsPanel projectId={project.id} agents={project.agents} entries={toolUiEntries} statuses={toolStatuses} loading={panelLoading} />}
             </div>
           </>
         )}
@@ -449,7 +449,7 @@ type ToolWorkspaceItem =
   | { key: string; kind: "tool"; title: string; kicker: string; description?: string; status: ToolStatus; entries: ToolUiEntry[] }
   | { key: string; kind: "control"; title: string; kicker: string; description?: string; entry: ToolUiEntry };
 
-function ToolsPanel({ projectId, entries, statuses, loading }: { projectId: string; entries: ToolUiEntry[]; statuses: ToolStatus[]; loading: boolean }) {
+function ToolsPanel({ projectId, agents, entries, statuses, loading }: { projectId: string; agents: Agent[]; entries: ToolUiEntry[]; statuses: ToolStatus[]; loading: boolean }) {
   const items = toolWorkspaceItems(statuses, entries);
   const [selectedKey, setSelectedKey] = useState(() => currentToolRouteKey() ?? "");
   const selected = items.find((item) => item.key === selectedKey) ?? items[0];
@@ -482,7 +482,7 @@ function ToolsPanel({ projectId, entries, statuses, loading }: { projectId: stri
         </div>
       </aside>
       <div class="tool-page-shell">
-        {selected?.kind === "tool" ? <ToolDetailPage projectId={projectId} item={selected} /> : selected && <ToolControlPage projectId={projectId} item={selected} />}
+        {selected?.kind === "tool" ? <ToolDetailPage projectId={projectId} agents={agents} item={selected} /> : selected && <ToolControlPage projectId={projectId} agents={agents} item={selected} />}
       </div>
     </section>
   );
@@ -499,7 +499,7 @@ function ToolIndexButton({ item, active, onSelect }: { item: ToolWorkspaceItem; 
   );
 }
 
-function ToolDetailPage({ projectId, item }: { projectId: string; item: Extract<ToolWorkspaceItem, { kind: "tool" }> }) {
+function ToolDetailPage({ projectId, agents, item }: { projectId: string; agents: Agent[]; item: Extract<ToolWorkspaceItem, { kind: "tool" }> }) {
   const status = item.status;
   return (
     <article class="tool-page-card">
@@ -514,13 +514,13 @@ function ToolDetailPage({ projectId, item }: { projectId: string; item: Extract<
       <ToolStatusSummary status={status} />
       <section class="tool-page-section">
         <div class="tool-section-title"><strong>Controls</strong><span>{item.entries.length ? `${item.entries.length} WebUI controls` : "No dedicated control"}</span></div>
-        {item.entries.length ? <div class="tool-control-stack">{item.entries.map((entry) => <ToolUiCard projectId={projectId} entry={entry} />)}</div> : <Blank label="This tool only has runtime status right now" />}
+        {item.entries.length ? <div class="tool-control-stack">{item.entries.map((entry) => <ToolUiCard projectId={projectId} agents={agents} entry={entry} />)}</div> : <Blank label="This tool only has runtime status right now" />}
       </section>
     </article>
   );
 }
 
-function ToolControlPage({ projectId, item }: { projectId: string; item: Extract<ToolWorkspaceItem, { kind: "control" }> }) {
+function ToolControlPage({ projectId, agents, item }: { projectId: string; agents: Agent[]; item: Extract<ToolWorkspaceItem, { kind: "control" }> }) {
   return (
     <article class="tool-page-card">
       <header class="tool-page-hero tool-page-hero-control">
@@ -531,7 +531,7 @@ function ToolControlPage({ projectId, item }: { projectId: string; item: Extract
         </div>
         <span class="tool-ui-kind">{item.entry.kind}</span>
       </header>
-      <ToolUiCard projectId={projectId} entry={item.entry} />
+      <ToolUiCard projectId={projectId} agents={agents} entry={item.entry} />
     </article>
   );
 }
@@ -591,7 +591,24 @@ function toolState(status: ToolStatus): "ready" | "running" | "completed" | "fai
   return status.submittedReportPath ? "submitted" : status.lastStatus ?? "ready";
 }
 
-function ToolUiCard({ projectId, entry }: { projectId: string; entry: ToolUiEntry }) {
+function toolUiChoices(name: string, agents: Agent[], current: unknown): ToolUiChoice[] | undefined {
+  const participantFields = new Set(["agentA", "agentB", "sender"]);
+  const agentFields = new Set(["recipient", "targetAgent"]);
+  if (!participantFields.has(name) && !agentFields.has(name)) return undefined;
+  const agentChoices = agents.map((agent) => ({ value: agent.id, label: `${agent.displayName} / ${agent.id}` }));
+  const choices = participantFields.has(name)
+    ? [{ value: "user", label: "User" }, ...agentChoices]
+    : name === "recipient"
+      ? [{ value: "", label: "Auto / no direct recipient" }, { value: "user", label: "User" }, ...agentChoices]
+      : [{ value: "", label: "All agents" }, ...agentChoices];
+  const value = typeof current === "string" ? current : "";
+  if (value && !choices.some((choice) => choice.value === value)) return [{ value, label: value }, ...choices];
+  return choices;
+}
+
+type ToolUiChoice = { value: string; label: string };
+
+function ToolUiCard({ projectId, agents, entry }: { projectId: string; agents: Agent[]; entry: ToolUiEntry }) {
   const [form, setForm] = useState<Record<string, unknown>>(() => defaultToolUiInput(entry));
   const [result, setResult] = useState<ToolUiResult>();
   const [running, setRunning] = useState(false);
@@ -630,7 +647,7 @@ function ToolUiCard({ projectId, entry }: { projectId: string; entry: ToolUiEntr
       <small>{entry.toolpackId} / {entry.id}</small>
       {entry.description && <p>{entry.description}</p>}
       <form class="tool-ui-form" onSubmit={submit}>
-        {fields.map(([name, schema]) => <ToolUiField name={name} schema={schema} value={form[name]} required={required.has(name)} onChange={(value) => setForm((current) => ({ ...current, [name]: value }))} />)}
+        {fields.map(([name, schema]) => <ToolUiField name={name} schema={schema} value={form[name]} required={required.has(name)} choices={toolUiChoices(name, agents, form[name])} onChange={(value) => setForm((current) => ({ ...current, [name]: value }))} />)}
         <button class="secondary-button" disabled={running}>{running ? "Running..." : entry.submitLabel ?? (entry.kind === "panel" ? "Refresh" : "Run")}</button>
       </form>
       {error && <div class="form-error">{error}</div>}
@@ -639,18 +656,19 @@ function ToolUiCard({ projectId, entry }: { projectId: string; entry: ToolUiEntr
   );
 }
 
-function ToolUiField({ name, schema, value, required, onChange }: { name: string; schema: Record<string, unknown>; value: unknown; required: boolean; onChange: (value: unknown) => void }) {
+function ToolUiField({ name, schema, value, required, choices, onChange }: { name: string; schema: Record<string, unknown>; value: unknown; required: boolean; choices?: ToolUiChoice[]; onChange: (value: unknown) => void }) {
   const label = typeof schema.title === "string" ? schema.title : name;
   const description = typeof schema.description === "string" ? schema.description : undefined;
-  const enumValues = Array.isArray(schema.enum) ? schema.enum.filter((item): item is string => typeof item === "string") : [];
+  const enumValues = Array.isArray(schema.enum) ? schema.enum.filter((item): item is string => typeof item === "string").map((item) => ({ value: item, label: item })) : [];
+  const selectChoices = choices?.length ? choices : enumValues;
   const type = typeof schema.type === "string" ? schema.type : "string";
   return (
     <label class="tool-ui-field">
       <span>{label}{required ? " *" : ""}</span>
-      {enumValues.length ? (
+      {selectChoices.length ? (
         <select value={typeof value === "string" ? value : ""} onChange={(event) => onChange(event.currentTarget.value)}>
-          {!required && <option value="">(empty)</option>}
-          {enumValues.map((item) => <option value={item}>{item}</option>)}
+          {!required && !selectChoices.some((item) => item.value === "") && <option value="">(empty)</option>}
+          {selectChoices.map((item) => <option value={item.value}>{item.label}</option>)}
         </select>
       ) : type === "boolean" ? (
         <input type="checkbox" checked={Boolean(value)} onChange={(event) => onChange(event.currentTarget.checked)} />

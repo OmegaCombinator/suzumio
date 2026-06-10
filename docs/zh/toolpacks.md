@@ -206,6 +206,8 @@ Toolpacks 可以注册 user-facing WebUI controls，不需要写 browser code。
 | `shell` | `shell.activity` | 聚合 shell.exec 调用、recent commands、failures 和 running commands。 |
 | `web` | `web.activity` | 聚合 web.fetch 调用、recent URLs、failures 和 running fetches。 |
 
+这些内置 controls 会在 WebUI 的 per-tool workspace 中渲染。与 agent 相关的字段会用当前 project roster 填充下拉选择：`sender`、`recipient`、`agentA`、`agentB`、`targetAgent`。Message body、channel、path 等无法从 project summary 确定的值仍然是自由文本输入。
+
 Controller module 可以导出 `createWebuiToolpack(context)`、`webui` handler map，或 default handler map 来处理 WebUI entries。Handler 返回值与 tool support handler 相同，都是 `{ output, title?, metadata? }`。
 
 ```js

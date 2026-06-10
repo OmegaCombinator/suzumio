@@ -208,6 +208,8 @@ Built-in toolpacks register these WebUI controls when enabled in `tools.toolpack
 | `shell` | `shell.activity` | Aggregate shell.exec calls, recent commands, failures, and running commands. |
 | `web` | `web.activity` | Aggregate web.fetch calls, recent URLs, failures, and running fetches. |
 
+The built-in controls are rendered in the WebUI's per-tool workspace. Agent-facing fields in those controls are dropdowns populated from the current project roster: `sender`, `recipient`, `agentA`, `agentB`, and `targetAgent`. Free-form text remains available for message bodies, channels, paths, and other values that are not known from the project summary.
+
 The controller module handles WebUI entries by exporting `createWebuiToolpack(context)`, a `webui` handler map, or a default handler map. Handlers return the same `{ output, title?, metadata? }` shape as tool support handlers.
 
 ```js

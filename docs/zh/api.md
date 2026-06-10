@@ -310,6 +310,6 @@ Compaction row 的 metadata 中包含 `compactionId`。`GET /api/projects/:proje
 
 ## WebUI
 
-根路径 `/` 提供由 `webui/` 构建的 Preact WebUI。它调用上面的 API routes 并定期刷新。开发 WebUI 时，运行 `npm run webui:dev` 并打开 `http://127.0.0.1:5173`；Vite 会把 `/api` 和 `/health` 代理到 `39400` 上的 backend。Control room 包含项目选择、状态操作、消息编辑、agent roster、per-agent history、messages，以及 tool status/WebUI controls。Project overview 从轻量 project list 刷新；大型 message bodies、agent histories、tool controls、tool status 和 archives 都按需加载。当前项目和视图编码在 URL hash 中，因此浏览器刷新会保留当前页面。
+根路径 `/` 提供由 `webui/` 构建的 Preact WebUI。它调用上面的 API routes 并定期刷新。开发 WebUI 时，运行 `npm run webui:dev` 并打开 `http://127.0.0.1:5173`；Vite 会把 `/api` 和 `/health` 代理到 `39400` 上的 backend。Control room 包含项目选择、状态操作、消息编辑、agent roster、per-agent history、messages，以及 per-tool workspace 形式的 tool status/WebUI controls。Project overview 从轻量 project list 刷新；大型 message bodies、agent histories、tool controls、tool status 和 archives 都按需加载。当前项目、视图和选中的 tool page 编码在 URL hash 中，因此浏览器刷新会保留当前页面。内置 WebUI controls 会把 sender、recipient、conversation participants、signal target 等 project-agent 字段渲染为来自当前 project roster 的下拉选择。
 
 <div class="footer">下一步：<a href="architecture.html">架构</a>。</div>

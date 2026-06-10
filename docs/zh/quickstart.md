@@ -222,7 +222,7 @@ WebUI 显示：
 | Project overview | Status、agents、轻量 counters、controls。 |
 | Messages | Direct 和 channel messages。 |
 | Agent history | Per-agent model-visible history、compaction markers、archives。 |
-| Tool status | Per-tool aggregate status、submit report path，以及已注册 WebUI controls。 |
+| Tool status | Per-tool workspace，包含 aggregate status、submit report path，并且一次只打开一个 WebUI control page。内置 message/signal controls 会用当前 project agents 填充下拉选择。 |
 
 WebUI development:
 
