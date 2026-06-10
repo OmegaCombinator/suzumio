@@ -13,7 +13,9 @@ import {
   loadProjectSummary,
   loadReport,
   loadToolCalls,
+  loadToolUi,
   sendMessage,
+  invokeToolUi,
   updateProject,
   type Activation,
   type ActivationContextResponse,
@@ -26,6 +28,8 @@ import {
   type Project,
   type ProjectStatus,
   type ToolCall,
+  type ToolUiEntry,
+  type ToolUiResult,
 } from "./api";
 
 type View = "overview" | "loop" | "history" | "messages" | "activations" | "tools" | "events" | "config" | "report";
@@ -53,6 +57,7 @@ export function App() {
   const [activations, setActivations] = useState<Activation[]>([]);
   const [events, setEvents] = useState<EventRecord[]>([]);
   const [toolCalls, setToolCalls] = useState<ToolCall[]>([]);
+  const [toolUiEntries, setToolUiEntries] = useState<ToolUiEntry[]>([]);
   const [report, setReport] = useState("No report loaded.");
   const [config, setConfig] = useState("No config loaded.");
   const [loading, setLoading] = useState(true);
@@ -98,7 +103,11 @@ export function App() {
       }
       if (nextView === "messages") setMessages(await loadMessages(projectId, 100));
       if (nextView === "activations") setActivations(await loadActivations(projectId, 100));
-      if (nextView === "tools") setToolCalls(await loadToolCalls(projectId, 100));
+      if (nextView === "tools") {
+        const [nextToolCalls, nextToolUiEntries] = await Promise.all([loadToolCalls(projectId, 100), loadToolUi(projectId)]);
+        setToolCalls(nextToolCalls);
+        setToolUiEntries(nextToolUiEntries);
+      }
       if (nextView === "events") setEvents(await loadEvents(projectId, 120));
       if (nextView === "config") setConfig(await loadConfig(projectId));
       if (nextView === "report") setReport(await loadReport(projectId));
@@ -158,7 +167,7 @@ export function App() {
               {view === "history" && <HistoryPanel project={project} />}
               {view === "messages" && <MessagesPanel projectId={project.id} messages={messages} loading={panelLoading} />}
               {view === "activations" && <ActivationsPanel projectId={project.id} activations={activations} loading={panelLoading} />}
-              {view === "tools" && <ToolsPanel calls={toolCalls} loading={panelLoading} />}
+              {view === "tools" && <ToolsPanel projectId={project.id} entries={toolUiEntries} calls={toolCalls} loading={panelLoading} />}
               {view === "events" && <EventsPanel events={events} loading={panelLoading} />}
               {view === "config" && <CodePanel title="Resolved project configuration" text={config} />}
               {view === "report" && <CodePanel title="Submitted report" text={report} />}
@@ -462,8 +471,101 @@ function ActivationsPanel({ projectId, activations, loading }: { projectId: stri
   );
 }
 
-function ToolsPanel({ calls, loading }: { calls: ToolCall[]; loading: boolean }) {
-  return <Panel title="Tool calls" subtitle={loading ? "Loading..." : `${calls.length} recent runner actions`}><div class="stack-list">{calls.map((call) => <ToolCallItem call={call} />)}</div></Panel>;
+function ToolsPanel({ projectId, entries, calls, loading }: { projectId: string; entries: ToolUiEntry[]; calls: ToolCall[]; loading: boolean }) {
+  return (
+    <div class="split-stack">
+      <Panel title="Registered tool controls" subtitle={loading ? "Loading..." : `${entries.length} WebUI entries from configured toolpacks`}>
+        {entries.length ? <div class="tool-ui-grid">{entries.map((entry) => <ToolUiCard projectId={projectId} entry={entry} />)}</div> : <Blank label={loading ? "Loading tool controls..." : "No WebUI tool entries registered"} />}
+      </Panel>
+      <Panel title="Tool calls" subtitle={loading ? "Loading..." : `${calls.length} recent runner actions`}>
+        <div class="stack-list">{calls.length ? calls.map((call) => <ToolCallItem call={call} />) : <Blank label="No tool calls yet" />}</div>
+      </Panel>
+    </div>
+  );
+}
+
+function ToolUiCard({ projectId, entry }: { projectId: string; entry: ToolUiEntry }) {
+  const [form, setForm] = useState<Record<string, unknown>>(() => defaultToolUiInput(entry));
+  const [result, setResult] = useState<ToolUiResult>();
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState("");
+  const fields = toolUiFields(entry);
+  const required = toolUiRequired(entry);
+
+  useEffect(() => {
+    const initial = defaultToolUiInput(entry);
+    setForm(initial);
+    setResult(undefined);
+    setError("");
+    if (entry.kind === "panel") void run(initial);
+  }, [projectId, entry.toolpackId, entry.id]);
+
+  async function run(input = form) {
+    setRunning(true);
+    setError("");
+    try {
+      setResult(await invokeToolUi(projectId, entry, input));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  function submit(event: SubmitEvent) {
+    event.preventDefault();
+    void run();
+  }
+
+  return (
+    <article class="tool-ui-card">
+      <div class="item-title"><strong>{entry.title}</strong><span class="tool-ui-kind">{entry.kind}</span></div>
+      <small>{entry.toolpackId} / {entry.id}</small>
+      {entry.description && <p>{entry.description}</p>}
+      <form class="tool-ui-form" onSubmit={submit}>
+        {fields.map(([name, schema]) => <ToolUiField name={name} schema={schema} value={form[name]} required={required.has(name)} onChange={(value) => setForm((current) => ({ ...current, [name]: value }))} />)}
+        <button class="secondary-button" disabled={running}>{running ? "Running..." : entry.submitLabel ?? (entry.kind === "panel" ? "Refresh" : "Run")}</button>
+      </form>
+      {error && <div class="form-error">{error}</div>}
+      {result && <ToolUiResultView result={result} />}
+    </article>
+  );
+}
+
+function ToolUiField({ name, schema, value, required, onChange }: { name: string; schema: Record<string, unknown>; value: unknown; required: boolean; onChange: (value: unknown) => void }) {
+  const label = typeof schema.title === "string" ? schema.title : name;
+  const description = typeof schema.description === "string" ? schema.description : undefined;
+  const enumValues = Array.isArray(schema.enum) ? schema.enum.filter((item): item is string => typeof item === "string") : [];
+  const type = typeof schema.type === "string" ? schema.type : "string";
+  return (
+    <label class="tool-ui-field">
+      <span>{label}{required ? " *" : ""}</span>
+      {enumValues.length ? (
+        <select value={typeof value === "string" ? value : ""} onChange={(event) => onChange(event.currentTarget.value)}>
+          {!required && <option value="">(empty)</option>}
+          {enumValues.map((item) => <option value={item}>{item}</option>)}
+        </select>
+      ) : type === "boolean" ? (
+        <input type="checkbox" checked={Boolean(value)} onChange={(event) => onChange(event.currentTarget.checked)} />
+      ) : type === "number" || type === "integer" ? (
+        <input type="number" value={typeof value === "number" ? String(value) : ""} onInput={(event) => onChange(event.currentTarget.value === "" ? undefined : Number(event.currentTarget.value))} />
+      ) : (
+        <textarea value={typeof value === "string" ? value : ""} onInput={(event) => onChange(event.currentTarget.value)} rows={2} />
+      )}
+      {description && <small>{description}</small>}
+    </label>
+  );
+}
+
+function ToolUiResultView({ result }: { result: ToolUiResult }) {
+  const metrics = toolUiMetrics(result);
+  return (
+    <div class="tool-ui-result">
+      {result.title && <strong>{result.title}</strong>}
+      {metrics.length > 0 && <div class="tool-ui-metrics">{metrics.map((metric) => <div><span>{metric.label}</span><strong>{String(metric.value)}</strong>{metric.description && <small>{metric.description}</small>}</div>)}</div>}
+      <pre>{result.output}</pre>
+    </div>
+  );
 }
 
 function EventsPanel({ events, loading }: { events: EventRecord[]; loading: boolean }) {
@@ -604,3 +706,9 @@ function historyCompactionId(message: AgentHistoryMessage): string | undefined {
 function historyToolName(message: AgentHistoryMessage): string | undefined { const structured = message.parts?.find((part) => (part.type === "tool_call" || part.type === "tool_result") && part.toolName)?.toolName; if (structured) return structured; const metadataTool = message.metadata?.tool; if (typeof metadataTool === "string" && metadataTool) return metadataTool; return extractToolNameFromText(message.content); }
 function extractToolNameFromText(value: string): string | undefined { const match = value.match(/^Tool:\s*(.+)$/m); return match?.[1]?.trim() || undefined; }
 function summarizeJson(value: string): string { try { const parsed = JSON.parse(value) as Record<string, unknown>; return Object.entries(parsed).slice(0, 4).map(([key, item]) => `${key}: ${typeof item === "string" ? item : JSON.stringify(item)}`).join(" - ") || "No payload"; } catch { return value; } }
+function toolUiSchema(entry: ToolUiEntry): Record<string, unknown> { return isRecord(entry.inputSchema) ? entry.inputSchema : {}; }
+function toolUiFields(entry: ToolUiEntry): Array<[string, Record<string, unknown>]> { const properties = toolUiSchema(entry).properties; return isRecord(properties) ? Object.entries(properties).map(([key, value]) => [key, isRecord(value) ? value : {}]) : []; }
+function toolUiRequired(entry: ToolUiEntry): Set<string> { const required = toolUiSchema(entry).required; return new Set(Array.isArray(required) ? required.filter((item): item is string => typeof item === "string") : []); }
+function defaultToolUiInput(entry: ToolUiEntry): Record<string, unknown> { const out: Record<string, unknown> = {}; for (const [key, schema] of toolUiFields(entry)) { if (schema.default !== undefined) out[key] = schema.default; else if (schema.type === "boolean") out[key] = false; } return out; }
+function toolUiMetrics(result: ToolUiResult): Array<{ label: string; value: string | number | boolean; description?: string }> { const metrics = result.metadata?.metrics; if (!Array.isArray(metrics)) return []; return metrics.flatMap((item) => { if (!isRecord(item) || typeof item.label !== "string") return []; const value = typeof item.value === "string" || typeof item.value === "number" || typeof item.value === "boolean" ? item.value : JSON.stringify(item.value ?? ""); return [{ label: item.label, value, description: typeof item.description === "string" ? item.description : undefined }]; }); }
+function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }

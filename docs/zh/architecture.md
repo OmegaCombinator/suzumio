@@ -42,7 +42,7 @@ lead: "Suzumio 将 orchestration 与 execution 分离。核心进程拥有项目
 | `config.ts`    | 加载 YAML、解析 import、应用 `extends`、验证配置并渲染最终 YAML。                                                      |
 | `store.ts`     | 创建和查询 projects、agents、messages、signals、agent history、activations、events、tool_calls 等 SQLite 表。          |
 | `scheduler.ts` | 实现 signal 投递，包括 `P0` 中断和 `P1` tool-boundary 投递。                                                           |
-| `tools.ts`     | 解析 built-in 和 local toolpacks，并通过 token 与 allowlist 校验提供 controller support。                              |
+| `tools.ts`     | 解析 built-in 和 local toolpacks，通过 token 与 allowlist 校验提供 controller support，并暴露 trusted WebUI tool entries。 |
 | `server.ts`    | HTTP API、SSE stream、controller support route、activation result route 和静态 WebUI asset serving。                   |
 | `webui/`       | Preact + Vite 浏览器 control room，构建后由 `/` 提供。                                                               |
 | `backend.ts`   | Docker 容器创建、配置的 bind mounts、runner input 和 activation completion monitoring。                                |
@@ -96,6 +96,8 @@ Runner 通过一个只读 input 文件接收上下文，并通过 HTTP 回传完
       runner returns tool output to model
 
 模型默认不会获得任意 host tools。工具按 agent 配置。`file.read`、`file.write`、`file.patch`、`shell.exec` 和 `web.fetch` 在 Docker runner 内执行；消息、completion 和 coordination 工具使用 Suzumio support API。
+
+Toolpacks 也可以注册 WebUI entries。这些 entries 是由 WebUI Tools panel 渲染的 user-facing project controls，经由 public project APIs 调用；它们不是 model-facing tools，也不是 runner-internal routes。
 
 ## Agent History
 

@@ -68,6 +68,8 @@ async function handleRequest(
     if (request.method === "GET" && parts[3] === "activations" && parts[4] && parts[5] === "context") return json(response, activationContext(store, parts[4]));
     if (request.method === "GET" && parts[3] === "activations") return json(response, store.listActivations(limit(url, 100)).map(publicActivation));
     if (request.method === "GET" && parts[3] === "tool-calls") return json(response, store.listToolCalls(limit(url, 100)).map(publicToolCall));
+    if (request.method === "GET" && parts[3] === "tool-ui") return json(response, await ctx.toolSupport.listWebui(project));
+    if (request.method === "POST" && parts[3] === "tool-ui" && parts[4] && parts[5]) return json(response, await ctx.toolSupport.invokeWebui(project, parts[4], parts[5], await readBody(request)));
     if (request.method === "GET" && parts[3] === "config" && parts[4] === "resolved") return text(response, await readFile(store.paths.resolvedConfig, "utf8"));
     if (request.method === "GET" && parts[3] === "report") return text(response, await reportText(store));
     if (request.method === "GET" && parts[3] === "stream") return streamEvents(response, store, url);

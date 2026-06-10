@@ -121,8 +121,6 @@ export interface BackendConfig {
   controllerUrl: string;
   docker?: {
     network?: string;
-    memory?: string;
-    cpus?: number;
     mounts?: DockerMountConfig[];
     proxy?: DockerProxyConfig;
   };
@@ -143,7 +141,6 @@ export interface RunnerConfig {
   model?: string;
   maxIterations?: number;
   maxToolCalls?: number;
-  finalPrompt?: string;
   models?: ModelRegistryConfig;
 }
 
@@ -191,7 +188,20 @@ export interface AgentConfig {
   tools?: string[];
   mounts?: DockerMountConfig[];
   env?: Record<string, string>;
-  workspace?: string;
+}
+
+export interface ToolWebuiDefinition {
+  id: string;
+  title: string;
+  description?: string;
+  kind: "panel" | "action";
+  inputSchema?: JsonObject;
+  submitLabel?: string;
+}
+
+export interface ToolWebuiEntry extends ToolWebuiDefinition {
+  toolpackId: string;
+  toolpackKind: "builtin" | "local";
 }
 
 export interface DockerMountConfig {

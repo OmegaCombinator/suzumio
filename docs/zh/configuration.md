@@ -129,7 +129,6 @@ agents:
 | `tools` | Empty list | Per-agent model-visible tool allowlist。支持 exact names、`namespace.*` 和 `*`。 |
 | `mounts` | Empty list | 只挂载给该 agent 的 host files 或 directories。 |
 | `env` | Empty map | 传给该 agent runner containers 的额外 environment variables。 |
-| `workspace` | Runtime default | Optional workspace override。 |
 
 Counted agents 使用 generated ids。上面的例子会创建 `worker-1` 和 `worker-2`，display names 是 `Akari` 和 `Ren`。
 
@@ -150,9 +149,9 @@ tools:
 | `core` | `messages.send`, `coordination.wait_for_signal`, `completion.submit`, `file.read`, `file.write`, `file.patch` |
 | `shell` | `shell.exec` |
 | `web` | `web.fetch` |
-| Local `{ path, id }` | 该目录中 `suzumio.toolpack.json` 声明的 tools。 |
+| Local `{ path, id }` | 该目录中 `suzumio.toolpack.json` 声明的 model-facing tools 和可选 WebUI entries。 |
 
-`tools.toolpacks` 为 project 注册 definitions。`agents.<id>.tools` allowlist 决定模型可以看到哪些已注册 tools。内置 file tools 可以用 `file.*` 授权，也可以写 exact names，例如 `file.read` 和 `file.patch`。
+`tools.toolpacks` 为 project 注册 definitions。`agents.<id>.tools` allowlist 决定模型可以看到哪些已注册 tools。内置 file tools 可以用 `file.*` 授权，也可以写 exact names，例如 `file.read` 和 `file.patch`。Toolpack WebUI entries 是 user-facing controls，不使用 per-agent model allowlist。
 
 自定义 toolpack 细节见 [Custom Tools](toolpacks.html)。
 
@@ -278,8 +277,6 @@ backend:
   controllerUrl: http://host.docker.internal:39400
   docker:
     network: bridge
-    memory: 4g
-    cpus: 2
     proxy:
       inheritEnv: true
       rewriteLocalhost: true
@@ -303,8 +300,6 @@ backend:
 | `image` | `suzumio-runner:dev` | Activation containers 使用的 Docker image。 |
 | `controllerUrl` | `http://host.docker.internal:39400` | Containers 调用 Suzumio support routes 和提交 output 的 URL。 |
 | `docker.network` | None | Docker network mode。Linux host networking 使用 `host`。 |
-| `docker.memory` | None | Optional Docker memory limit。 |
-| `docker.cpus` | None | Optional Docker CPU limit。 |
 | `docker.mounts` | Empty list | 挂载到每个 activation container 的 host files 或 directories。 |
 | `docker.proxy` | Inherit env, rewrite localhost | 传入 runner containers 的 proxy config。 |
 | `runner` | `mode: ai` | AI runner config。 |
@@ -329,7 +324,6 @@ backend:
     model: worker-with-fallback
     maxIterations: 20
     maxToolCalls: 80
-    finalPrompt: "Return a concise final activation summary."
     models:
       providers:
         gateway:
@@ -365,7 +359,6 @@ Runner 字段：
 | `model` | None | Project-level model preset name。Agents 可以用 `agents.<id>.model` 覆盖。 |
 | `maxIterations` | Provider/runtime default | Optional model loop iterations cap。 |
 | `maxToolCalls` | Provider/runtime default | Optional tool calls cap for one activation。 |
-| `finalPrompt` | Runtime default | Optional final instruction for activation output。 |
 | `models.providers` | Empty map | Provider registry。 |
 | `models.presets` | Empty map | Named model presets 和 fallback lists。 |
 

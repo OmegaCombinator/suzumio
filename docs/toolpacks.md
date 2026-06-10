@@ -49,6 +49,8 @@ toolpacks/review/
 
 Local toolpacks are directories on the controller host. Suzumio mounts them read-only into runner containers.
 
+Only local toolpacks that expose at least one allowed model-facing tool for the current agent are mounted into that agent's activation container. WebUI-only toolpacks and toolpacks hidden by an agent allowlist stay on the controller side.
+
 ```yaml
 tools:
   toolpacks:
@@ -64,6 +66,14 @@ tools:
   "id": "review-tools",
   "runner": "runner.mjs",
   "controller": "controller.mjs",
+  "webui": [
+    {
+      "id": "review.stats",
+      "title": "Review statistics",
+      "description": "Show cached review counts.",
+      "kind": "panel"
+    }
+  ],
   "tools": [
     {
       "name": "review.summarize",
@@ -84,11 +94,12 @@ tools:
 | Field | Required | Description |
 |-------|----------|-------------|
 | `id` | Yes | Toolpack id. It matches the optional config `id` when one is provided. |
-| `runner` | No | Runner-side module path, relative to the toolpack root. Defaults to `runner.mjs`. |
+| `runner` | No | Runner-side module path, relative to the toolpack root. Defaults to `runner.mjs`. Required only when `tools` is non-empty. |
 | `controller` | No | Controller-side module path, relative to the toolpack root. Defaults to `controller.mjs`. |
 | `tools` | Yes | Array of tool definitions with `name`, `description`, and JSON-schema-like `inputSchema`. |
+| `webui` | No | Optional WebUI entries rendered in the Tools panel. Each entry has `id`, `title`, `kind`, and optional `description`, `inputSchema`, and `submitLabel`. |
 
-The id contains only letters, digits, `.`, `_`, and `-`. HTTP(S) toolpack paths are rejected. Module paths stay inside the toolpack directory, end in `.mjs`, and point to existing files. Duplicate toolpack ids and duplicate tool names across registered toolpacks are rejected.
+The id contains only letters, digits, `.`, `_`, and `-`. HTTP(S) toolpack paths are rejected. Module paths stay inside the toolpack directory and end in `.mjs`. The controller module must exist. The runner module must exist when model-facing tools are declared. Duplicate toolpack ids and duplicate tool names across registered toolpacks are rejected.
 
 Runtime TypeScript transpilation is not provided. Toolpack modules are JavaScript ESM `.mjs` files.
 
@@ -156,6 +167,51 @@ Controller context fields:
 
 `callSupport` verifies token, activation ownership, toolpack membership, and the agent allowlist before invoking controller support.
 
+## WebUI Registration
+
+Toolpacks can register user-facing controls in the WebUI without writing browser code. The server exposes the registered entries through `GET /api/projects/:project/tool-ui`, and the WebUI Tools panel renders them as generic panels or action forms.
+
+```json
+{
+  "webui": [
+    {
+      "id": "review.stats",
+      "title": "Review statistics",
+      "kind": "panel"
+    },
+    {
+      "id": "review.rebuild",
+      "title": "Rebuild review cache",
+      "kind": "action",
+      "submitLabel": "Rebuild",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "scope": { "type": "string", "enum": ["all", "recent"], "default": "recent" }
+        }
+      }
+    }
+  ]
+}
+```
+
+The controller module handles WebUI entries by exporting `createWebuiToolpack(context)`, a `webui` handler map, or a default handler map. Handlers return the same `{ output, title?, metadata? }` shape as tool support handlers.
+
+```js
+export function createWebuiToolpack(context) {
+  return {
+    webui: {
+      "review.stats": async () => {
+        const stats = context.store.projectStats();
+        return { output: JSON.stringify(stats, null, 2), metadata: { stats } };
+      },
+    },
+  };
+}
+```
+
+WebUI handlers run on the controller side and are user-facing project APIs, not model-facing tools. They do not require an agent activation token. Treat local toolpacks as trusted code and do not expose Suzumio's HTTP server to untrusted networks.
+
 ## Recording Signals
 
 Custom tools use `recordSignal` to connect tool execution back to scheduling.
@@ -183,7 +239,8 @@ context.recordSignal({
 | Project config renders. | `suzumio config render project.yaml` |
 | Toolpack path resolves under the config directory. | Rendered `tools.toolpacks` output. |
 | Manifest id matches configured id. | `suzumio.toolpack.json` and YAML. |
-| Tool name is unique across registered toolpacks. | Config render validation. |
+| Tool name is unique across registered toolpacks. | Toolpack resolution during activation startup, support calls, or WebUI tool loading. |
+| WebUI entry has a controller-side handler. | Open the Tools panel or call `POST /api/projects/:project/tool-ui/:toolpack/:entry`. |
 | Agent allowlist includes the tool. | `agents.<id>.tools` in YAML. |
 | Runner module is ESM `.mjs`. | Toolpack directory. |
 | Controller support returns `{ output }`. | Toolpack tests or a local activation. |

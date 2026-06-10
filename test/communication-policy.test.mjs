@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -121,6 +121,49 @@ test("messages.send defaults routine messages to P2", async () => {
       checked.close();
     }
   });
+});
+
+test("core toolpack registers project stats for WebUI", async () => {
+  const config = projectConfig("policy-webui-stats");
+  await withProject(config, async (root) => {
+    const host = new ToolSupportHost(root);
+    const entries = await host.listWebui(config.name);
+    const stats = entries.find((entry) => entry.toolpackId === "core" && entry.id === "project.stats");
+    assert.ok(stats);
+    assert.equal(stats.kind, "panel");
+
+    const result = await host.invokeWebui(config.name, "core", "project.stats", {});
+    assert.equal(result.title, "Project statistics");
+    assert.match(result.output, /Agents: 3/);
+    assert.ok(Array.isArray(result.metadata.metrics));
+  });
+});
+
+test("local WebUI-only toolpacks do not require a runner module", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "suzumio-webui-toolpack-"));
+  try {
+    const toolpack = path.join(root, "review-tools");
+    await mkdir(toolpack, { recursive: true });
+    await writeFile(path.join(toolpack, "suzumio.toolpack.json"), JSON.stringify({
+      id: "review-tools",
+      controller: "controller.mjs",
+      tools: [],
+      webui: [{ id: "review.stats", title: "Review stats", kind: "panel" }],
+    }, null, 2));
+    await writeFile(path.join(toolpack, "controller.mjs"), `export const webui = { "review.stats": async () => ({ title: "Review stats", output: "ok" }) };\n`);
+    const config = projectConfig("policy-local-webui-only");
+    config.tools = { toolpacks: [{ path: toolpack, id: "review-tools" }] };
+    await withProject(config, async (projectRoot) => {
+      const host = new ToolSupportHost(projectRoot);
+      const entries = await host.listWebui(config.name);
+      assert.equal(entries.length, 1);
+      assert.equal(entries[0].id, "review.stats");
+      const result = await host.invokeWebui(config.name, "review-tools", "review.stats", {});
+      assert.equal(result.output, "ok");
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("pending P2 signals are delivered one at a time", async () => {

@@ -129,7 +129,6 @@ agents:
 | `tools` | Empty list | Per-agent model-visible tool allowlist. Supports exact names, `namespace.*`, and `*`. |
 | `mounts` | Empty list | Host files or directories mounted only for this agent. |
 | `env` | Empty map | Extra environment variables for this agent's runner containers. |
-| `workspace` | Runtime default | Optional workspace override. |
 
 Counted agents use generated ids. The example above creates `worker-1` and `worker-2`; their configured display names are `Akari` and `Ren`.
 
@@ -150,9 +149,9 @@ tools:
 | `core` | `messages.send`, `coordination.wait_for_signal`, `completion.submit`, `file.read`, `file.write`, `file.patch` |
 | `shell` | `shell.exec` |
 | `web` | `web.fetch` |
-| Local `{ path, id }` | Tools declared by `suzumio.toolpack.json` in that directory. |
+| Local `{ path, id }` | Model-facing tools and optional WebUI entries declared by `suzumio.toolpack.json` in that directory. |
 
-`tools.toolpacks` registers definitions for the project. `agents.<id>.tools` allowlists which registered tools a model can see. Built-in file tools can be granted with `file.*` or exact names such as `file.read` and `file.patch`.
+`tools.toolpacks` registers definitions for the project. `agents.<id>.tools` allowlists which registered tools a model can see. Built-in file tools can be granted with `file.*` or exact names such as `file.read` and `file.patch`. Toolpack WebUI entries are user-facing controls and do not use the per-agent model allowlist.
 
 Custom toolpack details live in [Custom Tools](toolpacks.html).
 
@@ -278,8 +277,6 @@ backend:
   controllerUrl: http://host.docker.internal:39400
   docker:
     network: bridge
-    memory: 4g
-    cpus: 2
     proxy:
       inheritEnv: true
       rewriteLocalhost: true
@@ -303,8 +300,6 @@ backend:
 | `image` | `suzumio-runner:dev` | Docker image used for activation containers. |
 | `controllerUrl` | `http://host.docker.internal:39400` | URL used by containers to call Suzumio support routes and submit output. |
 | `docker.network` | None | Docker network mode. Linux host networking uses `host`. |
-| `docker.memory` | None | Optional Docker memory limit. |
-| `docker.cpus` | None | Optional Docker CPU limit. |
 | `docker.mounts` | Empty list | Host files or directories mounted into every activation container. |
 | `docker.proxy` | Inherit env, rewrite localhost | Proxy config passed into runner containers. |
 | `runner` | `mode: ai` | AI runner config. |
@@ -329,7 +324,6 @@ backend:
     model: worker-with-fallback
     maxIterations: 20
     maxToolCalls: 80
-    finalPrompt: "Return a concise final activation summary."
     models:
       providers:
         gateway:
@@ -365,7 +359,6 @@ Runner fields:
 | `model` | None | Project-level model preset name. Agents can override with `agents.<id>.model`. |
 | `maxIterations` | Provider/runtime default | Optional cap on model loop iterations. |
 | `maxToolCalls` | Provider/runtime default | Optional cap on tool calls in one activation. |
-| `finalPrompt` | Runtime default | Optional final instruction for activation output. |
 | `models.providers` | Empty map | Provider registry. |
 | `models.presets` | Empty map | Named model presets and fallback lists. |
 

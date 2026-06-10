@@ -1,7 +1,7 @@
 import { pathToFileURL } from "node:url";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
-import type { AgentRecord, JsonObject, MessagePriority, ProjectConfig, ToolDefinition, ToolpackConfigEntry } from "./types.js";
+import type { AgentRecord, JsonObject, MessagePriority, ProjectConfig, ToolDefinition, ToolpackConfigEntry, ToolWebuiDefinition, ToolWebuiEntry } from "./types.js";
 import { ProjectStore } from "./store.js";
 
 export type ToolCallOutput = {
@@ -17,6 +17,7 @@ export type ResolvedToolpack = {
   runnerModule: string;
   controllerModule?: string;
   tools: ToolDefinition[];
+  webui: ToolWebuiDefinition[];
 };
 
 export type ToolSupportInput = {
@@ -76,10 +77,21 @@ type ControllerContext = {
 
 type ControllerHandler = (context: ControllerContext, input: unknown) => Promise<ToolCallOutput>;
 
+type ToolWebuiContext = {
+  store: ProjectStore;
+  project: string;
+  toolpackId: string;
+  recordSignal: (input: { kind: string; targetAgent?: string; targetChannel?: string; priority?: MessagePriority; payload?: JsonObject; status?: "pending" | "closed"; usefulEffect?: boolean }) => void;
+};
+
+type ToolWebuiHandler = (context: ToolWebuiContext, input: unknown) => Promise<ToolCallOutput>;
+
 type BuiltinToolpack = {
   id: string;
   tools: ToolDefinition[];
   support: Record<string, ControllerHandler>;
+  webui: ToolWebuiDefinition[];
+  webuiSupport: Record<string, ToolWebuiHandler>;
 };
 
 export class ToolSupportHost {
@@ -137,6 +149,30 @@ export class ToolSupportHost {
     }
   }
 
+  async listWebui(project: string): Promise<ToolWebuiEntry[]> {
+    const store = new ProjectStore(project, this.root);
+    try {
+      return (await resolveToolpacks(store.config().tools.toolpacks)).flatMap((toolpack) => toolpack.webui.map((entry) => ({ ...entry, toolpackId: toolpack.id, toolpackKind: toolpack.kind })));
+    } finally {
+      store.close();
+    }
+  }
+
+  async invokeWebui(project: string, toolpackId: string, entryId: string, input: unknown): Promise<ToolCallOutput> {
+    const store = new ProjectStore(project, this.root);
+    try {
+      const toolpacks = await resolveToolpacks(store.config().tools.toolpacks);
+      const toolpack = toolpacks.find((item) => item.id === toolpackId);
+      if (!toolpack) throw new Error(`Unknown toolpack: ${toolpackId}`);
+      if (!toolpack.webui.some((entry) => entry.id === entryId)) throw new Error(`Unknown WebUI tool entry ${entryId} in ${toolpackId}`);
+      const context = webuiContext(store, toolpack.id);
+      if (toolpack.kind === "builtin") return await builtinWebui(toolpack.id, entryId, context, input);
+      return await externalWebui(toolpack, entryId, context, input);
+    } finally {
+      store.close();
+    }
+  }
+
   private authorize(store: ProjectStore, agentId: string, token: string, activationId: string, options: { requireRunning?: boolean } = {}): AgentRecord {
     const agent = store.requireAgent(agentId);
     if (agent.token !== token) throw new Error("Invalid agent token");
@@ -170,6 +206,10 @@ export async function toolDefinitions(agent: AgentRecord, toolpacks: ToolpackCon
   return (await resolveToolpacks(toolpacks)).flatMap((toolpack) => toolpack.tools).filter((definition) => isAllowed(definition.name, agent.tools));
 }
 
+export async function toolWebuiDefinitions(toolpacks: ToolpackConfigEntry[]): Promise<ToolWebuiEntry[]> {
+  return (await resolveToolpacks(toolpacks)).flatMap((toolpack) => toolpack.webui.map((entry) => ({ ...entry, toolpackId: toolpack.id, toolpackKind: toolpack.kind })));
+}
+
 export function isAllowed(tool: string, allowlist: string[]): boolean {
   let allowed = false;
   for (const pattern of allowlist) {
@@ -189,10 +229,21 @@ function controllerContext(store: ProjectStore, agent: AgentRecord, activationId
   };
 }
 
+function webuiContext(store: ProjectStore, toolpackId: string): ToolWebuiContext {
+  return {
+    store,
+    project: store.project,
+    toolpackId,
+    recordSignal: (input) => {
+      store.recordSignal({ kind: input.kind, targetAgent: input.targetAgent, targetChannel: input.targetChannel, priority: input.priority, payload: input.payload ?? {}, status: input.status, usefulEffect: input.usefulEffect });
+    },
+  };
+}
+
 function builtinToolpack(id: string): ResolvedToolpack {
   const toolpack = BUILTIN_TOOLPACKS[id];
   if (!toolpack) throw new Error(`Unknown built-in toolpack: ${id}`);
-  return { id: toolpack.id, kind: "builtin", runnerModule: `builtin:${toolpack.id}`, tools: toolpack.tools };
+  return { id: toolpack.id, kind: "builtin", runnerModule: `builtin:${toolpack.id}`, tools: toolpack.tools, webui: toolpack.webui };
 }
 
 async function localToolpack(root: string, expectedId: string | undefined): Promise<ResolvedToolpack> {
@@ -202,15 +253,17 @@ async function localToolpack(root: string, expectedId: string | undefined): Prom
   assertToolpackId(id);
   if (expectedId && expectedId !== id) throw new Error(`Toolpack id mismatch: expected ${expectedId}, got ${id}`);
   const tools = toolsField(manifest.tools);
+  const webui = webuiField(manifest.webui);
   const runner = path.resolve(root, optionalString(manifest.runner) ?? "runner.mjs");
   const controller = path.resolve(root, optionalString(manifest.controller) ?? "controller.mjs");
-  assertInside(runner, root);
+  if (tools.length === 0 && webui.length === 0) throw new Error(`Toolpack ${id} declares no tools or WebUI entries`);
+  if (tools.length > 0) assertInside(runner, root);
   assertInside(controller, root);
-  assertMjs(runner, "runner");
+  if (tools.length > 0) assertMjs(runner, "runner");
   assertMjs(controller, "controller");
-  await stat(runner);
+  if (tools.length > 0) await stat(runner);
   await stat(controller);
-  return { id, kind: "local", root, runnerModule: runner, controllerModule: controller, tools };
+  return { id, kind: "local", root, runnerModule: runner, controllerModule: controller, tools, webui };
 }
 
 function assertNoDuplicateTools(toolpacks: ResolvedToolpack[]): void {
@@ -238,9 +291,27 @@ async function externalSupport(toolpack: ResolvedToolpack, tool: string, context
   return handler(input);
 }
 
+async function externalWebui(toolpack: ResolvedToolpack, entryId: string, context: ToolWebuiContext, input: unknown): Promise<ToolCallOutput> {
+  if (!toolpack.controllerModule) throw new Error(`Toolpack ${toolpack.id} has no controller module`);
+  const module = await import(pathToFileURL(toolpack.controllerModule).href);
+  const factory = module.createWebuiToolpack;
+  const instance = typeof factory === "function" ? await factory(context) : module.webui ?? module.default;
+  if (typeof instance === "function") return instance(entryId, input);
+  const handlers = instance?.webui ?? instance?.tools ?? instance;
+  const handler = handlers?.[entryId];
+  if (typeof handler !== "function") return { title: "toolpack webui", output: `WebUI side for ${toolpack.id} did not handle ${entryId}.`, metadata: { toolpack: toolpack.id, entryId } };
+  return handler(input);
+}
+
 function builtinSupport(toolpackId: string, tool: string, context: ControllerContext, input: unknown): Promise<ToolCallOutput> {
   const handler = BUILTIN_TOOLPACKS[toolpackId]?.support[tool];
   if (!handler) return Promise.resolve({ title: "toolpack support", output: `Controller side for ${toolpackId} did not handle ${tool}.`, metadata: { toolpack: toolpackId, tool } });
+  return handler(context, input);
+}
+
+function builtinWebui(toolpackId: string, entryId: string, context: ToolWebuiContext, input: unknown): Promise<ToolCallOutput> {
+  const handler = BUILTIN_TOOLPACKS[toolpackId]?.webuiSupport[entryId];
+  if (!handler) return Promise.resolve({ title: "toolpack webui", output: `WebUI side for ${toolpackId} did not handle ${entryId}.`, metadata: { toolpack: toolpackId, entryId } });
   return handler(context, input);
 }
 
@@ -253,10 +324,42 @@ const BUILTIN_TOOLPACKS: Record<string, BuiltinToolpack> = {
       "coordination.wait_for_signal": waitForSignalSupport,
       "completion.submit": completionSubmitSupport,
     },
+    webui: [projectStatsWebuiDefinition()],
+    webuiSupport: { "project.stats": projectStatsWebuiSupport },
   },
-  shell: { id: "shell", tools: [shellExecDefinition()], support: {} },
-  web: { id: "web", tools: [webFetchDefinition()], support: {} },
+  shell: { id: "shell", tools: [shellExecDefinition()], support: {}, webui: [], webuiSupport: {} },
+  web: { id: "web", tools: [webFetchDefinition()], support: {}, webui: [], webuiSupport: {} },
 };
+
+function projectStatsWebuiDefinition(): ToolWebuiDefinition {
+  return {
+    id: "project.stats",
+    title: "Project statistics",
+    description: "Live project, agent, activation, message, history, and tool-call counts from Suzumio's SQLite store.",
+    kind: "panel",
+  };
+}
+
+async function projectStatsWebuiSupport({ store }: ToolWebuiContext): Promise<ToolCallOutput> {
+  const row = store.projectRow();
+  const stats = store.projectStats();
+  const agents = store.listAgents();
+  const agentStatuses = countBy(agents.map((agent) => agent.status));
+  const metrics = [
+    { label: "Status", value: String(row.status) },
+    { label: "Agents", value: agents.length, description: formatCounts(agentStatuses) },
+    { label: "Messages", value: stats.messageCount },
+    { label: "Activations", value: stats.activationCount, description: `${stats.runningActivationCount} running, ${stats.failedActivationCount} failed` },
+    { label: "Tool calls", value: stats.toolCallCount },
+    { label: "History", value: stats.historyMessageCount, description: `${stats.historyCompactionCount} compactions` },
+    { label: "Events", value: stats.eventCount },
+  ];
+  return {
+    title: "Project statistics",
+    output: metrics.map((item) => `${item.label}: ${item.value}${item.description ? ` (${item.description})` : ""}`).join("\n"),
+    metadata: { metrics, stats, agentStatuses, projectStatus: row.status },
+  };
+}
 
 function messagesSendDefinition(): ToolDefinition {
   return {
@@ -502,6 +605,36 @@ function toolsField(value: unknown): ToolDefinition[] {
   });
 }
 
+function webuiField(value: unknown): ToolWebuiDefinition[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) throw new Error("Toolpack manifest webui must be an array");
+  const seen = new Set<string>();
+  return value.map((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("Toolpack WebUI definition must be an object");
+    const entry = item as Record<string, unknown>;
+    const id = stringField(entry.id, "webui.id");
+    assertToolpackId(id);
+    if (seen.has(id)) throw new Error(`Duplicate WebUI entry ${id}`);
+    seen.add(id);
+    const inputSchema = entry.inputSchema;
+    if (inputSchema !== undefined && (!inputSchema || typeof inputSchema !== "object" || Array.isArray(inputSchema))) throw new Error("Toolpack WebUI inputSchema must be an object");
+    return {
+      id,
+      title: stringField(entry.title, "webui.title"),
+      description: optionalString(entry.description),
+      kind: webuiKind(entry.kind),
+      inputSchema: inputSchema as JsonObject | undefined,
+      submitLabel: optionalString(entry.submitLabel),
+    };
+  });
+}
+
+function webuiKind(value: unknown): "panel" | "action" {
+  if (value === undefined || value === "panel") return "panel";
+  if (value === "action") return "action";
+  throw new Error(`Invalid WebUI entry kind: ${String(value)}`);
+}
+
 function assertInside(filePath: string, root: string): void {
   const resolved = path.resolve(filePath);
   const base = path.resolve(root);
@@ -517,4 +650,14 @@ function assertMjs(filePath: string, label: string): void {
 function assertToolpackId(id: string): void {
   if (/^[A-Za-z0-9_.-]+$/.test(id)) return;
   throw new Error(`Toolpack id must contain only A-Z, a-z, 0-9, dot, underscore, or dash: ${id}`);
+}
+
+function countBy(values: string[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const value of values) counts[value] = (counts[value] ?? 0) + 1;
+  return counts;
+}
+
+function formatCounts(counts: Record<string, number>): string {
+  return Object.entries(counts).map(([key, value]) => `${value} ${key}`).join(", ") || "none";
 }

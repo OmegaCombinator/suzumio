@@ -50,6 +50,8 @@ The current API is intended for local or trusted-network use. User-facing API au
 | `GET`  | `/api/projects/:project/activations?limit=100` | Recent activations.                                            |
 | `GET`  | `/api/projects/:project/activations/:id/context` | Scheduler prompt plus the model message context snapshot for one activation. |
 | `GET`  | `/api/projects/:project/tool-calls?limit=100` | Recent tool calls.                                             |
+| `GET`  | `/api/projects/:project/tool-ui`            | WebUI entries registered by configured toolpacks.               |
+| `POST` | `/api/projects/:project/tool-ui/:toolpackId/:entryId` | Invoke one registered WebUI tool entry.                  |
 | `GET`  | `/api/projects/:project/config/resolved`      | Resolved YAML config as plain text.                            |
 | `GET`  | `/api/projects/:project/report`               | Final report text if submitted, otherwise a short placeholder. |
 
@@ -60,14 +62,14 @@ The current API is intended for local or trusted-network use. User-facing API au
 | `POST` | `/api/projects/:project/start`           | Empty                                                    | Set project status to `running` and tick scheduler.                        |
 | `POST` | `/api/projects/:project/stop`            | Empty                                                    | Set project status to `stopped`.                                           |
 | `POST` | `/api/projects/:project/approve`         | Empty                                                    | Set project status to `completed`.                                         |
-| `POST` | `/api/projects/:project/request-changes` | `{ "recipient": "pm", "body": "..." }`                   | Return project to `running`, send a `P1` user message, and tick scheduler. |
+| `POST` | `/api/projects/:project/request-changes` | `{ "recipient": "pm", "body": "..." }`                   | Return project to `running`, send a `P2` user message, and tick scheduler. |
 | `POST` | `/api/projects/:project/messages`        | `{ "recipient": "pm", "priority": "P1", "body": "..." }` | Create a message and tick scheduler.                                       |
 
     curl -X POST http://127.0.0.1:39400/api/projects/demo/messages \
       -H 'content-type: application/json' \
       -d '{"recipient":"pm","priority":"P1","body":"Start."}'
 
-For `/messages`, body may include `sender`, `recipient`, `channel`, `priority`, and `body`. Use either `recipient` or `channel`. Priority defaults to `P1`.
+For `/messages`, body may include `sender`, `recipient`, `channel`, `priority`, and `body`. Use either `recipient` or `channel`. Priority defaults to `P2`.
 
 ## SSE Stream
 
@@ -125,6 +127,33 @@ The support host verifies token, activation ownership, toolpack membership, and 
     }
 
 Set `targetAgent` or `targetChannel` to create schedulable work. Omit the target and set `usefulEffect: true` to record a closed useful effect without waking any agent. Targeted signals cannot be explicitly closed.
+
+## Tool WebUI Routes
+
+Configured toolpacks can register user-facing WebUI entries. These routes are project APIs, not runner-internal routes, so they do not use agent activation tokens. They are intended for the trusted WebUI/control-room surface.
+
+    GET /api/projects/demo/tool-ui
+
+    [
+      {
+        "toolpackId": "core",
+        "toolpackKind": "builtin",
+        "id": "project.stats",
+        "title": "Project statistics",
+        "kind": "panel"
+      }
+    ]
+
+    POST /api/projects/demo/tool-ui/core/project.stats
+    {}
+
+    {
+      "title": "Project statistics",
+      "output": "Status: running\nAgents: 3 ...",
+      "metadata": { "metrics": [] }
+    }
+
+`kind: "panel"` entries are read-style controls that the WebUI can refresh. `kind: "action"` entries render a generic form from `inputSchema` and submit the result to the same POST route.
 
 ## Custom Toolpack Signals
 

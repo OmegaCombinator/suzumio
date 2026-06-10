@@ -491,6 +491,7 @@ button {
 .message-item,
 .activation-item,
 .tool-item,
+.tool-ui-card,
 .history-item {
   background: #ffffff;
   border: 1px solid #e2e8f0;
@@ -645,7 +646,9 @@ button {
 }
 
 select,
-textarea {
+textarea,
+input[type="text"],
+input[type="number"] {
   width: 100%;
   color: #0f172a;
   background: #ffffff;
@@ -655,7 +658,9 @@ textarea {
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
-select {
+select,
+input[type="text"],
+input[type="number"] {
   padding: 0.55rem 0.75rem;
   font-size: 0.875rem;
 }
@@ -669,7 +674,9 @@ textarea {
 }
 
 select:focus,
-textarea:focus {
+textarea:focus,
+input[type="text"]:focus,
+input[type="number"]:focus {
   border-color: #3b82f6;
   box-shadow: 0 0 0 1px #3b82f6;
 }
@@ -686,10 +693,137 @@ textarea:focus {
 
 .message-item,
 .activation-item,
-.tool-item {
+.tool-item,
+.tool-ui-card {
   position: relative;
   min-width: 0;
   padding: 0.875rem;
+}
+
+.tool-ui-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+  gap: 0.75rem;
+}
+
+.tool-ui-card {
+  display: grid;
+  gap: 0.75rem;
+  background: linear-gradient(180deg, #f8fafc 0%, #ffffff 60%);
+  border-left: 3px solid #8b5cf6;
+}
+
+.tool-ui-card > small {
+  color: #94a3b8;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.6875rem;
+}
+
+.tool-ui-card p {
+  margin: 0;
+  color: #475569;
+  font-size: 0.8125rem;
+  line-height: 1.55;
+}
+
+.tool-ui-kind {
+  padding: 0.1rem 0.45rem;
+  color: #6d28d9;
+  background: #f5f3ff;
+  border-radius: 999px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+}
+
+.tool-ui-form {
+  display: grid;
+  gap: 0.625rem;
+}
+
+.tool-ui-field {
+  display: grid;
+  gap: 0.375rem;
+}
+
+.tool-ui-field > span {
+  color: #334155;
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+
+.tool-ui-field > small {
+  color: #94a3b8;
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.tool-ui-field input[type="checkbox"] {
+  width: 1rem;
+  height: 1rem;
+}
+
+.tool-ui-result {
+  display: grid;
+  gap: 0.625rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid #e2e8f0;
+}
+
+.tool-ui-result > strong {
+  color: #0f172a;
+  font-size: 0.875rem;
+}
+
+.tool-ui-result pre {
+  max-height: 22rem;
+  margin: 0;
+  padding: 0.75rem;
+  overflow: auto;
+  color: #334155;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.75rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.tool-ui-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+  gap: 0.5rem;
+}
+
+.tool-ui-metrics div {
+  padding: 0.625rem;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.375rem;
+}
+
+.tool-ui-metrics span,
+.tool-ui-metrics strong,
+.tool-ui-metrics small {
+  display: block;
+}
+
+.tool-ui-metrics span {
+  color: #64748b;
+  font-size: 0.75rem;
+}
+
+.tool-ui-metrics strong {
+  margin-top: 0.125rem;
+  color: #0f172a;
+  font-size: 1.125rem;
+  font-weight: 650;
+}
+
+.tool-ui-metrics small {
+  margin-top: 0.125rem;
+  color: #94a3b8;
+  font-size: 0.6875rem;
 }
 
 .message-item {

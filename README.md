@@ -8,7 +8,7 @@ Core principles:
 
 - Projects are declared in YAML: task, agents, prompts, tools, scheduler, Docker backend, and model presets.
 - Agents run in isolated Docker activations managed by the backend.
-- The scheduler never interrupts a running agent.
+- The scheduler only interrupts a running agent for `P0` signals; `P1` waits for a tool boundary and `P2` waits for the next activation.
 - Agents are only woken by pending signals or explicit user/system control.
 - Suzumio owns project state, messages, signals, shared artifact directories, tool audit logs, and observability.
 - The Docker runner executes one agent activation and presents runner-side model-facing tools.

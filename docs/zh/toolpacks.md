@@ -47,7 +47,7 @@ toolpacks/review/
   controller.mjs
 ```
 
-Local toolpacks 是 controller host 上的 directories。Suzumio 会把它们 read-only mount 到 runner containers。
+Local toolpacks 是 controller host 上的 directories。Suzumio 会把当前 agent 至少允许一个 model-facing tool 的 local toolpack read-only mount 到该 agent 的 runner container。WebUI-only toolpacks，以及被 agent allowlist 隐藏的 toolpacks，只留在 controller side。
 
 ```yaml
 tools:
@@ -64,6 +64,14 @@ tools:
   "id": "review-tools",
   "runner": "runner.mjs",
   "controller": "controller.mjs",
+  "webui": [
+    {
+      "id": "review.stats",
+      "title": "Review statistics",
+      "description": "Show cached review counts.",
+      "kind": "panel"
+    }
+  ],
   "tools": [
     {
       "name": "review.summarize",
@@ -84,11 +92,12 @@ tools:
 | Field | Required | Description |
 |-------|----------|-------------|
 | `id` | Yes | Toolpack id。如果 config 中也写了 `id`，两者必须一致。 |
-| `runner` | No | Runner-side module path，相对 toolpack root。默认 `runner.mjs`。 |
+| `runner` | No | Runner-side module path，相对 toolpack root。默认 `runner.mjs`。仅当 `tools` 非空时必须存在。 |
 | `controller` | No | Controller-side module path，相对 toolpack root。默认 `controller.mjs`。 |
 | `tools` | Yes | Tool definitions array，每个 definition 包含 `name`、`description` 和 JSON-schema-like `inputSchema`。 |
+| `webui` | No | 可选 WebUI entries，显示在 Tools panel 中。每个 entry 包含 `id`、`title`、`kind`，以及可选 `description`、`inputSchema`、`submitLabel`。 |
 
-Id 只包含 letters、digits、`.`、`_` 和 `-`。HTTP(S) toolpack paths 会被拒绝。Module paths 保持在 toolpack directory 内，以 `.mjs` 结尾，并指向已有文件。重复 toolpack ids 和跨 registered toolpacks 的重复 tool names 会被拒绝。
+Id 只包含 letters、digits、`.`、`_` 和 `-`。HTTP(S) toolpack paths 会被拒绝。Module paths 保持在 toolpack directory 内，并以 `.mjs` 结尾。Controller module 必须存在；声明 model-facing tools 时 runner module 也必须存在。重复 toolpack ids 和跨 registered toolpacks 的重复 tool names 会被拒绝。
 
 Runtime 不提供 TypeScript transpilation。Toolpack modules 是 JavaScript ESM `.mjs` files。
 
@@ -156,6 +165,51 @@ Controller context fields:
 
 `callSupport` 会先验证 token、activation ownership、toolpack membership 和 agent allowlist，再调用 controller support。
 
+## WebUI Registration
+
+Toolpacks 可以注册 user-facing WebUI controls，不需要写 browser code。Server 通过 `GET /api/projects/:project/tool-ui` 暴露这些 entries，WebUI 的 Tools panel 会把它们渲染为通用 panel 或 action form。
+
+```json
+{
+  "webui": [
+    {
+      "id": "review.stats",
+      "title": "Review statistics",
+      "kind": "panel"
+    },
+    {
+      "id": "review.rebuild",
+      "title": "Rebuild review cache",
+      "kind": "action",
+      "submitLabel": "Rebuild",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "scope": { "type": "string", "enum": ["all", "recent"], "default": "recent" }
+        }
+      }
+    }
+  ]
+}
+```
+
+Controller module 可以导出 `createWebuiToolpack(context)`、`webui` handler map，或 default handler map 来处理 WebUI entries。Handler 返回值与 tool support handler 相同，都是 `{ output, title?, metadata? }`。
+
+```js
+export function createWebuiToolpack(context) {
+  return {
+    webui: {
+      "review.stats": async () => {
+        const stats = context.store.projectStats();
+        return { output: JSON.stringify(stats, null, 2), metadata: { stats } };
+      },
+    },
+  };
+}
+```
+
+WebUI handlers 在 controller side 运行，是 user-facing project API，不是 model-facing tools。它们不需要 agent activation token。Local toolpacks 必须视为 trusted code，且不要把 Suzumio HTTP server 暴露到不可信网络。
+
 ## Recording Signals
 
 Custom tools 用 `recordSignal` 把 tool execution 接回 scheduler。
@@ -183,7 +237,8 @@ context.recordSignal({
 | Project config renders. | `suzumio config render project.yaml` |
 | Toolpack path resolves under the config directory. | Rendered `tools.toolpacks` output. |
 | Manifest id matches configured id. | `suzumio.toolpack.json` and YAML. |
-| Tool name is unique across registered toolpacks. | Config render validation. |
+| Tool name is unique across registered toolpacks. | Activation startup、support calls 或 WebUI tool loading 时的 toolpack resolution。 |
+| WebUI entry has a controller-side handler. | 打开 Tools panel，或调用 `POST /api/projects/:project/tool-ui/:toolpack/:entry`。 |
 | Agent allowlist includes the tool. | `agents.<id>.tools` in YAML. |
 | Runner module is ESM `.mjs`. | Toolpack directory. |
 | Controller support returns `{ output }`. | Toolpack tests or a local activation. |

@@ -50,6 +50,8 @@ lead: "HTTP server 暴露项目观测、用户控制动作、SSE 事件流，以
 | `GET` | `/api/projects/:project/activations?limit=100` | 近期 activation。                               |
 | `GET` | `/api/projects/:project/activations/:id/context` | 单个 activation 的 scheduler prompt 和模型消息上下文快照。 |
 | `GET` | `/api/projects/:project/tool-calls?limit=100` | 近期工具调用。                                  |
+| `GET` | `/api/projects/:project/tool-ui`            | 已配置 toolpacks 注册的 WebUI entries。         |
+| `POST` | `/api/projects/:project/tool-ui/:toolpackId/:entryId` | 调用一个已注册的 WebUI tool entry。     |
 | `GET` | `/api/projects/:project/config/resolved`      | Resolved YAML config，plain text。              |
 | `GET` | `/api/projects/:project/report`               | Submitted final report 文本；未提交时返回提示。 |
 
@@ -60,14 +62,14 @@ lead: "HTTP server 暴露项目观测、用户控制动作、SSE 事件流，以
 | `POST` | `/api/projects/:project/start`           | 空                                                       | 设置为 `running` 并 tick scheduler。                    |
 | `POST` | `/api/projects/:project/stop`            | 空                                                       | 设置为 `stopped`。                                      |
 | `POST` | `/api/projects/:project/approve`         | 空                                                       | 设置为 `completed`。                                    |
-| `POST` | `/api/projects/:project/request-changes` | `{ "recipient": "pm", "body": "..." }`                   | 回到 `running`，发送 `P1` 用户消息，并 tick scheduler。 |
+| `POST` | `/api/projects/:project/request-changes` | `{ "recipient": "pm", "body": "..." }`                   | 回到 `running`，发送 `P2` 用户消息，并 tick scheduler。 |
 | `POST` | `/api/projects/:project/messages`        | `{ "recipient": "pm", "priority": "P1", "body": "..." }` | 创建消息并 tick scheduler。                             |
 
     curl -X POST http://127.0.0.1:39400/api/projects/demo/messages \
       -H 'content-type: application/json' \
       -d '{"recipient":"pm","priority":"P1","body":"Start."}'
 
-`/messages` body 可包含 `sender`、`recipient`、`channel`、`priority`、`body`。使用 `recipient` 或 `channel` 其一。Priority 默认 `P1`。
+`/messages` body 可包含 `sender`、`recipient`、`channel`、`priority`、`body`。使用 `recipient` 或 `channel` 其一。Priority 默认 `P2`。
 
 ## SSE Stream
 
@@ -125,6 +127,33 @@ Support host 会在调用 controller support 前校验 token、activation owners
     }
 
 设置 `targetAgent` 或 `targetChannel` 会创建可调度工作。省略 target 并设置 `usefulEffect: true` 会记录 closed useful effect，不唤醒任何 agent。带目标的 signal 不能显式 closed。
+
+## Tool WebUI Routes
+
+已配置的 toolpacks 可以注册 user-facing WebUI entries。这些 routes 是 project API，不是 runner-internal routes，所以不使用 agent activation tokens。它们面向 trusted WebUI/control-room surface。
+
+    GET /api/projects/demo/tool-ui
+
+    [
+      {
+        "toolpackId": "core",
+        "toolpackKind": "builtin",
+        "id": "project.stats",
+        "title": "Project statistics",
+        "kind": "panel"
+      }
+    ]
+
+    POST /api/projects/demo/tool-ui/core/project.stats
+    {}
+
+    {
+      "title": "Project statistics",
+      "output": "Status: running\nAgents: 3 ...",
+      "metadata": { "metrics": [] }
+    }
+
+`kind: "panel"` 是 read-style controls，WebUI 可以刷新。`kind: "action"` 会根据 `inputSchema` 渲染通用表单，并提交到同一个 POST route。
 
 ## 自定义 Toolpack Signals
 

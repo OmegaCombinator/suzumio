@@ -198,7 +198,6 @@ const RunnerSchema = z
     model: z.string().optional(),
     maxIterations: z.number().int().positive().optional(),
     maxToolCalls: z.number().int().positive().optional(),
-    finalPrompt: z.string().optional(),
     models: ModelsSchema.optional(),
   })
   .default({ mode: "ai" });
@@ -231,8 +230,6 @@ const BackendSchema = z
     docker: z
       .object({
         network: z.string().optional(),
-        memory: z.string().optional(),
-        cpus: z.number().positive().optional(),
         mounts: z.array(MountSchema).default([]),
         proxy: DockerProxySchema,
       })
@@ -251,7 +248,6 @@ const AgentSchema = z.object({
   tools: z.array(z.string()).default([]),
   mounts: z.array(MountSchema).default([]),
   env: z.record(z.string(), z.string()).default({}),
-  workspace: z.string().optional(),
 });
 
 const ProjectConfigSchema = z.object({

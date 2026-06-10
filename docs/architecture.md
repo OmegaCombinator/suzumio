@@ -42,7 +42,7 @@ The core process is the authority for project-level records. Data visible in CLI
 | `config.ts`    | Loads YAML, resolves imports, applies `extends`, validates config, and renders final YAML.                                              |
 | `store.ts`     | Creates and queries SQLite tables for projects, agents, messages, signals, agent history, activations, events, and tool calls.          |
 | `scheduler.ts` | Implements signal delivery, including `P0` interruption and `P1` tool-boundary delivery.                                                 |
-| `tools.ts`     | Resolves built-in and local toolpacks and serves controller support with token and allowlist checks.                                    |
+| `tools.ts`     | Resolves built-in and local toolpacks, serves controller support with token/allowlist checks, and exposes trusted WebUI tool entries.   |
 | `server.ts`    | HTTP API, SSE stream, controller support route, activation result route, and static WebUI asset serving.                                 |
 | `webui/`       | Preact + Vite project for the browser control room served at `/`.                                                                        |
 | `backend.ts`   | Docker container creation, configured bind mounts, runner input, and activation completion monitoring.                                  |
@@ -96,6 +96,8 @@ Completed containers are currently kept for early debugging. Cleanup policy is p
       runner returns tool output to model
 
 The model does not receive arbitrary host tools by default. Tools are configured per agent. `file.read`, `file.write`, `file.patch`, `shell.exec`, and `web.fetch` run inside the Docker runner; message, completion, and coordination tools use Suzumio support APIs.
+
+Toolpacks can also register WebUI entries. These are user-facing project controls rendered by the WebUI Tools panel and invoked through public project APIs, not model-facing tools and not runner-internal routes.
 
 ## Agent History
 

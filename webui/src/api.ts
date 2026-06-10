@@ -58,6 +58,23 @@ export interface ToolCall {
   error?: string;
 }
 
+export interface ToolUiEntry {
+  id: string;
+  toolpackId: string;
+  toolpackKind: "builtin" | "local";
+  title: string;
+  description?: string;
+  kind: "panel" | "action";
+  inputSchema?: Record<string, unknown>;
+  submitLabel?: string;
+}
+
+export interface ToolUiResult {
+  title?: string;
+  output: string;
+  metadata?: Record<string, unknown>;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -199,6 +216,18 @@ export function loadEvents(project: string, limit = 120): Promise<EventRecord[]>
 
 export function loadToolCalls(project: string, limit = 100): Promise<ToolCall[]> {
   return request<ToolCall[]>(projectPath(project, `/tool-calls?limit=${limit}`));
+}
+
+export function loadToolUi(project: string): Promise<ToolUiEntry[]> {
+  return request<ToolUiEntry[]>(projectPath(project, "/tool-ui"));
+}
+
+export function invokeToolUi(project: string, entry: ToolUiEntry, input: Record<string, unknown> = {}): Promise<ToolUiResult> {
+  return request<ToolUiResult>(projectPath(project, `/tool-ui/${encodeURIComponent(entry.toolpackId)}/${encodeURIComponent(entry.id)}`), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
 }
 
 export function loadReport(project: string): Promise<string> {

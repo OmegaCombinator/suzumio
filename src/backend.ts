@@ -34,7 +34,8 @@ export class DockerChatBackend {
     await writeFile(activation.inputPath, JSON.stringify(input, null, 2) + "\n", "utf8");
     const containerName = safeName(`suzumio_${store.project}_${agent.id}_${activation.id}`);
     await ensureArtifactDirs(store.paths.artifacts, agents);
-    const container = await this.createContainer(config, agent, agents, activation, containerName, toolpacks, store.paths.artifacts);
+    const mountedToolpacks = toolpacks.filter((toolpack) => runnerToolpacks.some((spec) => spec.id === toolpack.id));
+    const container = await this.createContainer(config, agent, agents, activation, containerName, mountedToolpacks, store.paths.artifacts);
     store.setActivationContainer(activation.id, containerName);
     await container.start();
     void this.monitor(store.project, activation.id, container.id).catch((error) => {
