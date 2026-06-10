@@ -61,6 +61,7 @@ async function handleRequest(
     if (request.method === "GET" && parts[3] === "agents" && parts[5] === "history" && parts[4]) return json(response, publicHistoryPage(store.listAgentHistory(parts[4], { limit: limit(url, 100), beforeSequence: optionalNumber(url.searchParams.get("before")), includeArchived: url.searchParams.get("includeArchived") !== "0" })));
     if (request.method === "GET" && parts[3] === "agents" && parts[5] === "history-archive" && parts[4] && parts[6]) return json(response, await store.historyArchive(parts[6]));
     if (request.method === "GET" && parts.length === 3) return json(response, projectSummary(store));
+    if (request.method === "GET" && parts[3] === "task") return text(response, String(store.projectRow().task ?? ""));
     if (request.method === "GET" && parts[3] === "agents") return json(response, store.listAgents().map(publicAgent));
     if (request.method === "GET" && parts[3] === "messages" && parts[4]) return json(response, publicMessageFull(store.message(parts[4])));
     if (request.method === "GET" && parts[3] === "messages") return json(response, store.listMessages(limit(url, 100)).map(publicMessage));

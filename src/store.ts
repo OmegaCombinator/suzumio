@@ -967,6 +967,8 @@ CREATE TABLE IF NOT EXISTS agent_history_compactions (
 CREATE INDEX IF NOT EXISTS idx_messages_project_created ON messages(project, created_at);
 CREATE INDEX IF NOT EXISTS idx_events_project_created ON events(project, created_at);
 CREATE INDEX IF NOT EXISTS idx_activations_project_started ON activations(project, started_at);
+CREATE INDEX IF NOT EXISTS idx_tool_calls_project_created ON tool_calls(project, created_at);
+CREATE INDEX IF NOT EXISTS idx_tool_calls_project_tool_created ON tool_calls(project, tool, created_at);
 CREATE INDEX IF NOT EXISTS idx_signals_project_target ON signals(project, target_agent, status, created_at);
 CREATE INDEX IF NOT EXISTS idx_agent_history_project_agent_sequence ON agent_history_messages(project, agent_id, sequence);
 CREATE INDEX IF NOT EXISTS idx_agent_history_project_agent_active ON agent_history_messages(project, agent_id, compaction_id, sequence);

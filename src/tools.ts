@@ -515,15 +515,14 @@ function toolCallAggregateRows(store: ProjectStore): ToolCallAggregateRow[] {
 
 function latestToolCallRows(store: ProjectStore): LatestToolCallRow[] {
   const rows = store.db.prepare(
-    `SELECT current.tool, current.status, current.agent_id, current.created_at, current.completed_at, current.error
-     FROM tool_calls current
-     WHERE current.project = ?
-       AND NOT EXISTS (
-         SELECT 1 FROM tool_calls newer
-         WHERE newer.project = current.project
-           AND newer.tool = current.tool
-           AND (newer.created_at > current.created_at OR (newer.created_at = current.created_at AND newer.id > current.id))
-       )`,
+    `SELECT tool, status, agent_id, created_at, completed_at, error
+     FROM (
+       SELECT tool, status, agent_id, created_at, completed_at, error,
+              ROW_NUMBER() OVER (PARTITION BY tool ORDER BY created_at DESC, id DESC) AS rn
+       FROM tool_calls
+       WHERE project = ?
+     )
+     WHERE rn = 1`,
   ).all(store.project) as Array<Record<string, unknown>>;
   return rows.flatMap((row) => {
     const status = stringField(row.status, "status");

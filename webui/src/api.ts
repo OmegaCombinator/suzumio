@@ -205,6 +205,10 @@ export function loadProjectSummary(project: string): Promise<Project> {
   return request<Project>(projectPath(project));
 }
 
+export function loadProjectTask(project: string): Promise<string> {
+  return requestText(projectPath(project, "/task"));
+}
+
 export function loadMessages(project: string, limit = 100): Promise<Message[]> {
   return request<Message[]>(projectPath(project, `/messages?limit=${limit}`));
 }

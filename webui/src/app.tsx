@@ -6,6 +6,7 @@ import {
   loadAgentHistoryArchive,
   loadMessage,
   loadMessages,
+  loadProjectTask,
   loadToolStatus,
   loadToolUi,
   sendMessage,
@@ -227,12 +228,44 @@ function Topbar({ loading, lastUpdated, onRefresh }: { loading: boolean; lastUpd
 }
 
 function ProjectHero({ project, onAction }: { project: Project; onAction: (action: "start" | "stop" | "approve") => void }) {
+  const [expanded, setExpanded] = useState(false);
+  const [task, setTask] = useState(project.task);
+  const [taskLoading, setTaskLoading] = useState(false);
+  const [taskError, setTaskError] = useState("");
+  const canExpand = task.length > 420 || task.includes("[truncated") || project.task.includes("[truncated");
+
+  useEffect(() => {
+    setExpanded(false);
+    setTask(project.task);
+    setTaskError("");
+  }, [project.id, project.task]);
+
+  async function toggleTask() {
+    if (expanded) {
+      setExpanded(false);
+      return;
+    }
+    setExpanded(true);
+    if (!project.task.includes("[truncated") && !task.includes("[truncated")) return;
+    setTaskLoading(true);
+    setTaskError("");
+    try {
+      setTask(await loadProjectTask(project.id));
+    } catch (cause) {
+      setTaskError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setTaskLoading(false);
+    }
+  }
+
   return (
     <section class="hero">
       <div class="hero-copy">
         <div class="hero-meta"><StatusPill status={project.status} /><span>Updated {formatRelative(project.updated_at)}</span></div>
         <h2>{project.name}</h2>
-        <p>{project.task}</p>
+        <p class={`hero-task ${expanded ? "expanded" : "collapsed"}`}>{task}</p>
+        {canExpand && <button class="hero-task-toggle" disabled={taskLoading} onClick={() => void toggleTask()}>{taskLoading ? "Loading full task..." : expanded ? "Collapse task" : "Expand full task"}</button>}
+        {taskError && <div class="form-error">{taskError}</div>}
       </div>
       <div class="hero-actions">
         {(project.status === "initialized" || project.status === "stopped" || project.status === "failed") && <button class="primary-button" onClick={() => onAction("start")}>Start project</button>}

@@ -323,6 +323,10 @@ button {
   margin-top: 1rem;
 }
 
+.hero-copy {
+  min-width: 0;
+}
+
 .hero-meta {
   display: flex;
   gap: 0.625rem;
@@ -339,13 +343,46 @@ button {
   letter-spacing: -0.04em;
 }
 
-.hero p {
+.hero-task {
   max-width: 58rem;
   margin: 0;
   color: #475569;
   font-size: 0.875rem;
   line-height: 1.65;
   white-space: pre-wrap;
+}
+
+.hero-task.collapsed {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+}
+
+.hero-task.expanded {
+  display: block;
+  overflow: visible;
+}
+
+.hero-task-toggle {
+  padding: 0;
+  margin-top: 0.5rem;
+  color: #2563eb;
+  background: transparent;
+  border: 0;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.hero-task-toggle:hover {
+  color: #1d4ed8;
+  text-decoration: underline;
+}
+
+.hero-task-toggle:disabled {
+  color: #94a3b8;
+  cursor: wait;
+  text-decoration: none;
 }
 
 .hero-actions {

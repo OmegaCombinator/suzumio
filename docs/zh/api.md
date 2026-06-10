@@ -43,6 +43,7 @@ lead: "HTTP server 暴露项目观测、用户控制动作、SSE 事件流，以
 | 方法  | 路径                                          | 说明                                            |
 |-------|-----------------------------------------------|-------------------------------------------------|
 | `GET` | `/api/projects/:project/agents`               | Agent records，token 已隐藏。                   |
+| `GET` | `/api/projects/:project/task`                 | 完整 project task 文本，plain text。            |
 | `GET` | `/api/projects/:project/agents/:agent/history?limit=100` | 分页读取单个 agent 的模型历史。       |
 | `GET` | `/api/projects/:project/agents/:agent/history-archive/:compaction` | 读取一次 history compaction 的 raw 本地归档。 |
 | `GET` | `/api/projects/:project/messages?limit=100`   | 近期消息。                                      |

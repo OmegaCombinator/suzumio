@@ -43,6 +43,7 @@ The current API is intended for local or trusted-network use. User-facing API au
 | Method | Path                                          | Description                                                    |
 |--------|-----------------------------------------------|----------------------------------------------------------------|
 | `GET`  | `/api/projects/:project/agents`               | Agent records with tokens redacted.                            |
+| `GET`  | `/api/projects/:project/task`                 | Full project task text as plain text.                           |
 | `GET`  | `/api/projects/:project/agents/:agent/history?limit=100` | Paged per-agent model history.                         |
 | `GET`  | `/api/projects/:project/agents/:agent/history-archive/:compaction` | Raw local archive for one history compaction.     |
 | `GET`  | `/api/projects/:project/messages?limit=100`   | Recent messages.                                               |
