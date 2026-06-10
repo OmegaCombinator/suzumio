@@ -13,6 +13,8 @@ tools:
     - core
     - shell
     - web
+    - path: ./toolpacks/scheduler
+      id: scheduler
     - path: ./toolpacks/review
       id: review-tools
 
@@ -21,6 +23,7 @@ agents:
     tools:
       - messages.send
       - coordination.wait_for_signal
+      - schedule.*
       - review.summarize
 ```
 
@@ -101,6 +104,26 @@ Id 只包含 letters、digits、`.`、`_` 和 `-`。HTTP(S) toolpack paths 会�
 
 Runtime 不提供 TypeScript transpilation。Toolpack modules 是 JavaScript ESM `.mjs` files。
 
+## Packaged Scheduler Toolpack
+
+仓库包含 `toolpacks/scheduler`，这是 local、非 kernel 的定时消息 toolpack。按 path 注册，并给允许创建/管理 schedule 的 agents 加 allowlist：
+
+```yaml
+tools:
+  toolpacks:
+    - core
+    - path: ./toolpacks/scheduler
+      id: scheduler
+
+agents:
+  pm:
+    tools:
+      - messages.send
+      - schedule.*
+```
+
+它提供 `schedule.once`、`schedule.recurring`、`schedule.list`、`schedule.cancel`，并在 WebUI 的 scheduler tool page 下提供 controls。Jobs 存在项目目录的 `toolpack-state/scheduler/jobs.json`。到期 job 会通过 project store 创建普通 message，默认 `P3`，并可设置 `waitForQuiet: true` 来等待 direct recipient 的 live model activation 结束。Weekly recurring jobs 使用 UTC `weekday` 和 `time`。
+
 ## Runner Module
 
 Runner modules 在 container 内实现 model-facing tools。导出 `createRunnerToolpack(context)` 或 default factory。返回 direct tool map 或 `{ tools: { ... } }`。Manifest 中声明的每个 tool name 都有 handler。
@@ -164,6 +187,19 @@ Controller context fields:
 | `recordSignal(signal)` | 创建 pending schedulable work 或记录 closed useful effect。 |
 
 `callSupport` 会先验证 token、activation ownership、toolpack membership 和 agent allowlist，再调用 controller support。
+
+## Scheduler Hooks
+
+Local controller modules 可以导出 `schedulerTick(context)` 或 `createSchedulerToolpack(context)`。Core scheduler 会在每个 running project tick 中调用这些 hooks，位置在已存在 pending signals 投递之后、内置 nudge/monitor rules 之前。
+
+```js
+export async function schedulerTick(context) {
+  if (context.agents.some((agent) => agent.id === "pm" && agent.modelAlive)) return [];
+  return [{ kind: "plan.continuation_nudge", targetAgent: "pm", priority: "P2", payload: { message: "Continue the active plan." }, usefulEffect: false }];
+}
+```
+
+Scheduler context 包含 `store`、`project`、`toolpackId`、`now`、`agents`、`recordSignal`、`hasPendingSignals`、`hasPendingSignalsForAgent`。每个 `agents` entry 包含 `id`、`displayName`、`role`、`status`、`activeActivationId`、`updatedAt` 和 `modelAlive`。Hooks 可以返回 signal requests，也可以直接使用 trusted controller-side store APIs，例如 `store.sendMessage`。
 
 ## WebUI Registration
 

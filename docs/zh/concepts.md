@@ -29,7 +29,7 @@ lead: "Suzumio 从持久 signal 调度 agent。消息、等待、提交、nudge 
 | Agent status | 调度行为 |
 |--------------|----------|
 | `quiet` | 有 pending targeted signals 时可启动新 activation。 |
-| `running` | 有 active activation。`P0` 可 interrupt；`P1` 可在 tool boundary 注入；`P2` 等待。 |
+| `running` | 有 active activation。`P0` 可 interrupt；`P1` 可在 tool boundary 注入；`P2` 和 `P3` 等待。 |
 | `failed` | 上一次 activation 或 backend action 失败。 |
 | `stopped` | Agent 禁用。 |
 
@@ -63,7 +63,7 @@ type SignalRecord = {
   sourceActivation?: string
   targetAgent?: string
   targetChannel?: string
-  priority: "P0" | "P1" | "P2"
+  priority: "P0" | "P1" | "P2" | "P3"
   status: "pending" | "delivered" | "closed"
   usefulEffect: boolean
   payload: Record<string, unknown>
@@ -84,9 +84,10 @@ type SignalRecord = {
 |----------|----------|
 | `P0` | Interrupt running target agent。当前 activation 被取消，agent 带着 `P0` signal 重启。 |
 | `P1` | 尽量在下一次 tool boundary 投递；没有 boundary 时在下一次 activation start 投递。 |
-| `P2` | Routine work。等待当前 activation 完成，在下一次 activation start 投递。 |
+| `P2` | Control-flow 或 continuation work。等待当前 activation 完成，并在下一次 activation start 优先于 routine backlog 投递。 |
+| `P3` | Routine queued work。等待当前 activation 完成，并在所有 pending `P2` 之后投递。 |
 
-Routine messages 默认使用 `P2`。`P0` 保留给 human stop、destructive repository conflict、secret/safety issue，或继续当前 activation 会有害的 blocker。
+Routine messages 默认使用 `P3`。`P2` 用于 plan-continuation nudges、scheduler control messages，以及其他应优先于普通 backlog 的工作。`P0` 保留给 human stop、destructive repository conflict、secret/safety issue，或继续当前 activation 会有害的 blocker。
 
 ## Activation Start
 
@@ -109,7 +110,8 @@ Agent 已经 running 时，scheduler 不会为它启动第二个 activation。
 |-----------------|--------------------|
 | `P0` | Cancel 当前 activation，停止 backend container，带 pending `P0` 和 `P1` signals 重启。 |
 | `P1` | 当前 activation 继续运行。如果 runner 到达 tool boundary，则在下一次完成 tool call 后投递。 |
-| `P2` | 当前 activation 继续运行。当前 activation 完成后的下一次 activation 投递。 |
+| `P2` | 当前 activation 继续运行。当前 activation 完成后的下一次 activation 投递，优先于 `P3`。 |
+| `P3` | 当前 activation 继续运行。当前 activation 完成后的下一次 activation 投递，排在 pending `P2` 之后。 |
 
 Runner 在完成 tool call 后向 Suzumio 请求 tool-boundary signal delivery。Pending `P1` signals 会在该 boundary append 到 active model context。
 
@@ -178,10 +180,11 @@ Scheduler 按 rule、agent 和 quiet timestamp 记录 monitor-send events。同�
 3. 对 running agents，只处理 pending `P0` interruption signals。
 4. 对 quiet agents，如果存在 pending targeted signals，启动一个 activation。
 5. 刷新 agent list。
-6. 应用 failed-agent retry nudge rules。
-7. 应用 failed-agent monitor rules。
-8. 应用 quiet-agent monitor rules。
-9. 应用 all-quiet nudge rules。
+6. 运行 local toolpack scheduler hooks，并传入当前 agent status 和 `modelAlive` state。
+7. 应用 failed-agent retry nudge rules。
+8. 应用 failed-agent monitor rules。
+9. 应用 quiet-agent monitor rules。
+10. 应用 all-quiet nudge rules。
 
 ## Common Flows
 

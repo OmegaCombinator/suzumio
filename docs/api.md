@@ -71,7 +71,7 @@ The current API is intended for local or trusted-network use. User-facing API au
       -H 'content-type: application/json' \
       -d '{"recipient":"pm","priority":"P1","body":"Start."}'
 
-For `/messages`, body may include `sender`, `recipient`, `channel`, `priority`, and `body`. Use either `recipient` or `channel`. Priority defaults to `P2`.
+For `/messages`, body may include `sender`, `recipient`, `channel`, `priority`, and `body`. Use either `recipient` or `channel`. Priority defaults to `P3` for routine queued work; use `P2` for control-flow or continuation work that should run before ordinary backlog.
 
 ## SSE Stream
 
@@ -224,11 +224,11 @@ Compaction rows include a `compactionId` in metadata. `GET /api/projects/:projec
     {
       "recipient": "worker",
       "channel": "#project",
-      "priority": "P2",
+      "priority": "P3",
       "body": "Markdown message"
     }
 
-Use either `recipient` or `channel`, not both. Channels must be declared in project config.
+Use either `recipient` or `channel`, not both. Channels must be declared in project config. `messages.send` defaults to `P3` when `priority` is omitted.
 
 Messages to agents create pending `message.created` signals. Channel messages fan out to other agents. Messages to `recipient: "user"` create closed useful effects and do not wake an agent.
 

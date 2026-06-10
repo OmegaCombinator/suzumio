@@ -29,7 +29,7 @@ lead: "Suzumio schedules agents from durable signals. Messages, waits, submissio
 | Agent status | Scheduling behavior |
 |--------------|---------------------|
 | `quiet` | Eligible for a new activation when pending targeted signals exist. |
-| `running` | Has an active activation. `P0` can interrupt; `P1` may be injected at a tool boundary; `P2` waits. |
+| `running` | Has an active activation. `P0` can interrupt; `P1` may be injected at a tool boundary; `P2` and `P3` wait. |
 | `failed` | Last activation or backend action failed. |
 | `stopped` | Agent is disabled. |
 
@@ -63,7 +63,7 @@ type SignalRecord = {
   sourceActivation?: string
   targetAgent?: string
   targetChannel?: string
-  priority: "P0" | "P1" | "P2"
+  priority: "P0" | "P1" | "P2" | "P3"
   status: "pending" | "delivered" | "closed"
   usefulEffect: boolean
   payload: Record<string, unknown>
@@ -84,9 +84,10 @@ To wake an agent, create a pending signal with `targetAgent`. To record an effec
 |----------|---------------|
 | `P0` | Interrupts a running target agent. The current activation is cancelled and the agent restarts with the `P0` signal in history. |
 | `P1` | Delivered at the next tool boundary when possible. If there is no boundary, it is delivered at the next activation start. |
-| `P2` | Routine work. It waits until the current activation completes and is delivered at the next activation start. |
+| `P2` | Control-flow or continuation work. It waits until the current activation completes and is delivered before routine backlog at the next activation start. |
+| `P3` | Routine queued work. It waits until the current activation completes and is delivered after any pending `P2` signal. |
 
-Default routine messages use `P2`. `P0` is reserved for human stop, destructive repository conflict, secret/safety issue, or a blocker where continuing the current activation is harmful.
+Default routine messages use `P3`. Use `P2` for plan-continuation nudges, scheduler control messages, and other work that should run before ordinary backlog. `P0` is reserved for human stop, destructive repository conflict, secret/safety issue, or a blocker where continuing the current activation is harmful.
 
 ## Activation Start
 
@@ -109,7 +110,8 @@ When an agent is already running, the scheduler does not start a second activati
 |-----------------|------------------------|
 | `P0` | Cancel current activation, stop the backend container, and restart with pending `P0` and `P1` signals. |
 | `P1` | Leave the activation running. Deliver at the next completed tool call if the runner reaches a tool boundary. |
-| `P2` | Leave the activation running. Deliver on the next activation after current completion. |
+| `P2` | Leave the activation running. Deliver on the next activation after current completion, before `P3`. |
+| `P3` | Leave the activation running. Deliver on the next activation after current completion, after any pending `P2`. |
 
 The runner asks Suzumio for tool-boundary signal delivery after completed tool calls. Pending `P1` signals are appended into the active model context at that boundary.
 
@@ -178,10 +180,11 @@ The default scheduler is `nonpreemptive-signals`. `nonpreemptive-mailbox` is acc
 3. For each running agent, act only on pending `P0` interruption signals.
 4. For each quiet agent, start one activation when pending targeted signals exist.
 5. Refresh the agent list.
-6. Apply failed-agent retry nudge rules.
-7. Apply failed-agent monitor rules.
-8. Apply quiet-agent monitor rules.
-9. Apply all-quiet nudge rules.
+6. Run local toolpack scheduler hooks, passing current agent status and `modelAlive` state.
+7. Apply failed-agent retry nudge rules.
+8. Apply failed-agent monitor rules.
+9. Apply quiet-agent monitor rules.
+10. Apply all-quiet nudge rules.
 
 ## Common Flows
 

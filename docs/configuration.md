@@ -140,6 +140,8 @@ tools:
     - core
     - shell
     - web
+    - path: ./toolpacks/scheduler
+      id: scheduler
     - path: ./toolpacks/review
       id: review-tools
 ```
@@ -149,6 +151,7 @@ tools:
 | `core` | `messages.send`, `coordination.wait_for_signal`, `completion.submit`, `file.read`, `file.write`, `file.patch` |
 | `shell` | `shell.exec` |
 | `web` | `web.fetch` |
+| Local `toolpacks/scheduler` | `schedule.once`, `schedule.recurring`, `schedule.list`, `schedule.cancel`, plus scheduled-message WebUI controls and a scheduler hook. |
 | Local `{ path, id }` | Model-facing tools and optional WebUI entries declared by `suzumio.toolpack.json` in that directory. |
 
 `tools.toolpacks` registers definitions for the project. `agents.<id>.tools` allowlists which registered tools a model can see. Built-in file tools can be granted with `file.*` or exact names such as `file.read` and `file.patch`. Toolpack WebUI entries are user-facing controls and do not use the per-agent model allowlist.
@@ -231,6 +234,8 @@ scheduler:
 | `failedAgentMonitor.enabled` | `false` | Enables failed-agent monitor rules. |
 | `failedAgentMonitor.rules` | Empty list | List of failed-agent monitor rules. |
 
+Priorities are `P0`, `P1`, `P2`, and `P3`. `P2` is intended for control-flow or continuation signals that should run before routine backlog. Routine queued messages default to `P3`.
+
 Quiet-agent monitor rule fields:
 
 | Field | Default | Description |
@@ -256,7 +261,7 @@ communication:
   coordinatorAgent: pm
   restrictNonCoordinatorToCoordinator: true
   nonCoordinatorMaxPriority: P2
-  pmRoutineVerifierPriority: P2
+  pmRoutineVerifierPriority: P3
 ```
 
 | Field | Default | Description |
@@ -264,7 +269,7 @@ communication:
 | `coordinatorAgent` | `pm` | Agent treated as the coordinator in rendered prompts. |
 | `restrictNonCoordinatorToCoordinator` | `false` | Prompt contract that directs non-coordinators to message only the coordinator. |
 | `nonCoordinatorMaxPriority` | `P2` | Prompt-level max priority for non-coordinator routine messages. |
-| `pmRoutineVerifierPriority` | `P2` | Prompt-level default for routine PM review/delegation messages. |
+| `pmRoutineVerifierPriority` | `P3` | Prompt-level default for routine PM review/delegation messages. |
 
 This section shapes activation instructions. Tool authorization still comes from `agents.<id>.tools`.
 

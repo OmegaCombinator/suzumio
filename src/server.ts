@@ -98,7 +98,7 @@ async function handleRequest(
     }
     if (request.method === "POST" && parts[3] === "messages") {
       const body = await readBody<Record<string, unknown>>(request);
-      const message = store.sendMessage({ sender: optionalString(body.sender) ?? "user", recipient: optionalString(body.recipient), channel: optionalString(body.channel), priority: priority(optionalString(body.priority) ?? "P2"), body: requiredString(body.body, "body") });
+      const message = store.sendMessage({ sender: optionalString(body.sender) ?? "user", recipient: optionalString(body.recipient), channel: optionalString(body.channel), priority: priority(optionalString(body.priority) ?? "P3"), body: requiredString(body.body, "body") });
       await ctx.schedulerEngine.tickProject(project);
       return json(response, message);
     }
@@ -428,7 +428,7 @@ function historyRole(value: string): AgentHistoryRole {
 }
 
 function priority(value: string): MessagePriority {
-  if (value === "P0" || value === "P1" || value === "P2") return value;
+  if (value === "P0" || value === "P1" || value === "P2" || value === "P3") return value;
   throw new Error(`Invalid priority: ${value}`);
 }
 

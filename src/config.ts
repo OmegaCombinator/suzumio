@@ -6,7 +6,7 @@ import type { ProjectConfig } from "./types.js";
 
 const JsonObjectSchema = z.record(z.string(), z.unknown());
 const DEFAULT_CONTEXT_LIMIT = 260_000;
-const MessagePrioritySchema = z.enum(["P0", "P1", "P2"]);
+const MessagePrioritySchema = z.enum(["P0", "P1", "P2", "P3"]);
 
 const DEFAULT_ALL_QUIET_NUDGE_MESSAGE = [
   "All agents are quiet and there are no pending work signals for this running project.",
@@ -122,9 +122,9 @@ const CommunicationSchema = z
     coordinatorAgent: z.string().min(1).default("pm"),
     restrictNonCoordinatorToCoordinator: z.boolean().default(false),
     nonCoordinatorMaxPriority: MessagePrioritySchema.default("P2"),
-    pmRoutineVerifierPriority: MessagePrioritySchema.default("P2"),
+    pmRoutineVerifierPriority: MessagePrioritySchema.default("P3"),
   })
-  .default({ coordinatorAgent: "pm", restrictNonCoordinatorToCoordinator: false, nonCoordinatorMaxPriority: "P2", pmRoutineVerifierPriority: "P2" });
+  .default({ coordinatorAgent: "pm", restrictNonCoordinatorToCoordinator: false, nonCoordinatorMaxPriority: "P2", pmRoutineVerifierPriority: "P3" });
 
 const ProviderSchema = z.object({
   type: z.enum(["openai", "anthropic", "google", "openai-compatible"]),

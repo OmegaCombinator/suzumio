@@ -583,6 +583,10 @@ function relatedToolsForEntry(entry: ToolUiEntry): string[] {
   if (entry.id === "file.activity") return ["file.read", "file.write", "file.patch"];
   if (entry.id === "shell.activity") return ["shell.exec"];
   if (entry.id === "web.activity") return ["web.fetch"];
+  if (entry.id === "schedule.jobs") return ["schedule.list"];
+  if (entry.id === "schedule.once") return ["schedule.once"];
+  if (entry.id === "schedule.recurring") return ["schedule.recurring"];
+  if (entry.id === "schedule.cancel") return ["schedule.cancel"];
   return [];
 }
 

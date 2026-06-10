@@ -68,6 +68,28 @@ export type SignalInput = {
   usefulEffect?: boolean;
 };
 
+export type SchedulerAgentState = {
+  id: string;
+  displayName: string;
+  role: string;
+  status: AgentRecord["status"];
+  activeActivationId?: string;
+  modelAlive: boolean;
+  updatedAt: string;
+};
+
+export type SchedulerSignalRequest = {
+  kind: string;
+  targetAgent?: string;
+  targetChannel?: string;
+  priority?: MessagePriority;
+  payload?: JsonObject;
+  usefulEffect?: boolean;
+  notBefore?: string;
+};
+
+type SchedulerHookResult = SchedulerSignalRequest[] | { signals?: SchedulerSignalRequest[] } | undefined | void;
+
 type ControllerContext = {
   store: ProjectStore;
   agent: AgentRecord;
@@ -85,6 +107,17 @@ type ToolWebuiContext = {
 };
 
 type ToolWebuiHandler = (context: ToolWebuiContext, input: unknown) => Promise<ToolCallOutput>;
+
+type ToolSchedulerContext = {
+  store: ProjectStore;
+  project: string;
+  toolpackId: string;
+  now: string;
+  agents: SchedulerAgentState[];
+  recordSignal: (input: SchedulerSignalRequest) => void;
+  hasPendingSignals: () => boolean;
+  hasPendingSignalsForAgent: (agentId: string, includeNotReady?: boolean) => boolean;
+};
 
 type BuiltinToolpack = {
   id: string;
@@ -220,6 +253,20 @@ export class ToolSupportHost {
     } finally {
       store.close();
     }
+  }
+
+  async runSchedulerHooks(store: ProjectStore, agents: AgentRecord[]): Promise<number> {
+    let recorded = 0;
+    const toolpacks = await resolveToolpacks(store.config().tools.toolpacks);
+    for (const toolpack of toolpacks) {
+      if (toolpack.kind !== "local") continue;
+      const context = schedulerContext(store, toolpack.id, agents);
+      const signals = await externalSchedulerSignals(toolpack, context);
+      for (const signal of signals) {
+        recorded += store.recordSignal({ kind: signal.kind, targetAgent: signal.targetAgent, targetChannel: signal.targetChannel, priority: signal.priority, payload: signal.payload ?? {}, usefulEffect: signal.usefulEffect, notBefore: signal.notBefore }).length;
+      }
+    }
+    return recorded;
   }
 
   private authorize(store: ProjectStore, agentId: string, token: string, activationId: string, options: { requireRunning?: boolean } = {}): AgentRecord {
@@ -604,6 +651,22 @@ function webuiContext(store: ProjectStore, toolpackId: string): ToolWebuiContext
   };
 }
 
+function schedulerContext(store: ProjectStore, toolpackId: string, agents: AgentRecord[]): ToolSchedulerContext {
+  const now = new Date().toISOString();
+  return {
+    store,
+    project: store.project,
+    toolpackId,
+    now,
+    agents: agents.map((agent) => ({ id: agent.id, displayName: agent.displayName, role: agent.role, status: agent.status, activeActivationId: agent.activeActivationId, modelAlive: agent.status === "running" && Boolean(agent.activeActivationId), updatedAt: agent.updatedAt })),
+    recordSignal: (input) => {
+      store.recordSignal({ kind: input.kind, targetAgent: input.targetAgent, targetChannel: input.targetChannel, priority: input.priority, payload: input.payload ?? {}, usefulEffect: input.usefulEffect, notBefore: input.notBefore });
+    },
+    hasPendingSignals: () => store.hasPendingSignals(),
+    hasPendingSignalsForAgent: (agentId, includeNotReady) => store.hasPendingSignalsForAgent(agentId, includeNotReady),
+  };
+}
+
 function builtinToolpack(id: string): ResolvedToolpack {
   const toolpack = BUILTIN_TOOLPACKS[id];
   if (!toolpack) throw new Error(`Unknown built-in toolpack: ${id}`);
@@ -665,6 +728,40 @@ async function externalWebui(toolpack: ResolvedToolpack, entryId: string, contex
   const handler = handlers?.[entryId];
   if (typeof handler !== "function") return { title: "toolpack webui", output: `WebUI side for ${toolpack.id} did not handle ${entryId}.`, metadata: { toolpack: toolpack.id, entryId } };
   return handler(input);
+}
+
+async function externalSchedulerSignals(toolpack: ResolvedToolpack, context: ToolSchedulerContext): Promise<SchedulerSignalRequest[]> {
+  if (!toolpack.controllerModule) return [];
+  const module = await import(pathToFileURL(toolpack.controllerModule).href);
+  if (typeof module.schedulerTick === "function") return schedulerSignalsFromResult(await module.schedulerTick(context));
+  const factory = module.createSchedulerToolpack;
+  if (typeof factory !== "function") return [];
+  const instance = await factory(context);
+  const handler = typeof instance === "function" ? instance : instance?.schedulerTick ?? instance?.tick;
+  if (typeof handler !== "function") return [];
+  return schedulerSignalsFromResult(await handler());
+}
+
+function schedulerSignalsFromResult(value: SchedulerHookResult): SchedulerSignalRequest[] {
+  const items = Array.isArray(value)
+    ? value
+    : value && typeof value === "object" && Array.isArray((value as { signals?: unknown }).signals)
+      ? (value as { signals: SchedulerSignalRequest[] }).signals
+      : [];
+  return items.map((item) => schedulerSignalArg(item));
+}
+
+function schedulerSignalArg(value: SchedulerSignalRequest): SchedulerSignalRequest {
+  const input = objectInput(value);
+  return {
+    kind: stringArg(input, "kind"),
+    targetAgent: optionalString(input.targetAgent),
+    targetChannel: optionalString(input.targetChannel),
+    priority: input.priority === undefined ? undefined : priorityArg(input.priority),
+    payload: parseJsonObject(input.payload),
+    usefulEffect: optionalBoolean(input.usefulEffect),
+    notBefore: optionalString(input.notBefore),
+  };
 }
 
 function builtinSupport(toolpackId: string, tool: string, context: ControllerContext, input: unknown): Promise<ToolCallOutput> {
@@ -803,7 +900,7 @@ function messagesSendWebuiDefinition(): ToolWebuiDefinition {
         sender: { type: "string", default: "user", description: "Sender id. Use user for human-originated messages." },
         recipient: { type: "string", description: "Direct recipient agent id, or user. Leave empty to use the coordinator or first agent." },
         channel: { type: "string", description: "Optional project channel such as #project. Leave recipient empty when using a channel." },
-        priority: { type: "string", enum: ["P0", "P1", "P2"], default: "P2", description: "Message priority." },
+        priority: { type: "string", enum: ["P0", "P1", "P2", "P3"], default: "P3", description: "Message priority." },
         body: { type: "string", description: "Markdown body to send." },
       },
       required: ["body"],
@@ -823,7 +920,7 @@ async function messagesSendWebuiSupport({ store }: ToolWebuiContext, input: unkn
     const coordinator = store.config().communication?.coordinatorAgent ?? "pm";
     recipient = agents.some((agent) => agent.id === coordinator) ? coordinator : agents[0]?.id;
   }
-  const priority = priorityArg(args.priority ?? "P2");
+  const priority = priorityArg(args.priority ?? "P3");
   const body = stringArg(args, "body");
   const message = store.sendMessage({ sender, recipient, channel, priority, body });
   const target = message.recipient ?? message.channel ?? "broadcast";
@@ -964,13 +1061,13 @@ async function webActivityWebuiSupport({ store }: ToolWebuiContext, input: unkno
 function messagesSendDefinition(): ToolDefinition {
   return {
     name: "messages.send",
-    description: "Send a Markdown message to another agent, the user, or a configured project channel. Default priority is P2. Use P2 for routine status, handoffs, and review routing. Use P1 only for concrete blockers, urgent policy/user corrections, or messages that immediately unblock active work. Use P0 only for true interrupt-worthy emergencies such as human stop, destructive conflict, or secret/safety issues. Delivery is immediate; do not send ACK-only messages or request confirmation of receipt.",
+    description: "Send a Markdown message to another agent, the user, or a configured project channel. Default priority is P3 for routine queued work. Use P2 for control-flow or continuation nudges that should run before routine backlog. Use P1 only for concrete blockers, urgent policy/user corrections, or messages that immediately unblock active work. Use P0 only for true interrupt-worthy emergencies such as human stop, destructive conflict, or secret/safety issues. Delivery is immediate; do not send ACK-only messages or request confirmation of receipt.",
     inputSchema: {
       type: "object",
       properties: {
         recipient: { type: "string", description: "Direct recipient agent id, or user. Non-PM agents usually report to pm unless the signal names another recipient." },
         channel: { type: "string", description: "Project channel such as #project. Use either recipient or channel." },
-        priority: { type: "string", enum: ["P0", "P1", "P2"], default: "P2", description: "Message priority. Use P2 by default for routine status, handoffs, and review routing. Use P1 only for concrete blockers, urgent policy/user corrections, or messages that immediately unblock active work. Use P0 only for true interrupt-worthy emergencies." },
+        priority: { type: "string", enum: ["P0", "P1", "P2", "P3"], default: "P3", description: "Message priority. Use P3 by default for routine queued work. Use P2 for control-flow or continuation nudges that should run before routine backlog. Use P1 only for concrete blockers, urgent policy/user corrections, or messages that immediately unblock active work. Use P0 only for true interrupt-worthy emergencies." },
         body: { type: "string", description: "Markdown body containing results, exact artifact paths, exact commands/results, next action requested, or blocker. Do not use this for ACK-only text such as received/noted/standing by." },
       },
       required: ["body"],
@@ -982,7 +1079,7 @@ function messagesSendDefinition(): ToolDefinition {
 async function messagesSendSupport({ store, agent, activationId }: ControllerContext, input: unknown): Promise<ToolCallOutput> {
   const args = objectInput(input);
   const body = stringArg(args, "body");
-  const priority = priorityArg(args.priority ?? "P2");
+  const priority = priorityArg(args.priority ?? "P3");
   const recipient = optionalString(args.recipient);
   const channel = optionalString(args.channel);
   validateMessagePolicy(store.config(), agent, recipient, channel, priority);
@@ -1167,7 +1264,7 @@ function optionalBoolean(value: unknown): boolean | undefined {
 }
 
 function priorityArg(value: unknown): MessagePriority {
-  if (value === "P0" || value === "P1" || value === "P2") return value;
+  if (value === "P0" || value === "P1" || value === "P2" || value === "P3") return value;
   throw new Error(`Invalid priority: ${String(value)}`);
 }
 
@@ -1198,7 +1295,7 @@ function truncateOneLine(value: string, maxChars: number): string {
 }
 
 function validateMessagePolicy(config: ProjectConfig, agent: AgentRecord, recipient: string | undefined, channel: string | undefined, priority: MessagePriority): void {
-  const communication = config.communication ?? { coordinatorAgent: "pm", restrictNonCoordinatorToCoordinator: false, nonCoordinatorMaxPriority: "P2" as MessagePriority, pmRoutineVerifierPriority: "P2" as MessagePriority };
+  const communication = config.communication ?? { coordinatorAgent: "pm", restrictNonCoordinatorToCoordinator: false, nonCoordinatorMaxPriority: "P2" as MessagePriority, pmRoutineVerifierPriority: "P3" as MessagePriority };
   if (!communication.restrictNonCoordinatorToCoordinator || agent.id === communication.coordinatorAgent) return;
   if (channel) throw new Error(`Communication policy allows non-coordinator agents to send direct messages only to ${communication.coordinatorAgent}; channels are not allowed.`);
   if (recipient !== communication.coordinatorAgent) throw new Error(`Communication policy allows non-coordinator agents to message only ${communication.coordinatorAgent}.`);
@@ -1206,7 +1303,7 @@ function validateMessagePolicy(config: ProjectConfig, agent: AgentRecord, recipi
 }
 
 function priorityRank(priority: MessagePriority): number {
-  return priority === "P0" ? 0 : priority === "P1" ? 1 : 2;
+  return priority === "P0" ? 0 : priority === "P1" ? 1 : priority === "P2" ? 2 : 3;
 }
 
 function boundedNumber(value: unknown, fallback: number, max: number): number {

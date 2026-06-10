@@ -41,8 +41,8 @@ lead: "Suzumio 将 orchestration 与 execution 分离。核心进程拥有项目
 |----------------|------------------------------------------------------------------------------------------------------------------------|
 | `config.ts`    | 加载 YAML、解析 import、应用 `extends`、验证配置并渲染最终 YAML。                                                      |
 | `store.ts`     | 创建和查询 projects、agents、messages、signals、agent history、activations、events、tool_calls 等 SQLite 表。          |
-| `scheduler.ts` | 实现 signal 投递，包括 `P0` 中断和 `P1` tool-boundary 投递。                                                           |
-| `tools.ts`     | 解析 built-in 和 local toolpacks，通过 token 与 allowlist 校验提供 controller support，并暴露 trusted WebUI tool entries。 |
+| `scheduler.ts` | 实现 signal 投递，包括 `P0` 中断、`P1` tool-boundary 投递和 local toolpack scheduler hooks。                            |
+| `tools.ts`     | 解析 built-in 和 local toolpacks，通过 token 与 allowlist 校验提供 controller support，暴露 trusted WebUI tool entries，并运行 scheduler hooks。 |
 | `server.ts`    | HTTP API、SSE stream、controller support route、activation result route 和静态 WebUI asset serving。                   |
 | `webui/`       | Preact + Vite 浏览器 control room，构建后由 `/` 提供。                                                               |
 | `backend.ts`   | Docker 容器创建、配置的 bind mounts、runner input 和 activation completion monitoring。                                |
@@ -97,7 +97,7 @@ Runner 通过一个只读 input 文件接收上下文，并通过 HTTP 回传完
 
 模型默认不会获得任意 host tools。工具按 agent 配置。`file.read`、`file.write`、`file.patch`、`shell.exec` 和 `web.fetch` 在 Docker runner 内执行；消息、completion 和 coordination 工具使用 Suzumio support API。
 
-Toolpacks 也可以注册 WebUI entries。这些 entries 是由 WebUI Tools panel 渲染的 user-facing project controls，经由 public project APIs 调用；它们不是 model-facing tools，也不是 runner-internal routes。
+Toolpacks 也可以注册 WebUI entries。这些 entries 是由 WebUI Tools panel 渲染的 user-facing project controls，经由 public project APIs 调用；它们不是 model-facing tools，也不是 runner-internal routes。Local controller modules 还可以导出 scheduler hooks；core scheduler 会传入当前 agent state，包括每个 agent 是否有 live running activation，hook 可以在内置 nudge rules 之前创建 messages 或 signals。
 
 ## Agent History
 
@@ -109,7 +109,7 @@ Compaction 只在模型 provider 明确报告请求超过 context window 后由 
 
 Agent 不 poll 工作。Suzumio 把 pending signal append 到目标 agent history，并记录哪个 activation 收到了哪些 signal。调度记录保持显式且可审计。
 
-Priority 决定 pending signal 何时对模型可见。`P0` 会取消当前 activation，并带着新 signal 重启 agent。`P1` 尽量在下一次完成的 tool call 后注入；否则等待下一次 activation。`P2` 等当前 activation 完成后，在下一次 activation start 投递。
+Priority 决定 pending signal 何时对模型可见。`P0` 会取消当前 activation，并带着新 signal 重启 agent。`P1` 尽量在下一次完成的 tool call 后注入；否则等待下一次 activation。`P2` 等当前 activation 完成后，在下一次 activation start 优先于 routine backlog 投递。`P3` 是普通 queued work，会排在 pending `P2` 之后投递。
 
 Message 会创建 `message.created` signal。Shared artifact 文件是普通持久文件，本身不会唤醒 agent。自定义 toolpack 可以调用 `recordSignal` 创建 pending 协调任务或 closed useful effect。
 

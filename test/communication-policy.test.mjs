@@ -3,9 +3,13 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { NonPreemptiveSignalScheduler } from "../dist/scheduler.js";
 import { ProjectStore } from "../dist/store.js";
 import { ToolSupportHost } from "../dist/tools.js";
+
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const SCHEDULER_TOOLPACK = path.join(REPO_ROOT, "toolpacks", "scheduler");
 
 function projectConfig(name, overrides = {}) {
   return {
@@ -27,7 +31,7 @@ function projectConfig(name, overrides = {}) {
       coordinatorAgent: "pm",
       restrictNonCoordinatorToCoordinator: true,
       nonCoordinatorMaxPriority: "P2",
-      pmRoutineVerifierPriority: "P2",
+      pmRoutineVerifierPriority: "P3",
       ...(overrides.communication ?? {}),
     },
     backend: {
@@ -99,8 +103,8 @@ test("communication policy restricts non-coordinator messages", async () => {
   });
 });
 
-test("messages.send defaults routine messages to P2", async () => {
-  const config = projectConfig("policy-default-p2");
+test("messages.send defaults routine messages to P3", async () => {
+  const config = projectConfig("policy-default-p3");
   await withProject(config, async (root) => {
     const host = new ToolSupportHost(root);
     const { activation, token } = await createRunningActivation(root, config.name, "worker");
@@ -113,10 +117,10 @@ test("messages.send defaults routine messages to P2", async () => {
     try {
       const messages = checked.listMessages(10);
       const message = messages.find((item) => item.body === "routine status");
-      assert.equal(message?.priority, "P2");
+      assert.equal(message?.priority, "P3");
       const signals = checked.pendingSignals("pm", 10);
       assert.equal(signals.length, 1);
-      assert.equal(signals[0].priority, "P2");
+      assert.equal(signals[0].priority, "P3");
     } finally {
       checked.close();
     }
@@ -253,18 +257,19 @@ test("local WebUI-only toolpacks do not require a runner module", async () => {
   }
 });
 
-test("pending P2 signals are delivered one at a time", async () => {
-  const config = projectConfig("policy-p2-single");
+test("pending P2 and P3 signals are delivered one at a time", async () => {
+  const config = projectConfig("policy-routine-single");
   await withProject(config, async (root) => {
     const store = new ProjectStore(config.name, root);
     try {
+      store.recordSignal({ kind: "test.p3", targetAgent: "worker", priority: "P3", payload: { n: 0 } });
       store.recordSignal({ kind: "test.p2", targetAgent: "worker", priority: "P2", payload: { n: 1 } });
       store.recordSignal({ kind: "test.p2", targetAgent: "worker", priority: "P2", payload: { n: 2 } });
       store.recordSignal({ kind: "test.p2", targetAgent: "worker", priority: "P2", payload: { n: 3 } });
 
-      const p2Only = store.pendingSignals("worker", 20);
-      assert.equal(p2Only.length, 1);
-      assert.equal(p2Only[0].priority, "P2");
+      const routine = store.pendingSignals("worker", 20);
+      assert.equal(routine.length, 1);
+      assert.equal(routine[0].priority, "P2");
 
       store.recordSignal({ kind: "test.p1", targetAgent: "worker", priority: "P1", payload: { n: 4 } });
       store.recordSignal({ kind: "test.p1", targetAgent: "worker", priority: "P1", payload: { n: 5 } });
@@ -274,6 +279,83 @@ test("pending P2 signals are delivered one at a time", async () => {
       assert.deepEqual(highPriority.map((signal) => signal.priority), ["P1", "P1"]);
     } finally {
       store.close();
+    }
+  });
+});
+
+test("external scheduler toolpack sends due scheduled messages", async () => {
+  const config = projectConfig("policy-scheduler-toolpack");
+  config.tools = { toolpacks: ["core", { path: SCHEDULER_TOOLPACK, id: "scheduler" }] };
+  config.agents.pm.tools = ["messages.send", "schedule.*"];
+  await withProject(config, async (root) => {
+    const host = new ToolSupportHost(root);
+    const { activation, token } = await createRunningActivation(root, config.name, "pm");
+    const base = { project: config.name, agentId: "pm", activationId: activation.id, token, tool: "schedule.once" };
+
+    const dueAt = new Date(Date.now() - 1000).toISOString();
+    const scheduled = await host.support("scheduler", { ...base, input: { at: dueAt, recipient: "worker", body: "Check the build in one hour." } });
+    assert.match(scheduled.output, /Scheduled sch_/);
+
+    const store = new ProjectStore(config.name, root);
+    store.setProjectStatus("running");
+    store.close();
+
+    await new NonPreemptiveSignalScheduler(root).tickProject(config.name);
+
+    const checked = new ProjectStore(config.name, root);
+    try {
+      const message = checked.listMessages(10).find((item) => item.body === "Check the build in one hour.");
+      assert.equal(message?.sender, "scheduler");
+      assert.equal(message?.recipient, "worker");
+      assert.equal(message?.priority, "P3");
+      const signals = checked.pendingSignals("worker", 10);
+      assert.equal(signals.length, 1);
+      assert.equal(signals[0].kind, "message.created");
+      assert.equal(signals[0].priority, "P3");
+    } finally {
+      checked.close();
+    }
+
+    const jobs = await host.invokeWebui(config.name, "scheduler", "schedule.jobs", { includeInactive: true });
+    assert.match(jobs.output, /done\/once/);
+  });
+});
+
+test("external scheduler toolpack can wait for a live recipient model", async () => {
+  const config = projectConfig("policy-scheduler-wait-live");
+  config.tools = { toolpacks: ["core", { path: SCHEDULER_TOOLPACK, id: "scheduler" }] };
+  config.agents.pm.tools = ["messages.send", "schedule.*"];
+  await withProject(config, async (root) => {
+    const host = new ToolSupportHost(root);
+    const { activation, token } = await createRunningActivation(root, config.name, "pm");
+    const base = { project: config.name, agentId: "pm", activationId: activation.id, token, tool: "schedule.once" };
+    const dueAt = new Date(Date.now() - 1000).toISOString();
+    await host.support("scheduler", { ...base, input: { at: dueAt, recipient: "pm", waitForQuiet: true, body: "Continue after the current model turn." } });
+
+    let store = new ProjectStore(config.name, root);
+    store.setProjectStatus("running");
+    store.close();
+    await new NonPreemptiveSignalScheduler(root).tickProject(config.name);
+
+    let checked = new ProjectStore(config.name, root);
+    try {
+      assert.equal(checked.listMessages(10).some((item) => item.body === "Continue after the current model turn."), false);
+    } finally {
+      checked.close();
+    }
+
+    store = new ProjectStore(config.name, root);
+    store.cancelActivation(activation.id, "test completed running turn");
+    store.close();
+    await new NonPreemptiveSignalScheduler(root).tickProject(config.name);
+
+    checked = new ProjectStore(config.name, root);
+    try {
+      const message = checked.listMessages(10).find((item) => item.body === "Continue after the current model turn.");
+      assert.equal(message?.recipient, "pm");
+      assert.equal(message?.priority, "P3");
+    } finally {
+      checked.close();
     }
   });
 });

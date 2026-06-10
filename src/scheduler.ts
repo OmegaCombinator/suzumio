@@ -1,6 +1,7 @@
 import type { AgentConfig, AgentRecord, DockerMountConfig, FailedAgentMonitorRuleConfig, FailedNudgeConfig, ProjectConfig, QuietAgentMonitorRuleConfig, SignalRecord } from "./types.js";
 import { DockerChatBackend } from "./backend.js";
 import { ProjectStore } from "./store.js";
+import { ToolSupportHost } from "./tools.js";
 
 const QUIET_AGENT_MONITOR_EVENT = "scheduler.quiet_agent_monitor.message_sent";
 const FAILED_AGENT_MONITOR_EVENT = "scheduler.failed_agent_monitor.message_sent";
@@ -17,9 +18,11 @@ const DEFAULT_FAILED_NUDGE: FailedNudgeConfig = {
 
 export class NonPreemptiveSignalScheduler {
   private readonly backend: DockerChatBackend;
+  private readonly toolSupport: ToolSupportHost;
 
   constructor(private readonly root?: string) {
     this.backend = new DockerChatBackend(root);
+    this.toolSupport = new ToolSupportHost(root);
   }
 
   async tickProject(project: string): Promise<void> {
@@ -30,6 +33,7 @@ export class NonPreemptiveSignalScheduler {
       const agents = store.listAgents();
       for (const agent of agents) await this.tickAgent(store, agent, agents);
       const currentAgents = store.listAgents();
+      await this.toolSupport.runSchedulerHooks(store, currentAgents);
       this.maybeNudgeFailedAgents(store, currentAgents);
       this.maybeMonitorFailedAgents(store, currentAgents);
       this.maybeMonitorQuietAgents(store, currentAgents);
@@ -295,21 +299,21 @@ function renderActivationPrompt(config: ProjectConfig, agent: AgentRecord, agent
 }
 
 function renderToolAndReportingContract(config: ProjectConfig, agent: AgentRecord, agents: AgentRecord[]): string {
-  const communication = config.communication ?? { coordinatorAgent: "pm", restrictNonCoordinatorToCoordinator: false, nonCoordinatorMaxPriority: "P2", pmRoutineVerifierPriority: "P2" };
+  const communication = config.communication ?? { coordinatorAgent: "pm", restrictNonCoordinatorToCoordinator: false, nonCoordinatorMaxPriority: "P2", pmRoutineVerifierPriority: "P3" };
   const coordinator = communication.coordinatorAgent;
   const hasCoordinator = agents.some((item) => item.id === coordinator);
   const isCoordinator = agent.id === coordinator;
   const defaultRecipient = hasCoordinator ? `\`${coordinator}\`` : "the requested recipient, a configured channel, or `user`";
   const communicationRule = communication.restrictNonCoordinatorToCoordinator
     ? isCoordinator
-      ? `Communication policy: you are the coordinator. You may message any project agent or \`user\`. Default routine messages are \`P2\`. For routine non-urgent verifier review/delegation, use \`${communication.pmRoutineVerifierPriority}\`; use \`P1\` only for concrete blockers, urgent user/policy corrections, or messages that immediately unblock active work. Keep \`P0\` for true emergencies only.`
+      ? `Communication policy: you are the coordinator. You may message any project agent or \`user\`. Default routine messages are \`P3\`. For routine non-urgent verifier review/delegation, use \`${communication.pmRoutineVerifierPriority}\`; use \`P2\` for control-flow or continuation nudges that should run before routine backlog, use \`P1\` only for concrete blockers, urgent user/policy corrections, or messages that immediately unblock active work. Keep \`P0\` for true emergencies only.`
       : `Communication policy: only send direct messages to \`${coordinator}\`; do not message \`user\`, channels, verifier, scout, or other formalizers directly. Your allowed message priorities are \`${communication.nonCoordinatorMaxPriority}\` or lower; do not use \`P0\`.`
     : undefined;
   return [
     "# Tool And Reporting Contract",
     `Available tools for you: ${agent.tools.length ? agent.tools.join(", ") : "none"}.`,
     "New Signals are your current assignments. Use the newest direct assignment unless a higher-priority signal blocks it.",
-    "Default message priority is `P2`. Use `P1` for work-unblocking assignments, review requests, candidate handoffs, and blocker reports. Use `P0` only for true interrupt-worthy emergencies: human stop, destructive repository conflict, secret/safety issue, or a blocker where continuing the current activation would be harmful.",
+    "Default message priority is `P3` for routine queued work. Use `P2` for control-flow or continuation nudges that should run before routine backlog. Use `P1` for work-unblocking assignments, review requests, candidate handoffs, and blocker reports. Use `P0` only for true interrupt-worthy emergencies: human stop, destructive repository conflict, secret/safety issue, or a blocker where continuing the current activation would be harmful.",
     communicationRule,
     "Use `file.read`, `file.write`, and `file.patch` for file inspection and edits when available. Use `shell.exec` for searches, git, Acorn verification, and commands that genuinely need a shell. Shell output and files are private until you report them.",
     "Use `/workspace` for mutable working files. Use `/artifacts/<agent-id>` for published handoff snapshots and do not modify an artifact snapshot after you announce it.",

@@ -71,7 +71,7 @@ lead: "HTTP server 暴露项目观测、用户控制动作、SSE 事件流，以
       -H 'content-type: application/json' \
       -d '{"recipient":"pm","priority":"P1","body":"Start."}'
 
-`/messages` body 可包含 `sender`、`recipient`、`channel`、`priority`、`body`。使用 `recipient` 或 `channel` 其一。Priority 默认 `P2`。
+`/messages` body 可包含 `sender`、`recipient`、`channel`、`priority`、`body`。使用 `recipient` 或 `channel` 其一。Priority 默认 `P3`，用于普通 queued work；`P2` 用于应优先于普通 backlog 的 control-flow 或 continuation work。
 
 ## SSE Stream
 
@@ -224,11 +224,11 @@ Compaction row 的 metadata 中包含 `compactionId`。`GET /api/projects/:proje
     {
       "recipient": "worker",
       "channel": "#project",
-      "priority": "P2",
+      "priority": "P3",
       "body": "Markdown message"
     }
 
-使用 `recipient` 或 `channel` 其一，channel 必须在配置中声明。
+使用 `recipient` 或 `channel` 其一，channel 必须在配置中声明。`messages.send` 省略 `priority` 时默认 `P3`。
 
 发给 agent 的消息会创建 pending `message.created` signal。频道消息会 fan out 到其他 agent。发给 `recipient: "user"` 的消息创建 closed useful effect，不唤醒 agent。
 

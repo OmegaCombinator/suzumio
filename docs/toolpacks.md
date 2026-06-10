@@ -13,6 +13,8 @@ tools:
     - core
     - shell
     - web
+    - path: ./toolpacks/scheduler
+      id: scheduler
     - path: ./toolpacks/review
       id: review-tools
 
@@ -21,6 +23,7 @@ agents:
     tools:
       - messages.send
       - coordination.wait_for_signal
+      - schedule.*
       - review.summarize
 ```
 
@@ -103,6 +106,26 @@ The id contains only letters, digits, `.`, `_`, and `-`. HTTP(S) toolpack paths 
 
 Runtime TypeScript transpilation is not provided. Toolpack modules are JavaScript ESM `.mjs` files.
 
+## Packaged Scheduler Toolpack
+
+The repository includes `toolpacks/scheduler` as a local, non-kernel toolpack for scheduled messages. Register it by path and allowlist its tools for agents that may create or manage schedules:
+
+```yaml
+tools:
+  toolpacks:
+    - core
+    - path: ./toolpacks/scheduler
+      id: scheduler
+
+agents:
+  pm:
+    tools:
+      - messages.send
+      - schedule.*
+```
+
+It provides `schedule.once`, `schedule.recurring`, `schedule.list`, and `schedule.cancel`, plus WebUI controls under the scheduler tool page. Jobs are stored in the project directory at `toolpack-state/scheduler/jobs.json`. Due jobs create ordinary messages through the project store, default to `P3`, and can set `waitForQuiet: true` to wait while the direct recipient has a live model activation. Weekly recurring jobs use UTC `weekday` plus `time`.
+
 ## Runner Module
 
 Runner modules implement model-facing tools inside the container. Export `createRunnerToolpack(context)` or a default factory. Return a tool map directly or `{ tools: { ... } }`. Every declared tool name has a handler.
@@ -166,6 +189,19 @@ Controller context fields:
 | `recordSignal(signal)` | Creates pending schedulable work or records a closed useful effect. |
 
 `callSupport` verifies token, activation ownership, toolpack membership, and the agent allowlist before invoking controller support.
+
+## Scheduler Hooks
+
+Local controller modules can export `schedulerTick(context)` or `createSchedulerToolpack(context)`. The core scheduler calls these hooks once per running project tick after delivering existing pending signals and before built-in nudge/monitor rules.
+
+```js
+export async function schedulerTick(context) {
+  if (context.agents.some((agent) => agent.id === "pm" && agent.modelAlive)) return [];
+  return [{ kind: "plan.continuation_nudge", targetAgent: "pm", priority: "P2", payload: { message: "Continue the active plan." }, usefulEffect: false }];
+}
+```
+
+Scheduler context includes `store`, `project`, `toolpackId`, `now`, `agents`, `recordSignal`, `hasPendingSignals`, and `hasPendingSignalsForAgent`. Each `agents` entry includes `id`, `displayName`, `role`, `status`, `activeActivationId`, `updatedAt`, and `modelAlive`. Hooks may return signal requests or directly use trusted controller-side store APIs such as `store.sendMessage`.
 
 ## WebUI Registration
 

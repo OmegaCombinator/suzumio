@@ -75,9 +75,9 @@ Sets project status to `running` and immediately runs one scheduler pass. If age
 ## `suzumio send`
 
     suzumio send demo pm P1 "Start the project."
-    suzumio send demo worker-1 P2 "Review artifact art_..."
+    suzumio send demo worker-1 P3 "Review artifact art_..."
 
-Creates a direct message from virtual sender `user` to the recipient, creates a pending `message.created` signal, and runs one scheduler pass. Priorities are `P0`, `P1`, and `P2`: `P0` interrupts and restarts a running target, `P1` is delivered at the next tool boundary when possible, and `P2` waits for the next activation.
+Creates a direct message from virtual sender `user` to the recipient, creates a pending `message.created` signal, and runs one scheduler pass. Priorities are `P0`, `P1`, `P2`, and `P3`: `P0` interrupts and restarts a running target, `P1` is delivered at the next tool boundary when possible, `P2` waits for the next activation before routine backlog, and `P3` is ordinary queued work.
 
 ## Inspection Commands
 

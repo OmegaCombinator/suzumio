@@ -91,7 +91,7 @@ export class ProjectStore {
     if (input.recipient && input.channel) throw new Error("Message cannot have both recipient and channel");
     if (input.recipient && input.recipient !== "user") this.requireAgent(input.recipient);
     if (input.channel && !this.config().channels.includes(input.channel)) throw new Error(`Unknown channel: ${input.channel}`);
-    const priority = signalPriority(input.priority ?? "P2");
+    const priority = signalPriority(input.priority ?? "P3");
     const message: MessageRecord = {
       id: createId("msg"),
       project: this.project,
@@ -440,13 +440,13 @@ export class ProjectStore {
        LIMIT ?`,
     ).all(this.project, agentId, now, limit) as DbSignal[];
     if (highPriorityRows.length > 0) return highPriorityRows.map(signalFromRow);
-    const p2Rows = this.db.prepare(
+    const routineRows = this.db.prepare(
       `SELECT * FROM signals
-       WHERE project = ? AND target_agent = ? AND status = 'pending' AND priority = 'P2' AND not_before <= ?
-       ORDER BY created_at ASC
+       WHERE project = ? AND target_agent = ? AND status = 'pending' AND priority IN ('P2', 'P3') AND not_before <= ?
+       ORDER BY CASE priority WHEN 'P2' THEN 2 WHEN 'P3' THEN 3 ELSE 4 END, created_at ASC
        LIMIT 1`,
     ).all(this.project, agentId, now) as DbSignal[];
-    return p2Rows.map(signalFromRow);
+    return routineRows.map(signalFromRow);
   }
 
   hasPendingSignals(): boolean {
@@ -750,7 +750,7 @@ function signalAgent(value: string | undefined): string | undefined {
 }
 
 function signalPriority(value: unknown): MessagePriority {
-  if (value === "P0" || value === "P1" || value === "P2") return value;
+  if (value === "P0" || value === "P1" || value === "P2" || value === "P3") return value;
   throw new Error(`Invalid priority: ${String(value)}`);
 }
 

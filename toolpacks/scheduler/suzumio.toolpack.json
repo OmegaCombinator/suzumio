@@ -1,0 +1,155 @@
+{
+  "id": "scheduler",
+  "runner": "runner.mjs",
+  "controller": "controller.mjs",
+  "tools": [
+    {
+      "name": "schedule.once",
+      "description": "Schedule a one-time Markdown message for a future time. Use P3 by default for routine queued reminders; use P2 only for continuation/control reminders that should run before routine backlog.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "at": { "type": "string", "description": "Absolute ISO timestamp. If omitted, use afterMs/afterSeconds/afterMinutes/afterHours/afterDays." },
+          "afterMs": { "type": "number", "description": "Delay in milliseconds." },
+          "afterSeconds": { "type": "number", "description": "Delay in seconds." },
+          "afterMinutes": { "type": "number", "description": "Delay in minutes." },
+          "afterHours": { "type": "number", "description": "Delay in hours." },
+          "afterDays": { "type": "number", "description": "Delay in days." },
+          "sender": { "type": "string", "default": "scheduler", "description": "Sender label for the scheduled message." },
+          "recipient": { "type": "string", "description": "Direct recipient agent id, or user. Defaults to the project coordinator when omitted." },
+          "channel": { "type": "string", "description": "Optional project channel such as #project. Leave recipient empty when using a channel." },
+          "priority": { "type": "string", "enum": ["P0", "P1", "P2", "P3"], "default": "P3", "description": "Priority for the generated message signal." },
+          "waitForQuiet": { "type": "boolean", "default": false, "description": "If true and the direct recipient model is currently alive, wait until it is quiet before sending." },
+          "body": { "type": "string", "description": "Markdown body to send when the schedule fires." }
+        },
+        "required": ["body"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "schedule.recurring",
+      "description": "Schedule a recurring Markdown message. Use everyMs/everyMinutes/everyHours/everyDays for intervals, or weekday plus time for weekly UTC schedules.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "everyMs": { "type": "number", "description": "Repeat interval in milliseconds." },
+          "everyMinutes": { "type": "number", "description": "Repeat interval in minutes." },
+          "everyHours": { "type": "number", "description": "Repeat interval in hours." },
+          "everyDays": { "type": "number", "description": "Repeat interval in days." },
+          "weekday": { "type": "string", "enum": ["sun", "mon", "tue", "wed", "thu", "fri", "sat"], "description": "Weekly UTC weekday." },
+          "time": { "type": "string", "description": "Weekly UTC time in HH:MM, for example 09:30." },
+          "startAt": { "type": "string", "description": "Optional ISO timestamp; the first recurrence will not fire before this time." },
+          "sender": { "type": "string", "default": "scheduler", "description": "Sender label for the scheduled message." },
+          "recipient": { "type": "string", "description": "Direct recipient agent id, or user. Defaults to the project coordinator when omitted." },
+          "channel": { "type": "string", "description": "Optional project channel such as #project. Leave recipient empty when using a channel." },
+          "priority": { "type": "string", "enum": ["P0", "P1", "P2", "P3"], "default": "P3", "description": "Priority for generated message signals." },
+          "waitForQuiet": { "type": "boolean", "default": false, "description": "If true and the direct recipient model is currently alive, wait until it is quiet before sending." },
+          "body": { "type": "string", "description": "Markdown body to send each time the schedule fires." }
+        },
+        "required": ["body"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "schedule.list",
+      "description": "List scheduled messages for this project.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "includeInactive": { "type": "boolean", "default": false, "description": "Include done and cancelled jobs." }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "schedule.cancel",
+      "description": "Cancel a scheduled message by id.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "description": "Scheduled job id." }
+        },
+        "required": ["id"],
+        "additionalProperties": false
+      }
+    }
+  ],
+  "webui": [
+    {
+      "id": "schedule.jobs",
+      "title": "Scheduled messages",
+      "description": "Inspect active, completed, and cancelled scheduled-message jobs.",
+      "kind": "panel",
+      "submitLabel": "Refresh jobs",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "includeInactive": { "type": "boolean", "default": false, "description": "Include done and cancelled jobs." }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "schedule.once",
+      "title": "Schedule one-time message",
+      "description": "Create a one-time scheduled message.",
+      "kind": "action",
+      "submitLabel": "Schedule once",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "at": { "type": "string", "description": "Absolute ISO timestamp. Leave empty when using afterMinutes/afterHours." },
+          "afterMinutes": { "type": "number", "default": 60, "description": "Delay in minutes." },
+          "afterHours": { "type": "number", "description": "Delay in hours." },
+          "sender": { "type": "string", "default": "scheduler" },
+          "recipient": { "type": "string", "description": "Direct recipient agent id, or user. Defaults to coordinator." },
+          "channel": { "type": "string", "description": "Optional project channel." },
+          "priority": { "type": "string", "enum": ["P0", "P1", "P2", "P3"], "default": "P3" },
+          "waitForQuiet": { "type": "boolean", "default": false },
+          "body": { "type": "string", "description": "Markdown body to send." }
+        },
+        "required": ["body"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "schedule.recurring",
+      "title": "Schedule recurring message",
+      "description": "Create an interval or weekly UTC recurring message.",
+      "kind": "action",
+      "submitLabel": "Schedule recurring",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "everyHours": { "type": "number", "description": "Repeat every N hours." },
+          "everyDays": { "type": "number", "description": "Repeat every N days." },
+          "weekday": { "type": "string", "enum": ["sun", "mon", "tue", "wed", "thu", "fri", "sat"], "description": "Weekly UTC weekday." },
+          "time": { "type": "string", "description": "Weekly UTC time in HH:MM." },
+          "sender": { "type": "string", "default": "scheduler" },
+          "recipient": { "type": "string", "description": "Direct recipient agent id, or user. Defaults to coordinator." },
+          "channel": { "type": "string", "description": "Optional project channel." },
+          "priority": { "type": "string", "enum": ["P0", "P1", "P2", "P3"], "default": "P3" },
+          "waitForQuiet": { "type": "boolean", "default": false },
+          "body": { "type": "string", "description": "Markdown body to send." }
+        },
+        "required": ["body"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "schedule.cancel",
+      "title": "Cancel scheduled message",
+      "description": "Cancel a scheduled-message job.",
+      "kind": "action",
+      "submitLabel": "Cancel job",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "description": "Scheduled job id." }
+        },
+        "required": ["id"],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

@@ -140,6 +140,8 @@ tools:
     - core
     - shell
     - web
+    - path: ./toolpacks/scheduler
+      id: scheduler
     - path: ./toolpacks/review
       id: review-tools
 ```
@@ -149,6 +151,7 @@ tools:
 | `core` | `messages.send`, `coordination.wait_for_signal`, `completion.submit`, `file.read`, `file.write`, `file.patch` |
 | `shell` | `shell.exec` |
 | `web` | `web.fetch` |
+| Local `toolpacks/scheduler` | `schedule.once`、`schedule.recurring`、`schedule.list`、`schedule.cancel`，以及 scheduled-message WebUI controls 和 scheduler hook。 |
 | Local `{ path, id }` | 该目录中 `suzumio.toolpack.json` 声明的 model-facing tools 和可选 WebUI entries。 |
 
 `tools.toolpacks` 为 project 注册 definitions。`agents.<id>.tools` allowlist 决定模型可以看到哪些已注册 tools。内置 file tools 可以用 `file.*` 授权，也可以写 exact names，例如 `file.read` 和 `file.patch`。Toolpack WebUI entries 是 user-facing controls，不使用 per-agent model allowlist。
@@ -231,6 +234,8 @@ scheduler:
 | `failedAgentMonitor.enabled` | `false` | 启用 failed-agent monitor rules。 |
 | `failedAgentMonitor.rules` | Empty list | Failed-agent monitor rule list。 |
 
+Priority 包括 `P0`、`P1`、`P2`、`P3`。`P2` 用于应优先于 routine backlog 的 control-flow 或 continuation signals。普通 queued messages 默认使用 `P3`。
+
 Quiet-agent monitor rule 字段：
 
 | 字段 | 默认值 | 说明 |
@@ -256,7 +261,7 @@ communication:
   coordinatorAgent: pm
   restrictNonCoordinatorToCoordinator: true
   nonCoordinatorMaxPriority: P2
-  pmRoutineVerifierPriority: P2
+  pmRoutineVerifierPriority: P3
 ```
 
 | 字段 | 默认值 | 说明 |
@@ -264,7 +269,7 @@ communication:
 | `coordinatorAgent` | `pm` | Rendered prompt 中的 coordinator agent。 |
 | `restrictNonCoordinatorToCoordinator` | `false` | Prompt contract：non-coordinator 只 message coordinator。 |
 | `nonCoordinatorMaxPriority` | `P2` | Non-coordinator routine messages 的 prompt-level max priority。 |
-| `pmRoutineVerifierPriority` | `P2` | PM routine review/delegation messages 的 prompt-level default。 |
+| `pmRoutineVerifierPriority` | `P3` | PM routine review/delegation messages 的 prompt-level default。 |
 
 该 section 影响 activation instructions。Tool authorization 仍由 `agents.<id>.tools` 决定。
 

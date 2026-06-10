@@ -4,7 +4,7 @@ export type AgentStatus = "quiet" | "ready" | "running" | "failed" | "stopped";
 
 export type ActivationStatus = "running" | "completed" | "failed" | "cancelled";
 
-export type MessagePriority = "P0" | "P1" | "P2";
+export type MessagePriority = "P0" | "P1" | "P2" | "P3";
 
 export type AgentHistoryRole = "user" | "assistant" | "tool_call" | "tool_result" | "compaction";
 

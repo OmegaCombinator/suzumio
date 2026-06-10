@@ -41,8 +41,8 @@ The core process is the authority for project-level records. Data visible in CLI
 |----------------|-----------------------------------------------------------------------------------------------------------------------------------------|
 | `config.ts`    | Loads YAML, resolves imports, applies `extends`, validates config, and renders final YAML.                                              |
 | `store.ts`     | Creates and queries SQLite tables for projects, agents, messages, signals, agent history, activations, events, and tool calls.          |
-| `scheduler.ts` | Implements signal delivery, including `P0` interruption and `P1` tool-boundary delivery.                                                 |
-| `tools.ts`     | Resolves built-in and local toolpacks, serves controller support with token/allowlist checks, and exposes trusted WebUI tool entries.   |
+| `scheduler.ts` | Implements signal delivery, including `P0` interruption, `P1` tool-boundary delivery, and local toolpack scheduler hooks.              |
+| `tools.ts`     | Resolves built-in and local toolpacks, serves controller support with token/allowlist checks, exposes trusted WebUI entries, and runs scheduler hooks. |
 | `server.ts`    | HTTP API, SSE stream, controller support route, activation result route, and static WebUI asset serving.                                 |
 | `webui/`       | Preact + Vite project for the browser control room served at `/`.                                                                        |
 | `backend.ts`   | Docker container creation, configured bind mounts, runner input, and activation completion monitoring.                                  |
@@ -97,7 +97,7 @@ Completed containers are currently kept for early debugging. Cleanup policy is p
 
 The model does not receive arbitrary host tools by default. Tools are configured per agent. `file.read`, `file.write`, `file.patch`, `shell.exec`, and `web.fetch` run inside the Docker runner; message, completion, and coordination tools use Suzumio support APIs.
 
-Toolpacks can also register WebUI entries. These are user-facing project controls rendered by the WebUI Tools panel and invoked through public project APIs, not model-facing tools and not runner-internal routes.
+Toolpacks can also register WebUI entries. These are user-facing project controls rendered by the WebUI Tools panel and invoked through public project APIs, not model-facing tools and not runner-internal routes. Local controller modules can additionally export scheduler hooks; the core scheduler passes current agent state, including whether each agent has a live running activation, and the hook may create messages or signals before built-in nudge rules run.
 
 ## Agent History
 
@@ -109,7 +109,7 @@ Compaction is decided by the docker-chat runner only after the model provider re
 
 Agents do not poll for work. Suzumio appends pending signals into the target agent history and records which activation received each signal. The scheduling record remains explicit and auditable.
 
-Priority controls when a pending signal becomes model-visible. `P0` cancels the current activation and restarts the agent with the new signal. `P1` is injected after the next completed tool call when possible, otherwise it waits for the next activation. `P2` waits until the current activation completes and is delivered at the next activation start.
+Priority controls when a pending signal becomes model-visible. `P0` cancels the current activation and restarts the agent with the new signal. `P1` is injected after the next completed tool call when possible, otherwise it waits for the next activation. `P2` waits until the current activation completes and is delivered before routine backlog. `P3` is ordinary queued work and is delivered after any pending `P2` signal.
 
 Messages create `message.created` signals. Shared artifact files are ordinary durable files and do not wake agents by themselves. Custom toolpacks can call `recordSignal` to create pending coordination work or closed useful effects.
 
