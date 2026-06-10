@@ -49,10 +49,24 @@ function currentRoute(): RouteState {
 
 function writeRoute(project: string, view: View, replace = false): void {
   if (typeof window === "undefined" || !project) return;
-  const next = `#/${encodeURIComponent(project)}/${view}`;
+  const toolKey = view === "tools" ? currentToolRouteKey() : undefined;
+  const next = `#/${encodeURIComponent(project)}/${view}${toolKey ? `/${encodeURIComponent(toolKey)}` : ""}`;
   if (window.location.hash === next) return;
   if (replace) window.history.replaceState(null, "", next);
   else window.location.hash = next;
+}
+
+function currentToolRouteKey(): string | undefined {
+  if (typeof window === "undefined") return undefined;
+  const raw = window.location.hash.replace(/^#\/?/, "");
+  const parts = raw.split("/").filter(Boolean).map((part) => decodeURIComponent(part));
+  return parts[1] === "tools" ? parts[2] : undefined;
+}
+
+function writeToolRoute(project: string, key: string): void {
+  if (typeof window === "undefined" || !project) return;
+  const next = `#/${encodeURIComponent(project)}/tools/${encodeURIComponent(key)}`;
+  if (window.location.hash !== next) window.location.hash = next;
 }
 
 export function App() {
@@ -431,45 +445,150 @@ function HistoryItem({ message, onArchive }: { message: AgentHistoryMessage; onA
   );
 }
 
+type ToolWorkspaceItem =
+  | { key: string; kind: "tool"; title: string; kicker: string; description?: string; status: ToolStatus; entries: ToolUiEntry[] }
+  | { key: string; kind: "control"; title: string; kicker: string; description?: string; entry: ToolUiEntry };
+
 function ToolsPanel({ projectId, entries, statuses, loading }: { projectId: string; entries: ToolUiEntry[]; statuses: ToolStatus[]; loading: boolean }) {
+  const items = toolWorkspaceItems(statuses, entries);
+  const [selectedKey, setSelectedKey] = useState(() => currentToolRouteKey() ?? "");
+  const selected = items.find((item) => item.key === selectedKey) ?? items[0];
+
+  useEffect(() => {
+    if (!items.length) return;
+    const routed = currentToolRouteKey();
+    const next = routed && items.some((item) => item.key === routed) ? routed : selectedKey && items.some((item) => item.key === selectedKey) ? selectedKey : items[0]!.key;
+    if (next !== selectedKey) setSelectedKey(next);
+    if (!routed || routed !== next) writeToolRoute(projectId, next);
+  }, [projectId, items.map((item) => item.key).join("\0")]);
+
+  function select(item: ToolWorkspaceItem) {
+    setSelectedKey(item.key);
+    writeToolRoute(projectId, item.key);
+  }
+
+  if (!items.length) return <Panel title="Tool workspace" subtitle={loading ? "Loading..." : "No tools registered"}><Blank label={loading ? "Loading tool workspace..." : "No configured tools or WebUI controls yet"} /></Panel>;
+
   return (
-    <div class="split-stack">
-      <Panel title="Tool status" subtitle={loading ? "Loading..." : `${statuses.length} configured or observed tools`}>
-        <ToolStatusList statuses={statuses} loading={loading} />
-      </Panel>
-      <Panel title="Registered tool controls" subtitle={loading ? "Loading..." : `${entries.length} WebUI entries from configured toolpacks`}>
-        {entries.length ? <div class="tool-ui-grid">{entries.map((entry) => <ToolUiCard projectId={projectId} entry={entry} />)}</div> : <Blank label={loading ? "Loading tool controls..." : "No WebUI tool entries registered"} />}
-      </Panel>
-    </div>
+    <section class="tool-workspace">
+      <aside class="tool-index-card">
+        <div class="tool-index-head">
+          <span class="eyebrow">TOOL WORKSPACE</span>
+          <strong>{items.length} pages</strong>
+          <small>{statuses.length} runtime tools / {entries.length} controls</small>
+        </div>
+        <div class="tool-index-list">
+          {items.map((item) => <ToolIndexButton item={item} active={item.key === selected?.key} onSelect={() => select(item)} />)}
+        </div>
+      </aside>
+      <div class="tool-page-shell">
+        {selected?.kind === "tool" ? <ToolDetailPage projectId={projectId} item={selected} /> : selected && <ToolControlPage projectId={projectId} item={selected} />}
+      </div>
+    </section>
   );
 }
 
-function ToolStatusList({ statuses, loading }: { statuses: ToolStatus[]; loading: boolean }) {
-  if (!statuses.length) return <Blank label={loading ? "Loading tool status..." : "No configured tools or tool activity yet"} />;
-  return <div class="tool-status-grid">{statuses.map((status) => <ToolStatusCard status={status} />)}</div>;
+function ToolIndexButton({ item, active, onSelect }: { item: ToolWorkspaceItem; active: boolean; onSelect: () => void }) {
+  const state = item.kind === "tool" ? toolState(item.status) : item.entry.kind;
+  const count = item.kind === "tool" ? item.status.callCount : undefined;
+  return (
+    <button class={`tool-index-button ${active ? "active" : ""}`} onClick={onSelect}>
+      <span class="tool-index-main"><strong>{item.title}</strong><small>{item.kicker}</small></span>
+      <span class="tool-index-side"><StatusPill status={state} compact />{count !== undefined && <small>{count.toLocaleString()}</small>}</span>
+    </button>
+  );
 }
 
-function ToolStatusCard({ status }: { status: ToolStatus }) {
-  const state = status.submittedReportPath ? "submitted" : status.lastStatus ?? "ready";
+function ToolDetailPage({ projectId, item }: { projectId: string; item: Extract<ToolWorkspaceItem, { kind: "tool" }> }) {
+  const status = item.status;
   return (
-    <article class="tool-status-card">
-      <div class="item-title"><strong>{status.tool}</strong><StatusPill status={state} compact /></div>
-      <small>{status.toolpackId ? `${status.toolpackKind ?? "toolpack"} / ${status.toolpackId}` : "observed but not in current tool config"}</small>
-      {status.description && <p>{status.description}</p>}
-      <div class="tool-status-metrics">
-        <span><strong>{status.callCount}</strong> calls</span>
-        <span><strong>{status.runningCount}</strong> running</span>
-        <span><strong>{status.completedCount}</strong> completed</span>
-        <span><strong>{status.failedCount}</strong> failed</span>
-      </div>
-      <div class="tool-status-meta">
-        <span>{status.enabledForAgents.length ? `Enabled for ${status.enabledForAgents.join(", ")}` : "No current agent allowlist"}</span>
-        {status.lastAt && <span>Last {formatRelative(status.lastAt)}{status.lastAgentId ? ` by ${status.lastAgentId}` : ""}</span>}
-        {status.submittedReportPath && <span>Final report submitted: {status.submittedReportPath}</span>}
-      </div>
-      {status.lastError && <p class="error-text">{status.lastError}</p>}
+    <article class="tool-page-card">
+      <header class="tool-page-hero">
+        <div>
+          <span class="eyebrow">{item.kicker}</span>
+          <h3>{item.title}</h3>
+          {item.description && <p>{item.description}</p>}
+        </div>
+        <StatusPill status={toolState(status)} />
+      </header>
+      <ToolStatusSummary status={status} />
+      <section class="tool-page-section">
+        <div class="tool-section-title"><strong>Controls</strong><span>{item.entries.length ? `${item.entries.length} WebUI controls` : "No dedicated control"}</span></div>
+        {item.entries.length ? <div class="tool-control-stack">{item.entries.map((entry) => <ToolUiCard projectId={projectId} entry={entry} />)}</div> : <Blank label="This tool only has runtime status right now" />}
+      </section>
     </article>
   );
+}
+
+function ToolControlPage({ projectId, item }: { projectId: string; item: Extract<ToolWorkspaceItem, { kind: "control" }> }) {
+  return (
+    <article class="tool-page-card">
+      <header class="tool-page-hero tool-page-hero-control">
+        <div>
+          <span class="eyebrow">{item.kicker}</span>
+          <h3>{item.title}</h3>
+          {item.description && <p>{item.description}</p>}
+        </div>
+        <span class="tool-ui-kind">{item.entry.kind}</span>
+      </header>
+      <ToolUiCard projectId={projectId} entry={item.entry} />
+    </article>
+  );
+}
+
+function ToolStatusSummary({ status }: { status: ToolStatus }) {
+  return (
+    <section class="tool-status-summary">
+      <div><span>Total calls</span><strong>{status.callCount.toLocaleString()}</strong></div>
+      <div><span>Running</span><strong>{status.runningCount.toLocaleString()}</strong></div>
+      <div><span>Completed</span><strong>{status.completedCount.toLocaleString()}</strong></div>
+      <div><span>Failed</span><strong>{status.failedCount.toLocaleString()}</strong></div>
+      <div class="wide"><span>Enabled agents</span><strong>{status.enabledForAgents.length ? status.enabledForAgents.join(", ") : "No current agent allowlist"}</strong></div>
+      <div class="wide"><span>Last activity</span><strong>{status.lastAt ? `${formatRelative(status.lastAt)}${status.lastAgentId ? ` by ${status.lastAgentId}` : ""}` : "No calls yet"}</strong></div>
+      {status.submittedReportPath && <div class="wide"><span>Final report</span><strong>{status.submittedReportPath}</strong></div>}
+      {status.lastError && <div class="wide error"><span>Last error</span><strong>{status.lastError}</strong></div>}
+    </section>
+  );
+}
+
+function toolWorkspaceItems(statuses: ToolStatus[], entries: ToolUiEntry[]): ToolWorkspaceItem[] {
+  const toolNames = new Set(statuses.map((status) => status.tool));
+  const controlsByTool = new Map<string, ToolUiEntry[]>();
+  const standalone: ToolUiEntry[] = [];
+  for (const entry of entries) {
+    const related = relatedToolsForEntry(entry).filter((tool) => toolNames.has(tool));
+    if (!related.length) {
+      standalone.push(entry);
+      continue;
+    }
+    for (const tool of related) controlsByTool.set(tool, [...(controlsByTool.get(tool) ?? []), entry]);
+  }
+  return [
+    ...standalone.map((entry) => ({ key: `control:${entry.toolpackId}:${entry.id}`, kind: "control" as const, title: entry.title, kicker: `${entry.toolpackId} / ${entry.id}`, description: entry.description, entry })),
+    ...statuses.map((status) => ({
+      key: `tool:${status.tool}`,
+      kind: "tool" as const,
+      title: status.tool,
+      kicker: status.toolpackId ? `${status.toolpackKind ?? "toolpack"} / ${status.toolpackId}` : "observed runtime tool",
+      description: status.description,
+      status,
+      entries: controlsByTool.get(status.tool) ?? [],
+    })),
+  ];
+}
+
+function relatedToolsForEntry(entry: ToolUiEntry): string[] {
+  if (entry.id === "messages.conversation" || entry.id === "messages.send") return ["messages.send"];
+  if (entry.id === "coordination.signals") return ["coordination.wait_for_signal"];
+  if (entry.id === "completion.report") return ["completion.submit"];
+  if (entry.id === "file.activity") return ["file.read", "file.write", "file.patch"];
+  if (entry.id === "shell.activity") return ["shell.exec"];
+  if (entry.id === "web.activity") return ["web.fetch"];
+  return [];
+}
+
+function toolState(status: ToolStatus): "ready" | "running" | "completed" | "failed" | "submitted" {
+  return status.submittedReportPath ? "submitted" : status.lastStatus ?? "ready";
 }
 
 function ToolUiCard({ projectId, entry }: { projectId: string; entry: ToolUiEntry }) {
@@ -625,7 +744,7 @@ function MessageParty({ label, value, tone }: { label: string; value: string; to
   return <div class={`message-party message-party-${tone}`}><span>{label}</span><strong>{value}</strong></div>;
 }
 
-function StatusPill({ status, compact = false }: { status: ProjectStatus | Agent["status"] | "running" | "completed" | "failed" | "cancelled" | "ready"; compact?: boolean }) { return <span class={`status-pill status-${status} ${compact ? "compact" : ""}`}>{status}</span>; }
+function StatusPill({ status, compact = false }: { status: ProjectStatus | Agent["status"] | "running" | "completed" | "failed" | "cancelled" | "ready" | "panel" | "action"; compact?: boolean }) { return <span class={`status-pill status-${status} ${compact ? "compact" : ""}`}>{status}</span>; }
 function Blank({ label }: { label: string }) { return <div class="blank">{label}</div>; }
 function EmptyState({ loading }: { loading: boolean }) { return <section class="empty-state"><div class="empty-orbit" /><h2>{loading ? "Connecting to Suzumio..." : "No projects initialized"}</h2><p>Initialize a YAML project, then refresh this observatory.</p><code>suzumio init path/to/project.yaml</code></section>; }
 function initials(value: string): string { return value.split(/[\s_-]+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase(); }
