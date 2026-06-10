@@ -489,12 +489,11 @@ function ToolsPanel({ projectId, agents, entries, statuses, loading }: { project
 }
 
 function ToolIndexButton({ item, active, onSelect }: { item: ToolWorkspaceItem; active: boolean; onSelect: () => void }) {
-  const state = item.kind === "tool" ? toolState(item.status) : item.entry.kind;
   const count = item.kind === "tool" ? item.status.callCount : undefined;
   return (
     <button class={`tool-index-button ${active ? "active" : ""}`} onClick={onSelect}>
       <span class="tool-index-main"><strong>{item.title}</strong><small>{item.kicker}</small></span>
-      <span class="tool-index-side"><StatusPill status={state} compact />{count !== undefined && <small>{count.toLocaleString()}</small>}</span>
+      {count !== undefined && <span class="tool-index-side"><small>{count.toLocaleString()} calls</small></span>}
     </button>
   );
 }
