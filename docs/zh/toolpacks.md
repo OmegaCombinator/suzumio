@@ -15,6 +15,8 @@ tools:
     - web
     - path: ./toolpacks/scheduler
       id: scheduler
+    - path: ./toolpacks/plan
+      id: plan
     - path: ./toolpacks/review
       id: review-tools
 
@@ -23,6 +25,7 @@ agents:
     tools:
       - messages.send
       - coordination.wait_for_signal
+      - plan.*
       - schedule.*
       - review.summarize
 ```
@@ -123,6 +126,28 @@ agents:
 ```
 
 它提供 `schedule.once`、`schedule.recurring`、`schedule.list`、`schedule.cancel`，并在 WebUI 的 scheduler tool page 下提供 controls。Jobs 存在项目目录的 `toolpack-state/scheduler/jobs.json`。到期 job 会通过 project store 创建普通 message，默认 `P3`，并可设置 `waitForQuiet: true` 来等待 direct recipient 的 live model activation 结束。Weekly recurring jobs 使用 UTC `weekday` 和 `time`。
+
+## Packaged Plan Toolpack
+
+仓库包含 `toolpacks/plan`，这是 local、非 kernel 的 active plan 和 continuation nudge toolpack：
+
+```yaml
+tools:
+  toolpacks:
+    - core
+    - path: ./toolpacks/plan
+      id: plan
+
+agents:
+  pm:
+    tools:
+      - messages.send
+      - plan.*
+```
+
+它提供 `plan.create`、`plan.status`、`plan.update`、`plan.set_item_status`、`plan.close`，并在 WebUI 的 plan tool page 下提供 controls。State 存在 `toolpack-state/plan/state.json`。每个 plan item 有三种状态：`tbd`、`done`、`wont_do`；没有 item 仍是 `tbd` 时，plan 才算完成。
+
+Plan toolpack 也导出 scheduler hook。当 active plan 仍有 `tbd` items，且目标 agent 没有 live model activation 时，它会创建 `P2` 的 `plan.continuation_nudge` signal。Pending plan nudges 会 dedupe，每个 plan 可配置 `nudgeCooldownMs` 和 `maxNudges`。
 
 ## Runner Module
 

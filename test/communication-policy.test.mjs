@@ -10,6 +10,7 @@ import { ToolSupportHost } from "../dist/tools.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SCHEDULER_TOOLPACK = path.join(REPO_ROOT, "toolpacks", "scheduler");
+const PLAN_TOOLPACK = path.join(REPO_ROOT, "toolpacks", "plan");
 
 function projectConfig(name, overrides = {}) {
   return {
@@ -354,6 +355,74 @@ test("external scheduler toolpack can wait for a live recipient model", async ()
       const message = checked.listMessages(10).find((item) => item.body === "Continue after the current model turn.");
       assert.equal(message?.recipient, "pm");
       assert.equal(message?.priority, "P3");
+    } finally {
+      checked.close();
+    }
+  });
+});
+
+test("external plan toolpack tracks item statuses and archives completed plans", async () => {
+  const config = projectConfig("policy-plan-toolpack");
+  config.tools = { toolpacks: ["core", { path: PLAN_TOOLPACK, id: "plan" }] };
+  config.agents.pm.tools = ["messages.send", "plan.*"];
+  await withProject(config, async (root) => {
+    const host = new ToolSupportHost(root);
+    const { activation, token } = await createRunningActivation(root, config.name, "pm");
+    const base = { project: config.name, agentId: "pm", activationId: activation.id, token };
+
+    const created = await host.support("plan", { ...base, tool: "plan.create", input: { title: "Proof pass", itemsText: "Inspect files\nRun tests", nudgeCooldownMs: 0 } });
+    assert.match(created.output, /Plan pln_/);
+    assert.match(created.output, /1\. item_1 \[tbd\] Inspect files/);
+
+    await host.support("plan", { ...base, tool: "plan.set_item_status", input: { itemId: "item_1", status: "done", note: "files inspected" } });
+    const updated = await host.support("plan", { ...base, tool: "plan.set_item_status", input: { itemIndex: 2, status: "wont_do", note: "tests moved to verifier" } });
+    assert.match(updated.output, /Status: done/);
+    assert.match(updated.output, /item_2 \[wont_do\] Run tests/);
+
+    const webuiStatus = await host.invokeWebui(config.name, "plan", "plan.board", {});
+    assert.match(webuiStatus.output, /Proof pass/);
+    assert.equal(webuiStatus.metadata.activePlan.status, "done");
+
+    const closed = await host.support("plan", { ...base, tool: "plan.close", input: { status: "done", reason: "complete" } });
+    assert.match(closed.output, /No active plan/);
+    assert.match(closed.output, /Archived plans:/);
+  });
+});
+
+test("external plan toolpack nudges incomplete plans only when target model is not alive", async () => {
+  const config = projectConfig("policy-plan-nudge");
+  config.tools = { toolpacks: ["core", { path: PLAN_TOOLPACK, id: "plan" }] };
+  config.agents.pm.tools = ["messages.send", "plan.*"];
+  await withProject(config, async (root) => {
+    const host = new ToolSupportHost(root);
+    const { activation, token } = await createRunningActivation(root, config.name, "pm");
+    const base = { project: config.name, agentId: "pm", activationId: activation.id, token, tool: "plan.create" };
+    await host.support("plan", { ...base, input: { title: "Keep working", targetAgent: "pm", itemsText: "Finish implementation\nUpdate docs", nudgeCooldownMs: 0 } });
+
+    let store = new ProjectStore(config.name, root);
+    store.setProjectStatus("running");
+    store.close();
+    await new NonPreemptiveSignalScheduler(root).tickProject(config.name);
+
+    let checked = new ProjectStore(config.name, root);
+    try {
+      assert.equal(checked.pendingSignals("pm", 10).some((signal) => signal.kind === "plan.continuation_nudge"), false);
+    } finally {
+      checked.close();
+    }
+
+    store = new ProjectStore(config.name, root);
+    store.cancelActivation(activation.id, "test completed running turn");
+    store.close();
+    await new NonPreemptiveSignalScheduler(root).tickProject(config.name);
+
+    checked = new ProjectStore(config.name, root);
+    try {
+      const nudges = checked.pendingSignals("pm", 10).filter((signal) => signal.kind === "plan.continuation_nudge");
+      assert.equal(nudges.length, 1);
+      assert.equal(nudges[0].priority, "P2");
+      assert.match(String(nudges[0].payload.message), /Continue the active plan/);
+      assert.deepEqual(nudges[0].payload.remainingItems.map((item) => item.id), ["item_1", "item_2"]);
     } finally {
       checked.close();
     }

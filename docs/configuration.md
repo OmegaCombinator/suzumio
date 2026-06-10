@@ -142,6 +142,8 @@ tools:
     - web
     - path: ./toolpacks/scheduler
       id: scheduler
+    - path: ./toolpacks/plan
+      id: plan
     - path: ./toolpacks/review
       id: review-tools
 ```
@@ -152,6 +154,7 @@ tools:
 | `shell` | `shell.exec` |
 | `web` | `web.fetch` |
 | Local `toolpacks/scheduler` | `schedule.once`, `schedule.recurring`, `schedule.list`, `schedule.cancel`, plus scheduled-message WebUI controls and a scheduler hook. |
+| Local `toolpacks/plan` | `plan.create`, `plan.status`, `plan.update`, `plan.set_item_status`, `plan.close`, plus active-plan WebUI controls and a continuation scheduler hook. |
 | Local `{ path, id }` | Model-facing tools and optional WebUI entries declared by `suzumio.toolpack.json` in that directory. |
 
 `tools.toolpacks` registers definitions for the project. `agents.<id>.tools` allowlists which registered tools a model can see. Built-in file tools can be granted with `file.*` or exact names such as `file.read` and `file.patch`. Toolpack WebUI entries are user-facing controls and do not use the per-agent model allowlist.

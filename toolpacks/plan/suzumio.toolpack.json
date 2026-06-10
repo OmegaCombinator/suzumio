@@ -1,0 +1,172 @@
+{
+  "id": "plan",
+  "runner": "runner.mjs",
+  "controller": "controller.mjs",
+  "tools": [
+    {
+      "name": "plan.create",
+      "description": "Create an active project plan. Plan items use status tbd, done, or wont_do. Use this near the start of substantive work, then keep it current with plan.set_item_status and plan.update.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "title": { "type": "string", "description": "Short plan title." },
+          "targetAgent": { "type": "string", "description": "Agent to nudge when the active plan has remaining tbd items. Defaults to the coordinator." },
+          "itemsText": { "type": "string", "description": "One plan item per line. Lines starting with '-' or a number are accepted." },
+          "instructions": { "type": "string", "description": "Optional extra instructions shown in continuation nudges." },
+          "replaceActive": { "type": "boolean", "default": false, "description": "Replace the current active incomplete plan." },
+          "nudgeCooldownMs": { "type": "number", "default": 60000, "description": "Minimum time between plan continuation nudges." },
+          "maxNudges": { "type": "number", "default": 0, "description": "Maximum continuation nudges for this plan. 0 means no limit." }
+        },
+        "required": ["title", "itemsText"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "plan.status",
+      "description": "Show the active plan, item statuses, and recent archived plans.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "includeArchived": { "type": "boolean", "default": false, "description": "Include archived completed or abandoned plans." }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "plan.update",
+      "description": "Update active plan metadata or append/replace plan items. Do not use this to mark progress; use plan.set_item_status for tbd/done/wont_do changes.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "title": { "type": "string", "description": "New plan title." },
+          "targetAgent": { "type": "string", "description": "New continuation-nudge target agent." },
+          "instructions": { "type": "string", "description": "New extra instructions for continuation nudges." },
+          "itemsText": { "type": "string", "description": "Plan items to append or use as replacement, one per line." },
+          "itemMode": { "type": "string", "enum": ["append", "replace"], "default": "append", "description": "How to apply itemsText." },
+          "nudgeCooldownMs": { "type": "number", "description": "Minimum time between continuation nudges." },
+          "maxNudges": { "type": "number", "description": "Maximum continuation nudges. 0 means no limit." }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "plan.set_item_status",
+      "description": "Set a plan item to tbd, done, or wont_do. Call this after each meaningful step so the active plan reflects reality.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "itemId": { "type": "string", "description": "Plan item id such as item_1. Use itemIndex if easier." },
+          "itemIndex": { "type": "number", "description": "1-based item index." },
+          "status": { "type": "string", "enum": ["tbd", "done", "wont_do"], "description": "New item status." },
+          "text": { "type": "string", "description": "Optional replacement item text." },
+          "note": { "type": "string", "description": "Optional progress or reason note." }
+        },
+        "required": ["status"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "plan.close",
+      "description": "Archive the active plan after completion, or abandon it explicitly. Completed plans require every item to be done or wont_do.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string", "enum": ["done", "abandoned"], "default": "done", "description": "How to close the active plan." },
+          "reason": { "type": "string", "description": "Optional close reason." }
+        },
+        "additionalProperties": false
+      }
+    }
+  ],
+  "webui": [
+    {
+      "id": "plan.board",
+      "title": "Active plan",
+      "description": "Inspect active plan items, statuses, nudges, and recent archived plans.",
+      "kind": "panel",
+      "submitLabel": "Refresh plan",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "includeArchived": { "type": "boolean", "default": false, "description": "Include archived plans." }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "plan.create",
+      "title": "Create plan",
+      "description": "Create a new active plan with one item per line.",
+      "kind": "action",
+      "submitLabel": "Create plan",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "title": { "type": "string", "description": "Short plan title." },
+          "targetAgent": { "type": "string", "description": "Agent to nudge. Defaults to coordinator." },
+          "itemsText": { "type": "string", "description": "One item per line." },
+          "instructions": { "type": "string", "description": "Optional extra continuation instructions." },
+          "replaceActive": { "type": "boolean", "default": false },
+          "nudgeCooldownMs": { "type": "number", "default": 60000 },
+          "maxNudges": { "type": "number", "default": 0 }
+        },
+        "required": ["title", "itemsText"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "plan.update",
+      "title": "Update plan",
+      "description": "Update active plan metadata or append/replace items.",
+      "kind": "action",
+      "submitLabel": "Update plan",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "title": { "type": "string" },
+          "targetAgent": { "type": "string" },
+          "instructions": { "type": "string" },
+          "itemsText": { "type": "string", "description": "One item per line." },
+          "itemMode": { "type": "string", "enum": ["append", "replace"], "default": "append" },
+          "nudgeCooldownMs": { "type": "number" },
+          "maxNudges": { "type": "number" }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "plan.set_item_status",
+      "title": "Set plan item status",
+      "description": "Mark an item tbd, done, or wont_do.",
+      "kind": "action",
+      "submitLabel": "Set status",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "itemId": { "type": "string", "description": "Plan item id such as item_1." },
+          "itemIndex": { "type": "number", "description": "1-based item index." },
+          "status": { "type": "string", "enum": ["tbd", "done", "wont_do"] },
+          "text": { "type": "string", "description": "Optional replacement item text." },
+          "note": { "type": "string", "description": "Optional progress note or reason." }
+        },
+        "required": ["status"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "plan.close",
+      "title": "Close plan",
+      "description": "Archive the active plan as done or abandoned.",
+      "kind": "action",
+      "submitLabel": "Close plan",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string", "enum": ["done", "abandoned"], "default": "done" },
+          "reason": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    }
+  ]
+}

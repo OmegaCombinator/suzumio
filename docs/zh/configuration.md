@@ -142,6 +142,8 @@ tools:
     - web
     - path: ./toolpacks/scheduler
       id: scheduler
+    - path: ./toolpacks/plan
+      id: plan
     - path: ./toolpacks/review
       id: review-tools
 ```
@@ -152,6 +154,7 @@ tools:
 | `shell` | `shell.exec` |
 | `web` | `web.fetch` |
 | Local `toolpacks/scheduler` | `schedule.once`、`schedule.recurring`、`schedule.list`、`schedule.cancel`，以及 scheduled-message WebUI controls 和 scheduler hook。 |
+| Local `toolpacks/plan` | `plan.create`、`plan.status`、`plan.update`、`plan.set_item_status`、`plan.close`，以及 active-plan WebUI controls 和 continuation scheduler hook。 |
 | Local `{ path, id }` | 该目录中 `suzumio.toolpack.json` 声明的 model-facing tools 和可选 WebUI entries。 |
 
 `tools.toolpacks` 为 project 注册 definitions。`agents.<id>.tools` allowlist 决定模型可以看到哪些已注册 tools。内置 file tools 可以用 `file.*` 授权，也可以写 exact names，例如 `file.read` 和 `file.patch`。Toolpack WebUI entries 是 user-facing controls，不使用 per-agent model allowlist。

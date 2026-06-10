@@ -587,6 +587,11 @@ function relatedToolsForEntry(entry: ToolUiEntry): string[] {
   if (entry.id === "schedule.once") return ["schedule.once"];
   if (entry.id === "schedule.recurring") return ["schedule.recurring"];
   if (entry.id === "schedule.cancel") return ["schedule.cancel"];
+  if (entry.id === "plan.board") return ["plan.status"];
+  if (entry.id === "plan.create") return ["plan.create"];
+  if (entry.id === "plan.update") return ["plan.update"];
+  if (entry.id === "plan.set_item_status") return ["plan.set_item_status"];
+  if (entry.id === "plan.close") return ["plan.close"];
   return [];
 }
 

@@ -15,6 +15,8 @@ tools:
     - web
     - path: ./toolpacks/scheduler
       id: scheduler
+    - path: ./toolpacks/plan
+      id: plan
     - path: ./toolpacks/review
       id: review-tools
 
@@ -23,6 +25,7 @@ agents:
     tools:
       - messages.send
       - coordination.wait_for_signal
+      - plan.*
       - schedule.*
       - review.summarize
 ```
@@ -125,6 +128,28 @@ agents:
 ```
 
 It provides `schedule.once`, `schedule.recurring`, `schedule.list`, and `schedule.cancel`, plus WebUI controls under the scheduler tool page. Jobs are stored in the project directory at `toolpack-state/scheduler/jobs.json`. Due jobs create ordinary messages through the project store, default to `P3`, and can set `waitForQuiet: true` to wait while the direct recipient has a live model activation. Weekly recurring jobs use UTC `weekday` plus `time`.
+
+## Packaged Plan Toolpack
+
+The repository includes `toolpacks/plan` as a local, non-kernel toolpack for active project plans and continuation nudges:
+
+```yaml
+tools:
+  toolpacks:
+    - core
+    - path: ./toolpacks/plan
+      id: plan
+
+agents:
+  pm:
+    tools:
+      - messages.send
+      - plan.*
+```
+
+It provides `plan.create`, `plan.status`, `plan.update`, `plan.set_item_status`, and `plan.close`, plus WebUI controls under the plan tool page. State is stored in `toolpack-state/plan/state.json`. Each plan item has one of three statuses: `tbd`, `done`, or `wont_do`; a plan is complete when no item remains `tbd`.
+
+The plan toolpack also exports a scheduler hook. When an active plan has remaining `tbd` items and the target agent has no live model activation, it creates a `P2` `plan.continuation_nudge` signal. Pending plan nudges are deduped, and each plan can configure `nudgeCooldownMs` and `maxNudges`.
 
 ## Runner Module
 
