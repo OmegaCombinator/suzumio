@@ -204,6 +204,23 @@ export interface ToolWebuiEntry extends ToolWebuiDefinition {
   toolpackKind: "builtin" | "local";
 }
 
+export interface ToolStatusEntry {
+  tool: string;
+  toolpackId?: string;
+  toolpackKind?: "builtin" | "local";
+  description?: string;
+  enabledForAgents: string[];
+  callCount: number;
+  runningCount: number;
+  completedCount: number;
+  failedCount: number;
+  lastStatus?: "running" | "completed" | "failed";
+  lastAgentId?: string;
+  lastAt?: string;
+  lastError?: string;
+  submittedReportPath?: string;
+}
+
 export interface DockerMountConfig {
   source: string;
   target: string;

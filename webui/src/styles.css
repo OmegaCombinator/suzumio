@@ -626,6 +626,11 @@ button {
   background: #eff6ff;
 }
 
+.status-ready {
+  color: #475569;
+  background: #f8fafc;
+}
+
 .composer {
   display: grid;
   gap: 0.75rem;
@@ -694,36 +699,77 @@ input[type="number"]:focus {
 .message-item,
 .activation-item,
 .tool-item,
+.tool-status-card,
 .tool-ui-card {
   position: relative;
   min-width: 0;
   padding: 0.875rem;
 }
 
+.tool-status-grid,
 .tool-ui-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
   gap: 0.75rem;
 }
 
+.tool-status-card,
 .tool-ui-card {
   display: grid;
   gap: 0.75rem;
   background: linear-gradient(180deg, #f8fafc 0%, #ffffff 60%);
+}
+
+.tool-status-card {
+  border-left: 3px solid #0ea5e9;
+}
+
+.tool-ui-card {
   border-left: 3px solid #8b5cf6;
 }
 
+.tool-status-card > small,
 .tool-ui-card > small {
   color: #94a3b8;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 0.6875rem;
 }
 
+.tool-status-card p,
 .tool-ui-card p {
   margin: 0;
   color: #475569;
   font-size: 0.8125rem;
   line-height: 1.55;
+}
+
+.tool-status-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.375rem;
+}
+
+.tool-status-metrics span {
+  padding: 0.5rem;
+  color: #64748b;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.375rem;
+  font-size: 0.6875rem;
+}
+
+.tool-status-metrics strong {
+  display: block;
+  color: #0f172a;
+  font-size: 1rem;
+  font-weight: 650;
+}
+
+.tool-status-meta {
+  display: grid;
+  gap: 0.25rem;
+  color: #64748b;
+  font-size: 0.75rem;
 }
 
 .tool-ui-kind {

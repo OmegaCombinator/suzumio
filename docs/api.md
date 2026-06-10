@@ -50,6 +50,7 @@ The current API is intended for local or trusted-network use. User-facing API au
 | `GET`  | `/api/projects/:project/activations?limit=100` | Recent activations.                                            |
 | `GET`  | `/api/projects/:project/activations/:id/context` | Scheduler prompt plus the model message context snapshot for one activation. |
 | `GET`  | `/api/projects/:project/tool-calls?limit=100` | Recent tool calls.                                             |
+| `GET`  | `/api/projects/:project/tool-status`          | Lightweight per-tool status, aggregate counts, latest state, and submit report path when present. |
 | `GET`  | `/api/projects/:project/tool-ui`            | WebUI entries registered by configured toolpacks.               |
 | `POST` | `/api/projects/:project/tool-ui/:toolpackId/:entryId` | Invoke one registered WebUI tool entry.                  |
 | `GET`  | `/api/projects/:project/config/resolved`      | Resolved YAML config as plain text.                            |
@@ -308,6 +309,6 @@ Fetches an HTTP(S) URL from inside the Docker runner container. `format: "text"`
 
 ## WebUI
 
-The root path `/` serves the Preact-based WebUI built from `webui/`. It calls the API routes above and refreshes periodically. For WebUI development, run `npm run webui:dev` and open `http://127.0.0.1:5173`; Vite proxies `/api` and `/health` to the backend on `39400`. The control room includes project selection, status actions, message composition, agent roster, per-agent history, messages, activations, per-activation model context snapshots, tool calls, event timeline, resolved YAML, and submitted report views. The project overview refreshes as a lightweight summary; large logs, agent histories, config, events, tool calls, archives, and context payloads are loaded on demand.
+The root path `/` serves the Preact-based WebUI built from `webui/`. It calls the API routes above and refreshes periodically. For WebUI development, run `npm run webui:dev` and open `http://127.0.0.1:5173`; Vite proxies `/api` and `/health` to the backend on `39400`. The control room includes project selection, status actions, message composition, agent roster, per-agent history, messages, and tool status/WebUI controls. The project overview refreshes from the lightweight project list; large message bodies, agent histories, tool controls, tool status, and archives are loaded on demand. The current project and view are encoded in the URL hash so refreshing the browser preserves the selected page.
 
 <div class="footer">Next: <a href="architecture.html">Architecture</a>.</div>

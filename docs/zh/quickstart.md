@@ -219,14 +219,10 @@ WebUI 显示：
 
 | View | Contents |
 |------|----------|
-| Project overview | Status、agents、latest activity、controls。 |
+| Project overview | Status、agents、轻量 counters、controls。 |
 | Messages | Direct 和 channel messages。 |
 | Agent history | Per-agent model-visible history、compaction markers、archives。 |
-| Activations | Activation status、input snapshots、output、failures。 |
-| Tool calls | Tool-call start/finish records、output summaries、errors。 |
-| Events | SQLite event timeline。 |
-| Resolved YAML | Stored project config。 |
-| Submitted report | `completion.submit` 后的 final report。 |
+| Tool status | Per-tool aggregate status、submit report path，以及已注册 WebUI controls。 |
 
 WebUI development:
 

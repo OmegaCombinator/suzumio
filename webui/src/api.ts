@@ -75,6 +75,23 @@ export interface ToolUiResult {
   metadata?: Record<string, unknown>;
 }
 
+export interface ToolStatus {
+  tool: string;
+  toolpackId?: string;
+  toolpackKind?: "builtin" | "local";
+  description?: string;
+  enabledForAgents: string[];
+  callCount: number;
+  runningCount: number;
+  completedCount: number;
+  failedCount: number;
+  lastStatus?: "running" | "completed" | "failed";
+  lastAgentId?: string;
+  lastAt?: string;
+  lastError?: string;
+  submittedReportPath?: string;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -95,16 +112,6 @@ export interface Project {
   agents: Agent[];
   recentMessages: Message[];
   recentActivations: Activation[];
-}
-
-export interface ProjectDetails {
-  project: Project;
-  messages: Message[];
-  activations: Activation[];
-  events: EventRecord[];
-  toolCalls: ToolCall[];
-  report: string;
-  config: string;
 }
 
 export interface ActivationContextMessage {
@@ -218,6 +225,10 @@ export function loadToolCalls(project: string, limit = 100): Promise<ToolCall[]>
   return request<ToolCall[]>(projectPath(project, `/tool-calls?limit=${limit}`));
 }
 
+export function loadToolStatus(project: string): Promise<ToolStatus[]> {
+  return request<ToolStatus[]>(projectPath(project, "/tool-status"));
+}
+
 export function loadToolUi(project: string): Promise<ToolUiEntry[]> {
   return request<ToolUiEntry[]>(projectPath(project, "/tool-ui"));
 }
@@ -252,19 +263,6 @@ export function loadAgentHistory(project: string, agentId: string, options: { li
 
 export function loadAgentHistoryArchive(project: string, agentId: string, compactionId: string): Promise<AgentHistoryArchiveResponse> {
   return request<AgentHistoryArchiveResponse>(projectPath(project, `/agents/${encodeURIComponent(agentId)}/history-archive/${encodeURIComponent(compactionId)}`));
-}
-
-export async function loadProjectDetails(project: string): Promise<ProjectDetails> {
-  const [summary, messages, activations, events, toolCalls, report, config] = await Promise.all([
-    request<Project>(projectPath(project)),
-    request<Message[]>(projectPath(project, "/messages?limit=160")),
-    request<Activation[]>(projectPath(project, "/activations?limit=120")),
-    request<EventRecord[]>(projectPath(project, "/events?limit=180")),
-    request<ToolCall[]>(projectPath(project, "/tool-calls?limit=120")),
-    requestText(projectPath(project, "/report")),
-    requestText(projectPath(project, "/config/resolved")),
-  ]);
-  return { project: summary, messages, activations, events, toolCalls, report, config };
 }
 
 export function sendMessage(project: string, body: { recipient: string; priority: Priority; body: string }): Promise<Message> {

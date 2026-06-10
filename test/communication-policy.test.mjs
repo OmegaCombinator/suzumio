@@ -139,6 +139,34 @@ test("core toolpack registers project stats for WebUI", async () => {
   });
 });
 
+test("tool status summarizes calls and submitted report", async () => {
+  const config = projectConfig("policy-tool-status");
+  config.agents.pm.tools = ["messages.send", "completion.submit"];
+  await withProject(config, async (root) => {
+    const host = new ToolSupportHost(root);
+    const { activation, token } = await createRunningActivation(root, config.name, "worker");
+    const started = await host.startToolCall({ project: config.name, agentId: "worker", activationId: activation.id, token, tool: "messages.send", input: { recipient: "pm", body: "hello" } });
+    await host.finishToolCall({ project: config.name, agentId: "worker", activationId: activation.id, token, toolCallId: started.toolCallId, status: "failed", error: "network down" });
+
+    const statuses = await host.listToolStatus(config.name);
+    const messagesSend = statuses.find((item) => item.tool === "messages.send");
+    assert.ok(messagesSend);
+    assert.equal(messagesSend.callCount, 1);
+    assert.equal(messagesSend.failedCount, 1);
+    assert.equal(messagesSend.lastStatus, "failed");
+    assert.equal(messagesSend.lastError, "network down");
+    assert.equal(Object.hasOwn(messagesSend, "input_json"), false);
+
+    const pmActivation = await createRunningActivation(root, config.name, "pm");
+    await host.support("core", { project: config.name, agentId: "pm", activationId: pmActivation.activation.id, token: pmActivation.token, tool: "completion.submit", input: { report: "Final answer." } });
+    const afterSubmit = await host.listToolStatus(config.name);
+    const submit = afterSubmit.find((item) => item.tool === "completion.submit");
+    assert.ok(submit);
+    assert.ok(submit.enabledForAgents.includes("pm"));
+    assert.match(submit.submittedReportPath, /final-report\.md$/);
+  });
+});
+
 test("local WebUI-only toolpacks do not require a runner module", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "suzumio-webui-toolpack-"));
   try {

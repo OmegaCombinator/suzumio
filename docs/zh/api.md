@@ -50,6 +50,7 @@ lead: "HTTP server 暴露项目观测、用户控制动作、SSE 事件流，以
 | `GET` | `/api/projects/:project/activations?limit=100` | 近期 activation。                               |
 | `GET` | `/api/projects/:project/activations/:id/context` | 单个 activation 的 scheduler prompt 和模型消息上下文快照。 |
 | `GET` | `/api/projects/:project/tool-calls?limit=100` | 近期工具调用。                                  |
+| `GET` | `/api/projects/:project/tool-status`          | 轻量 per-tool 状态、聚合计数、最近状态，以及已提交时的 submit report path。 |
 | `GET` | `/api/projects/:project/tool-ui`            | 已配置 toolpacks 注册的 WebUI entries。         |
 | `POST` | `/api/projects/:project/tool-ui/:toolpackId/:entryId` | 调用一个已注册的 WebUI tool entry。     |
 | `GET` | `/api/projects/:project/config/resolved`      | Resolved YAML config，plain text。              |
@@ -308,6 +309,6 @@ Compaction row 的 metadata 中包含 `compactionId`。`GET /api/projects/:proje
 
 ## WebUI
 
-根路径 `/` 提供由 `webui/` 构建的 Preact WebUI。它调用上面的 API routes 并定期刷新。开发 WebUI 时，运行 `npm run webui:dev` 并打开 `http://127.0.0.1:5173`；Vite 会把 `/api` 和 `/health` 代理到 `39400` 上的 backend。Control room 包含项目选择、状态操作、消息编辑、agent roster、per-agent history、messages、activations、单次 activation 的模型上下文快照、tool calls、event timeline、resolved YAML 和 submitted report 视图。项目 overview 只刷新轻量 summary；大型 logs、agent histories、config、events、tool calls、archives 和 context payload 都按需加载。
+根路径 `/` 提供由 `webui/` 构建的 Preact WebUI。它调用上面的 API routes 并定期刷新。开发 WebUI 时，运行 `npm run webui:dev` 并打开 `http://127.0.0.1:5173`；Vite 会把 `/api` 和 `/health` 代理到 `39400` 上的 backend。Control room 包含项目选择、状态操作、消息编辑、agent roster、per-agent history、messages，以及 tool status/WebUI controls。Project overview 从轻量 project list 刷新；大型 message bodies、agent histories、tool controls、tool status 和 archives 都按需加载。当前项目和视图编码在 URL hash 中，因此浏览器刷新会保留当前页面。
 
 <div class="footer">下一步：<a href="architecture.html">架构</a>。</div>

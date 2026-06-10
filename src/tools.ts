@@ -1,7 +1,7 @@
 import { pathToFileURL } from "node:url";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
-import type { AgentRecord, JsonObject, MessagePriority, ProjectConfig, ToolDefinition, ToolpackConfigEntry, ToolWebuiDefinition, ToolWebuiEntry } from "./types.js";
+import type { AgentRecord, JsonObject, MessagePriority, ProjectConfig, ToolDefinition, ToolpackConfigEntry, ToolStatusEntry, ToolWebuiDefinition, ToolWebuiEntry } from "./types.js";
 import { ProjectStore } from "./store.js";
 
 export type ToolCallOutput = {
@@ -158,6 +158,55 @@ export class ToolSupportHost {
     }
   }
 
+  async listToolStatus(project: string): Promise<ToolStatusEntry[]> {
+    const store = new ProjectStore(project, this.root);
+    try {
+      const config = store.config();
+      const agents = store.listAgents();
+      const statuses = new Map<string, ToolStatusEntry>();
+      for (const toolpack of await resolveToolpacks(config.tools.toolpacks)) {
+        for (const tool of toolpack.tools) {
+          statuses.set(tool.name, {
+            tool: tool.name,
+            toolpackId: toolpack.id,
+            toolpackKind: toolpack.kind,
+            description: tool.description,
+            enabledForAgents: agents.filter((agent) => isAllowed(tool.name, agent.tools)).map((agent) => agent.id),
+            callCount: 0,
+            runningCount: 0,
+            completedCount: 0,
+            failedCount: 0,
+          });
+        }
+      }
+      for (const row of toolCallAggregateRows(store)) {
+        const status = statuses.get(row.tool) ?? unknownToolStatus(row.tool);
+        status.callCount = row.callCount;
+        status.runningCount = row.runningCount;
+        status.completedCount = row.completedCount;
+        status.failedCount = row.failedCount;
+        statuses.set(row.tool, status);
+      }
+      for (const row of latestToolCallRows(store)) {
+        const status = statuses.get(row.tool) ?? unknownToolStatus(row.tool);
+        status.lastStatus = row.status;
+        status.lastAgentId = row.agentId;
+        status.lastAt = row.completedAt ?? row.createdAt;
+        status.lastError = truncateForStatus(row.error, 600);
+        statuses.set(row.tool, status);
+      }
+      const submittedReport = store.projectRow().submitted_report;
+      if (typeof submittedReport === "string" && submittedReport) {
+        const status = statuses.get("completion.submit") ?? unknownToolStatus("completion.submit");
+        status.submittedReportPath = submittedReport;
+        statuses.set(status.tool, status);
+      }
+      return [...statuses.values()].sort((a, b) => a.tool.localeCompare(b.tool));
+    } finally {
+      store.close();
+    }
+  }
+
   async invokeWebui(project: string, toolpackId: string, entryId: string, input: unknown): Promise<ToolCallOutput> {
     const store = new ProjectStore(project, this.root);
     try {
@@ -187,6 +236,84 @@ export class ToolSupportHost {
     if (!found) throw new Error(`Unknown tool: ${toolName}`);
     if (!isAllowed(toolName, agent.tools)) throw new Error(`Tool not allowed for ${agent.id}: ${toolName}`);
   }
+}
+
+type ToolCallAggregateRow = {
+  tool: string;
+  callCount: number;
+  runningCount: number;
+  completedCount: number;
+  failedCount: number;
+};
+
+type LatestToolCallRow = {
+  tool: string;
+  status: "running" | "completed" | "failed";
+  agentId: string;
+  createdAt: string;
+  completedAt?: string;
+  error?: string;
+};
+
+function toolCallAggregateRows(store: ProjectStore): ToolCallAggregateRow[] {
+  const rows = store.db.prepare(
+    `SELECT tool,
+            COUNT(*) AS call_count,
+            SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS running_count,
+            SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed_count,
+            SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed_count
+     FROM tool_calls
+     WHERE project = ?
+     GROUP BY tool`,
+  ).all(store.project) as Array<Record<string, unknown>>;
+  return rows.map((row) => ({
+    tool: String(row.tool),
+    callCount: numberField(row.call_count),
+    runningCount: numberField(row.running_count),
+    completedCount: numberField(row.completed_count),
+    failedCount: numberField(row.failed_count),
+  }));
+}
+
+function latestToolCallRows(store: ProjectStore): LatestToolCallRow[] {
+  const rows = store.db.prepare(
+    `SELECT current.tool, current.status, current.agent_id, current.created_at, current.completed_at, current.error
+     FROM tool_calls current
+     WHERE current.project = ?
+       AND NOT EXISTS (
+         SELECT 1 FROM tool_calls newer
+         WHERE newer.project = current.project
+           AND newer.tool = current.tool
+           AND (newer.created_at > current.created_at OR (newer.created_at = current.created_at AND newer.id > current.id))
+       )`,
+  ).all(store.project) as Array<Record<string, unknown>>;
+  return rows.flatMap((row) => {
+    const status = stringField(row.status, "status");
+    if (status !== "running" && status !== "completed" && status !== "failed") return [];
+    return [{
+      tool: stringField(row.tool, "tool"),
+      status,
+      agentId: stringField(row.agent_id, "agent_id"),
+      createdAt: stringField(row.created_at, "created_at"),
+      completedAt: optionalString(row.completed_at),
+      error: optionalString(row.error),
+    }];
+  });
+}
+
+function unknownToolStatus(tool: string): ToolStatusEntry {
+  return { tool, enabledForAgents: [], callCount: 0, runningCount: 0, completedCount: 0, failedCount: 0 };
+}
+
+function numberField(value: unknown): number {
+  const parsed = typeof value === "number" ? value : Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function truncateForStatus(value: string | undefined, maxChars: number): string | undefined {
+  if (!value) return undefined;
+  if (value.length <= maxChars) return value;
+  return `${value.slice(0, maxChars).trimEnd()}\n\n[truncated ${value.length - maxChars} chars]`;
 }
 
 export async function resolveToolpacks(entries: ToolpackConfigEntry[]): Promise<ResolvedToolpack[]> {

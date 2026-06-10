@@ -219,14 +219,10 @@ The WebUI shows:
 
 | View | Contents |
 |------|----------|
-| Project overview | Status, agents, latest activity, controls. |
+| Project overview | Status, agents, lightweight counters, controls. |
 | Messages | Direct and channel messages. |
 | Agent history | Per-agent model-visible history, compaction markers, archives. |
-| Activations | Activation status, input snapshots, output, failures. |
-| Tool calls | Tool-call start/finish records, output summaries, errors. |
-| Events | SQLite event timeline. |
-| Resolved YAML | Stored project config. |
-| Submitted report | Final report after `completion.submit`. |
+| Tool status | Per-tool aggregate status, submit report path, and registered WebUI controls. |
 
 For WebUI development:
 

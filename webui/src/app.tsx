@@ -2,64 +2,69 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import {
   listProjects,
-  loadActivationContext,
-  loadActivations,
   loadAgentHistory,
   loadAgentHistoryArchive,
-  loadConfig,
   loadMessage,
-  loadEvents,
   loadMessages,
-  loadProjectSummary,
-  loadReport,
-  loadToolCalls,
+  loadToolStatus,
   loadToolUi,
   sendMessage,
   invokeToolUi,
   updateProject,
-  type Activation,
-  type ActivationContextResponse,
   type Agent,
   type AgentHistoryArchiveResponse,
   type AgentHistoryMessage,
-  type EventRecord,
   type Message,
   type Priority,
   type Project,
   type ProjectStatus,
-  type ToolCall,
+  type ToolStatus,
   type ToolUiEntry,
   type ToolUiResult,
 } from "./api";
 
-type View = "overview" | "loop" | "history" | "messages" | "activations" | "tools" | "events" | "config" | "report";
+type View = "overview" | "history" | "messages" | "tools";
 
 const viewLabels: Record<View, string> = {
   overview: "Overview",
-  loop: "Agent loop",
   history: "Agent history",
   messages: "Messages",
-  activations: "Activations + context",
-  tools: "Tool calls",
-  events: "Timeline",
-  config: "Resolved YAML",
-  report: "Final report",
+  tools: "Tool status",
 };
 
+type RouteState = { project?: string; view: View };
+
+const viewIds = new Set<View>(Object.keys(viewLabels) as View[]);
+
+function currentRoute(): RouteState {
+  if (typeof window === "undefined") return { view: "overview" };
+  const raw = window.location.hash.replace(/^#\/?/, "");
+  const parts = raw.split("/").filter(Boolean).map((part) => decodeURIComponent(part));
+  if (parts.length === 0) return { view: "overview" };
+  if (viewIds.has(parts[0] as View)) return { view: parts[0] as View };
+  const view = viewIds.has(parts[1] as View) ? parts[1] as View : "overview";
+  return { project: parts[0], view };
+}
+
+function writeRoute(project: string, view: View, replace = false): void {
+  if (typeof window === "undefined" || !project) return;
+  const next = `#/${encodeURIComponent(project)}/${view}`;
+  if (window.location.hash === next) return;
+  if (replace) window.history.replaceState(null, "", next);
+  else window.location.hash = next;
+}
+
 export function App() {
+  const initialRoute = currentRoute();
   const [projects, setProjects] = useState<Project[]>([]);
-  const [selected, setSelected] = useState("");
+  const [selected, setSelected] = useState(initialRoute.project ?? "");
   const [project, setProject] = useState<Project>();
-  const selectedRef = useRef("");
-  const viewRef = useRef<View>("overview");
-  const [view, setViewState] = useState<View>("overview");
+  const selectedRef = useRef(initialRoute.project ?? "");
+  const viewRef = useRef<View>(initialRoute.view);
+  const [view, setViewState] = useState<View>(initialRoute.view);
   const [messages, setMessages] = useState<Message[]>([]);
-  const [activations, setActivations] = useState<Activation[]>([]);
-  const [events, setEvents] = useState<EventRecord[]>([]);
-  const [toolCalls, setToolCalls] = useState<ToolCall[]>([]);
+  const [toolStatuses, setToolStatuses] = useState<ToolStatus[]>([]);
   const [toolUiEntries, setToolUiEntries] = useState<ToolUiEntry[]>([]);
-  const [report, setReport] = useState("No report loaded.");
-  const [config, setConfig] = useState("No config loaded.");
   const [loading, setLoading] = useState(true);
   const [panelLoading, setPanelLoading] = useState(false);
   const [error, setError] = useState("");
@@ -68,6 +73,7 @@ export function App() {
   function setView(next: View) {
     viewRef.current = next;
     setViewState(next);
+    writeRoute(selectedRef.current, next);
   }
 
   async function refreshProjects(preferred?: string, refreshPanel = false) {
@@ -76,11 +82,11 @@ export function App() {
       const nextSelected = preferred || selectedRef.current || nextProjects[0]?.id || "";
       const nextProject = nextProjects.find((item) => item.id === nextSelected) ?? nextProjects[0];
       const nextId = nextProject?.id ?? "";
-      const nextSummary = nextId ? await loadProjectSummary(nextId) : undefined;
       setProjects(nextProjects);
       setSelected(nextId);
-      setProject(nextSummary ?? nextProject);
+      setProject(nextProject);
       selectedRef.current = nextId;
+      if (nextId) writeRoute(nextId, viewRef.current, true);
       setError("");
       setLastUpdated(new Date());
       if (refreshPanel && nextId) await loadPanel(nextId, viewRef.current);
@@ -95,22 +101,12 @@ export function App() {
     if (nextView === "overview" || nextView === "history") return;
     setPanelLoading(true);
     try {
-      if (nextView === "loop") {
-        const [nextActivations, nextToolCalls, nextMessages] = await Promise.all([loadActivations(projectId, 80), loadToolCalls(projectId, 120), loadMessages(projectId, 120)]);
-        setActivations(nextActivations);
-        setToolCalls(nextToolCalls);
-        setMessages(nextMessages);
-      }
       if (nextView === "messages") setMessages(await loadMessages(projectId, 100));
-      if (nextView === "activations") setActivations(await loadActivations(projectId, 100));
       if (nextView === "tools") {
-        const [nextToolCalls, nextToolUiEntries] = await Promise.all([loadToolCalls(projectId, 100), loadToolUi(projectId)]);
-        setToolCalls(nextToolCalls);
+        const [nextToolStatuses, nextToolUiEntries] = await Promise.all([loadToolStatus(projectId), loadToolUi(projectId)]);
+        setToolStatuses(nextToolStatuses);
         setToolUiEntries(nextToolUiEntries);
       }
-      if (nextView === "events") setEvents(await loadEvents(projectId, 120));
-      if (nextView === "config") setConfig(await loadConfig(projectId));
-      if (nextView === "report") setReport(await loadReport(projectId));
       setError("");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -123,6 +119,7 @@ export function App() {
     setSelected(projectId);
     selectedRef.current = projectId;
     setProject(projects.find((item) => item.id === projectId));
+    writeRoute(projectId, viewRef.current);
     setLoading(true);
     await refreshProjects(projectId, true);
   }
@@ -140,9 +137,24 @@ export function App() {
   }
 
   useEffect(() => {
-    void refreshProjects();
+    const onHashChange = () => {
+      const route = currentRoute();
+      viewRef.current = route.view;
+      setViewState(route.view);
+      if (route.project && route.project !== selectedRef.current) {
+        selectedRef.current = route.project;
+        setSelected(route.project);
+        setLoading(true);
+        void refreshProjects(route.project, true);
+      }
+    };
+    window.addEventListener("hashchange", onHashChange);
+    void refreshProjects(selectedRef.current || undefined);
     const timer = window.setInterval(() => void refreshProjects(), 5_000);
-    return () => window.clearInterval(timer);
+    return () => {
+      window.removeEventListener("hashchange", onHashChange);
+      window.clearInterval(timer);
+    };
   }, []);
 
   useEffect(() => {
@@ -163,14 +175,9 @@ export function App() {
             <ViewTabs view={view} setView={setView} />
             <div class="content-area">
               {view === "overview" && <Overview project={project} onSent={() => refreshProjects(selected, true)} />}
-              {view === "loop" && <AgentLoopPanel project={project} activations={activations} toolCalls={toolCalls} messages={messages} loading={panelLoading} />}
               {view === "history" && <HistoryPanel project={project} />}
               {view === "messages" && <MessagesPanel projectId={project.id} messages={messages} loading={panelLoading} />}
-              {view === "activations" && <ActivationsPanel projectId={project.id} activations={activations} loading={panelLoading} />}
-              {view === "tools" && <ToolsPanel projectId={project.id} entries={toolUiEntries} calls={toolCalls} loading={panelLoading} />}
-              {view === "events" && <EventsPanel events={events} loading={panelLoading} />}
-              {view === "config" && <CodePanel title="Resolved project configuration" text={config} />}
-              {view === "report" && <CodePanel title="Submitted report" text={report} />}
+              {view === "tools" && <ToolsPanel projectId={project.id} entries={toolUiEntries} statuses={toolStatuses} loading={panelLoading} />}
             </div>
           </>
         )}
@@ -247,17 +254,15 @@ function Overview({ project, onSent }: { project: Project; onSent: () => Promise
     <>
       <section class="metric-grid">
         <Metric label="Agents" value={project.agents.length} sub={`${running} running now`} tone="fern" />
-        <Metric label="Messages" value={stats?.messageCount ?? project.recentMessages.length} sub="total recorded" tone="amber" />
-        <Metric label="Activations" value={stats?.activationCount ?? project.recentActivations.length} sub={`${stats?.failedActivationCount ?? 0} failed`} tone={stats?.failedActivationCount ? "coral" : "sky"} />
-        <Metric label="Tool calls" value={stats?.toolCallCount ?? 0} sub={`${stats?.eventCount ?? 0} events`} tone="violet" />
+        <Metric label="Messages" value={stats?.messageCount ?? 0} sub="open Messages to inspect" tone="amber" />
+        <Metric label="Activations" value={stats?.activationCount ?? 0} sub={`${stats?.runningActivationCount ?? 0} running, ${stats?.failedActivationCount ?? 0} failed`} tone={stats?.failedActivationCount ? "coral" : "sky"} />
+        <Metric label="Tools" value={stats?.toolCallCount ?? 0} sub="open Tool status for details" tone="violet" />
       </section>
       <section class="dashboard-grid">
         <Panel title="Agent roster" subtitle="Durable roles and current states" className="span-7">
           <div class="agent-grid">{project.agents.map((agent) => <AgentCard agent={agent} />)}</div>
         </Panel>
         <Panel title="Send a signal" subtitle="Message an agent and wake it when idle" className="span-5"><Composer project={project} onSent={onSent} /></Panel>
-        <Panel title="Recent messages" subtitle="Lightweight project summary" className="span-7"><MessageList projectId={project.id} messages={[...project.recentMessages].reverse()} /></Panel>
-        <Panel title="Activation pulse" subtitle="Latest work cycles" className="span-5"><ActivationList activations={[...project.recentActivations].reverse()} /></Panel>
       </section>
     </>
   );
@@ -305,55 +310,6 @@ function Composer({ project, onSent }: { project: Project; onSent: () => Promise
 
 function MessagesPanel({ projectId, messages, loading }: { projectId: string; messages: Message[]; loading: boolean }) {
   return <Panel title="Messages" subtitle={loading ? "Loading..." : `${messages.length} recent conversation items`}><MessageList projectId={projectId} messages={[...messages].reverse()} verbose /></Panel>;
-}
-
-function AgentLoopPanel({ project, activations, toolCalls, messages, loading }: { project: Project; activations: Activation[]; toolCalls: ToolCall[]; messages: Message[]; loading: boolean }) {
-  const recentActivations = [...activations].slice(-12).reverse();
-  return (
-    <div class="split-stack">
-      <Panel title="Agentic loop map" subtitle="How Suzumio turns signals into model-visible continuity">
-        <div class="loop-map">
-          <LoopStep index="1" title="Signal arrives" detail="P0 interrupts and restarts; P1 waits for a tool boundary; P2 waits for the next activation." />
-          <LoopStep index="2" title="Prompt appended" detail="The scheduler writes the wake-up prompt into the agent's append-only history." />
-          <LoopStep index="3" title="Model request" detail="The runner replays active history, records the exact context, and streams the model loop." />
-          <LoopStep index="4" title="Tools and delivery" detail="Tool calls/results are appended; newly delivered P1 signals are injected into the tool result." />
-          <LoopStep index="5" title="Sleep or compact" detail="Assistant output is appended, history may compact, then the next signal starts another cycle." />
-        </div>
-      </Panel>
-      <Panel title="Recent activation loops" subtitle={loading ? "Loading..." : `${recentActivations.length} recent cycles across ${project.agents.length} agents`}>
-        <div class="loop-lanes">
-          {recentActivations.length ? recentActivations.map((activation) => <ActivationLoopItem activation={activation} toolCalls={toolCalls.filter((call) => call.activation_id === activation.id)} messages={messages.filter((message) => message.sender === activation.agentId && message.createdAt >= activation.startedAt && (!activation.completedAt || message.createdAt <= activation.completedAt))} />) : <Blank label={loading ? "Loading loops..." : "No activation loops yet"} />}
-        </div>
-      </Panel>
-    </div>
-  );
-}
-
-function LoopStep({ index, title, detail }: { index: string; title: string; detail: string }) {
-  return <article class="loop-step"><span>{index}</span><strong>{title}</strong><p>{detail}</p></article>;
-}
-
-function ActivationLoopItem({ activation, toolCalls, messages }: { activation: Activation; toolCalls: ToolCall[]; messages: Message[] }) {
-  const completed = activation.completedAt ? formatRelative(activation.completedAt) : "still running";
-  return (
-    <article class={`loop-lane loop-${activation.status}`}>
-      <div class="loop-lane-heading">
-        <div><strong>{activation.agentId}</strong><small>{activation.id}</small></div>
-        <StatusPill status={activation.status} compact />
-      </div>
-      <div class="loop-stages">
-        <LoopStage label="Wake" title={formatRelative(activation.startedAt)} detail="Activation prompt and delivered signals" tone="blue" />
-        <LoopStage label="Context" title={activation.hasContext ? "recorded" : "pending"} detail={activation.hasContext ? "Exact model messages available" : "No context snapshot yet"} tone="violet" />
-        <LoopStage label="Tools" title={`${toolCalls.length} calls`} detail={toolCalls.length ? toolCalls.map((call) => `${call.tool}:${call.status}`).join(" / ") : "No tool calls recorded"} tone="amber" />
-        <LoopStage label="Report" title={`${activation.emittedMessages} messages`} detail={messages.length ? messages.slice(0, 2).map((message) => `${message.sender} to ${messageTarget(message)}`).join(" / ") : "No report messages in this window"} tone="green" />
-        <LoopStage label="Next" title={activation.status} detail={activation.status === "running" ? "Loop is active now" : `Closed ${completed}`} tone={activation.status === "failed" || activation.status === "cancelled" ? "red" : "slate"} />
-      </div>
-    </article>
-  );
-}
-
-function LoopStage({ label, title, detail, tone }: { label: string; title: string; detail: string; tone: string }) {
-  return <div class={`loop-stage loop-stage-${tone}`}><span>{label}</span><strong>{title}</strong><p>{detail}</p></div>;
 }
 
 function HistoryPanel({ project }: { project: Project }) {
@@ -442,45 +398,44 @@ function HistoryItem({ message, onArchive }: { message: AgentHistoryMessage; onA
   );
 }
 
-function ActivationsPanel({ projectId, activations, loading }: { projectId: string; activations: Activation[]; loading: boolean }) {
-  const [context, setContext] = useState<ActivationContextResponse>();
-  const [contextLoading, setContextLoading] = useState(false);
-  const [contextError, setContextError] = useState("");
-
-  async function openContext(activationId: string) {
-    setContextLoading(true);
-    setContextError("");
-    try {
-      setContext(await loadActivationContext(projectId, activationId));
-    } catch (cause) {
-      setContextError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setContextLoading(false);
-    }
-  }
-
+function ToolsPanel({ projectId, entries, statuses, loading }: { projectId: string; entries: ToolUiEntry[]; statuses: ToolStatus[]; loading: boolean }) {
   return (
     <div class="split-stack">
-      <Panel title="Activations" subtitle={loading ? "Loading..." : `${activations.length} recent work cycles`}>
-        <ActivationList activations={[...activations].reverse()} verbose onContext={openContext} />
+      <Panel title="Tool status" subtitle={loading ? "Loading..." : `${statuses.length} configured or observed tools`}>
+        <ToolStatusList statuses={statuses} loading={loading} />
       </Panel>
-      {contextError && <div class="error-banner">{contextError}</div>}
-      {contextLoading && <Panel title="Model context" subtitle="Loading context snapshot"><Blank label="Loading context..." /></Panel>}
-      {context && !contextLoading && <ActivationContextPanel context={context} onClose={() => setContext(undefined)} />}
+      <Panel title="Registered tool controls" subtitle={loading ? "Loading..." : `${entries.length} WebUI entries from configured toolpacks`}>
+        {entries.length ? <div class="tool-ui-grid">{entries.map((entry) => <ToolUiCard projectId={projectId} entry={entry} />)}</div> : <Blank label={loading ? "Loading tool controls..." : "No WebUI tool entries registered"} />}
+      </Panel>
     </div>
   );
 }
 
-function ToolsPanel({ projectId, entries, calls, loading }: { projectId: string; entries: ToolUiEntry[]; calls: ToolCall[]; loading: boolean }) {
+function ToolStatusList({ statuses, loading }: { statuses: ToolStatus[]; loading: boolean }) {
+  if (!statuses.length) return <Blank label={loading ? "Loading tool status..." : "No configured tools or tool activity yet"} />;
+  return <div class="tool-status-grid">{statuses.map((status) => <ToolStatusCard status={status} />)}</div>;
+}
+
+function ToolStatusCard({ status }: { status: ToolStatus }) {
+  const state = status.submittedReportPath ? "submitted" : status.lastStatus ?? "ready";
   return (
-    <div class="split-stack">
-      <Panel title="Registered tool controls" subtitle={loading ? "Loading..." : `${entries.length} WebUI entries from configured toolpacks`}>
-        {entries.length ? <div class="tool-ui-grid">{entries.map((entry) => <ToolUiCard projectId={projectId} entry={entry} />)}</div> : <Blank label={loading ? "Loading tool controls..." : "No WebUI tool entries registered"} />}
-      </Panel>
-      <Panel title="Tool calls" subtitle={loading ? "Loading..." : `${calls.length} recent runner actions`}>
-        <div class="stack-list">{calls.length ? calls.map((call) => <ToolCallItem call={call} />) : <Blank label="No tool calls yet" />}</div>
-      </Panel>
-    </div>
+    <article class="tool-status-card">
+      <div class="item-title"><strong>{status.tool}</strong><StatusPill status={state} compact /></div>
+      <small>{status.toolpackId ? `${status.toolpackKind ?? "toolpack"} / ${status.toolpackId}` : "observed but not in current tool config"}</small>
+      {status.description && <p>{status.description}</p>}
+      <div class="tool-status-metrics">
+        <span><strong>{status.callCount}</strong> calls</span>
+        <span><strong>{status.runningCount}</strong> running</span>
+        <span><strong>{status.completedCount}</strong> completed</span>
+        <span><strong>{status.failedCount}</strong> failed</span>
+      </div>
+      <div class="tool-status-meta">
+        <span>{status.enabledForAgents.length ? `Enabled for ${status.enabledForAgents.join(", ")}` : "No current agent allowlist"}</span>
+        {status.lastAt && <span>Last {formatRelative(status.lastAt)}{status.lastAgentId ? ` by ${status.lastAgentId}` : ""}</span>}
+        {status.submittedReportPath && <span>Final report submitted: {status.submittedReportPath}</span>}
+      </div>
+      {status.lastError && <p class="error-text">{status.lastError}</p>}
+    </article>
   );
 }
 
@@ -568,39 +523,6 @@ function ToolUiResultView({ result }: { result: ToolUiResult }) {
   );
 }
 
-function EventsPanel({ events, loading }: { events: EventRecord[]; loading: boolean }) {
-  return <Panel title="Project timeline" subtitle={loading ? "Loading..." : `${events.length} recent events`}><div class="timeline">{events.map((event) => <EventItem event={event} />)}</div></Panel>;
-}
-
-function CodePanel({ title, text }: { title: string; text: string }) {
-  return <Panel title={title} subtitle="Read-only runtime record"><pre class="code-panel">{text}</pre></Panel>;
-}
-
-function ActivationContextPanel({ context, onClose }: { context: ActivationContextResponse; onClose: () => void }) {
-  const snapshot = context.context;
-  return (
-    <Panel title="Model context window" subtitle={`${context.activation.agentId} / ${context.activation.id}`}>
-      <div class="context-toolbar">
-        <div class="context-stats">
-          <span>{snapshot.messageCount} messages</span>
-          <span>{snapshot.totalChars.toLocaleString()} chars</span>
-          <span>{snapshot.selectedModel ?? snapshot.model ?? "model unknown"}</span>
-          <span>{snapshot.recordedAt ? `recorded ${formatRelative(snapshot.recordedAt)}` : "recorded time unknown"}</span>
-        </div>
-        <button class="ghost-button" onClick={onClose}>Close</button>
-      </div>
-      <div class="context-list">
-        {snapshot.messages.map((message, index) => (
-          <details class="context-message" open={index === snapshot.messages.length - 1 || snapshot.messages.length <= 3}>
-            <summary><strong>{index + 1}. {contextMessageLabel(message)}</strong><small>{message.chars.toLocaleString()} chars</small></summary>
-            <pre>{message.content}</pre>
-          </details>
-        ))}
-      </div>
-    </Panel>
-  );
-}
-
 function Panel({ title, subtitle, className = "", children }: { title: string; subtitle?: string; className?: string; children: ComponentChildren }) {
   return <section class={`panel ${className}`}><header class="panel-heading"><div><h3>{title}</h3>{subtitle && <p>{subtitle}</p>}</div></header>{children}</section>;
 }
@@ -670,42 +592,16 @@ function MessageParty({ label, value, tone }: { label: string; value: string; to
   return <div class={`message-party message-party-${tone}`}><span>{label}</span><strong>{value}</strong></div>;
 }
 
-function ActivationList({ activations, verbose = false, onContext }: { activations: Activation[]; verbose?: boolean; onContext?: (activationId: string) => void }) {
-  if (!activations.length) return <Blank label="No activations yet" />;
-  return (
-    <div class="stack-list">
-      {activations.map((activation) => (
-        <article class="activation-item">
-          <div class="item-title"><strong>{activation.agentId}</strong><StatusPill status={activation.status} compact /></div>
-          <small>{formatRelative(activation.startedAt)} - {activation.emittedMessages} emitted messages{activation.hasContext ? " - context recorded" : ""}</small>
-          {verbose && <p class="expanded">{activation.error || activation.text || "No result text recorded."}</p>}
-          {onContext && <button class="ghost-button mini-button" onClick={() => onContext(activation.id)}>View context</button>}
-        </article>
-      ))}
-    </div>
-  );
-}
-
-function ToolCallItem({ call }: { call: ToolCall }) {
-  return <article class="tool-item"><div class="item-title"><strong>{call.tool}</strong><StatusPill status={call.status} compact /></div><small>{call.agent_id} - {formatRelative(call.created_at)}</small>{call.error && <p class="error-text">{call.error}</p>}</article>;
-}
-
-function EventItem({ event }: { event: EventRecord }) {
-  return <article class="timeline-item"><span class="timeline-pin" /><div><div class="item-title"><strong>{event.type}</strong><small>{formatTime(event.created_at)}</small></div><p>{summarizeJson(event.data_json)}</p></div></article>;
-}
-
-function StatusPill({ status, compact = false }: { status: ProjectStatus | Agent["status"] | Activation["status"] | ToolCall["status"]; compact?: boolean }) { return <span class={`status-pill status-${status} ${compact ? "compact" : ""}`}>{status}</span>; }
+function StatusPill({ status, compact = false }: { status: ProjectStatus | Agent["status"] | "running" | "completed" | "failed" | "cancelled" | "ready"; compact?: boolean }) { return <span class={`status-pill status-${status} ${compact ? "compact" : ""}`}>{status}</span>; }
 function Blank({ label }: { label: string }) { return <div class="blank">{label}</div>; }
 function EmptyState({ loading }: { loading: boolean }) { return <section class="empty-state"><div class="empty-orbit" /><h2>{loading ? "Connecting to Suzumio..." : "No projects initialized"}</h2><p>Initialize a YAML project, then refresh this observatory.</p><code>suzumio init path/to/project.yaml</code></section>; }
 function initials(value: string): string { return value.split(/[\s_-]+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase(); }
 function formatTime(value: string): string { return new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }); }
 function formatRelative(value: string): string { const seconds = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 1000)); if (seconds < 60) return `${seconds}s ago`; if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`; if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`; return `${Math.floor(seconds / 86400)}d ago`; }
 function messageTarget(message: Message): string { return message.recipient ?? message.channel ?? "broadcast"; }
-function contextMessageLabel(message: ActivationContextResponse["context"]["messages"][number]): string { const toolName = extractToolNameFromText(message.content); return toolName ? `${message.role} / ${toolName}` : message.role; }
 function historyCompactionId(message: AgentHistoryMessage): string | undefined { const value = message.metadata?.compactionId ?? message.compactionId; return typeof value === "string" ? value : undefined; }
 function historyToolName(message: AgentHistoryMessage): string | undefined { const structured = message.parts?.find((part) => (part.type === "tool_call" || part.type === "tool_result") && part.toolName)?.toolName; if (structured) return structured; const metadataTool = message.metadata?.tool; if (typeof metadataTool === "string" && metadataTool) return metadataTool; return extractToolNameFromText(message.content); }
 function extractToolNameFromText(value: string): string | undefined { const match = value.match(/^Tool:\s*(.+)$/m); return match?.[1]?.trim() || undefined; }
-function summarizeJson(value: string): string { try { const parsed = JSON.parse(value) as Record<string, unknown>; return Object.entries(parsed).slice(0, 4).map(([key, item]) => `${key}: ${typeof item === "string" ? item : JSON.stringify(item)}`).join(" - ") || "No payload"; } catch { return value; } }
 function toolUiSchema(entry: ToolUiEntry): Record<string, unknown> { return isRecord(entry.inputSchema) ? entry.inputSchema : {}; }
 function toolUiFields(entry: ToolUiEntry): Array<[string, Record<string, unknown>]> { const properties = toolUiSchema(entry).properties; return isRecord(properties) ? Object.entries(properties).map(([key, value]) => [key, isRecord(value) ? value : {}]) : []; }
 function toolUiRequired(entry: ToolUiEntry): Set<string> { const required = toolUiSchema(entry).required; return new Set(Array.isArray(required) ? required.filter((item): item is string => typeof item === "string") : []); }
