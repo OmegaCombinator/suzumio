@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import { ProjectStore } from "./store.js";
 import { ToolSupportHost } from "./tools.js";
 import { NonPreemptiveSignalScheduler } from "./scheduler.js";
+import { PlatformManager } from "./platform.js";
 import type { ActivationContextSnapshot, ActivationRecord, AgentHistoryRole, AgentRecord, JsonObject, MessagePriority, MessageRecord, RunnerActivationOutput } from "./types.js";
 
 export type ServeOptions = {
@@ -12,11 +13,13 @@ export type ServeOptions = {
   port: number;
   root?: string;
   scheduler?: boolean;
+  platforms?: boolean;
 };
 
 export async function serveSuzumio(options: ServeOptions): Promise<http.Server> {
   const scheduler = new NonPreemptiveSignalScheduler(options.root);
   const toolSupport = new ToolSupportHost(options.root);
+  const platformManager = new PlatformManager(options.root, (project) => scheduler.tickProject(project));
   const server = http.createServer((request, response) => {
     void handleRequest(request, response, { root: options.root, schedulerEngine: scheduler, toolSupport }).catch((error) => {
       text(response, error instanceof Error ? error.message : String(error), 500);
@@ -27,6 +30,8 @@ export async function serveSuzumio(options: ServeOptions): Promise<http.Server> 
     setInterval(() => void scheduler.tickAll().catch((error) => console.warn("scheduler tick failed", error)), 2_000).unref();
     void scheduler.tickAll().catch(() => undefined);
   }
+  if (options.platforms !== false) await platformManager.startAll();
+  server.on("close", () => void platformManager.stop());
   console.log(`suzumio listening on http://${options.host}:${options.port}`);
   return server;
 }

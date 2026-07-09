@@ -22,7 +22,54 @@ export interface ProjectConfig {
   agents: Record<string, AgentConfig>;
   channels: string[];
   tools: ToolpackConfig;
+  platforms: PlatformConfig[];
   observability: ObservabilityConfig;
+}
+
+export type PlatformConfig = FeishuPlatformConfig;
+
+export type PlatformReceiveIdType = "open_id" | "union_id" | "user_id" | "email" | "chat_id";
+export type FeishuInboundChatType = "group" | "p2p";
+export type FeishuGroupMessageMode = "bot_mentions" | "all";
+
+export interface FeishuPlatformConfig {
+  id: string;
+  kind: "feishu";
+  enabled: boolean;
+  appId?: string;
+  appIdEnv?: string;
+  appSecret?: string;
+  appSecretEnv?: string;
+  inbound: FeishuInboundConfig;
+  outbound: FeishuOutboundConfig;
+}
+
+export interface FeishuInboundConfig {
+  enabled: boolean;
+  recipient: string;
+  priority: MessagePriority;
+  sender: string;
+  includeMetadata: boolean;
+  allowedChatTypes: FeishuInboundChatType[];
+  groupMessageMode: FeishuGroupMessageMode;
+  botOpenId?: string;
+  botOpenIdEnv?: string;
+  reactionAck: FeishuInboundReactionAckConfig;
+}
+
+export interface FeishuInboundReactionAckConfig {
+  enabled: boolean;
+  emojiType: string;
+}
+
+export interface FeishuOutboundConfig {
+  enabled: boolean;
+  recipient: string;
+  defaultReceiveId?: string;
+  defaultReceiveIdEnv?: string;
+  defaultReceiveIdType: PlatformReceiveIdType;
+  replyToLastInbound: boolean;
+  pollIntervalMs: number;
 }
 
 export interface CommunicationConfig {

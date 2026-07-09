@@ -59,7 +59,7 @@ async function initCommand(args: string[]): Promise<void> {
 async function serveCommand(args: string[]): Promise<void> {
   const host = flag(args, "host") ?? "127.0.0.1";
   const port = Number(flag(args, "port") ?? 39400);
-  await serveSuzumio({ host, port, root: flag(args, "root"), scheduler: !hasFlag(args, "no-scheduler") });
+  await serveSuzumio({ host, port, root: flag(args, "root"), scheduler: !hasFlag(args, "no-scheduler"), platforms: !hasFlag(args, "no-platforms") });
 }
 
 async function statusCommand(args: string[], status: ProjectStatus, tick: boolean): Promise<void> {
@@ -200,7 +200,7 @@ function usage(): never {
 Commands:
   suzumio config render <file>
   suzumio init <file> [--root dir]
-  suzumio serve [--host 127.0.0.1] [--port 39400] [--root dir]
+  suzumio serve [--host 127.0.0.1] [--port 39400] [--root dir] [--no-platforms]
   suzumio start <project> [--root dir]
   suzumio stop <project> [--root dir]
   suzumio approve <project> [--root dir]

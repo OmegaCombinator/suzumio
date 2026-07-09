@@ -23,6 +23,7 @@
     "@ai-sdk/google": "latest",
     "@ai-sdk/openai": "latest",
     "@ai-sdk/openai-compatible": "latest",
+    "@larksuiteoapi/node-sdk": "^1.70.0",
     "ai": "latest",
     "dockerode": "latest",
     "preact": "^10.29.2",

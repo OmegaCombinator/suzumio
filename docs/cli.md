@@ -56,8 +56,9 @@ Initialization fails if a project with the same name already exists in the selec
 
     suzumio serve --host 0.0.0.0 --port 39400
     suzumio serve --host 127.0.0.1 --port 39400 --no-scheduler
+    suzumio serve --host 127.0.0.1 --port 39400 --no-platforms
 
-Starts the HTTP API, controller support routes, WebUI static assets, SSE endpoint, and scheduler loop. Use `--no-scheduler` if you want to drive scheduling manually with `suzumio tick`.
+Starts the HTTP API, controller support routes, WebUI static assets, SSE endpoint, scheduler loop, and configured external platform bridges. Use `--no-scheduler` if you want to drive scheduling manually with `suzumio tick`. Use `--no-platforms` to skip Feishu or other external chat bridges while keeping local APIs available.
 
 | Flag             | Description                                                             |
 |------------------|-------------------------------------------------------------------------|
@@ -65,6 +66,7 @@ Starts the HTTP API, controller support routes, WebUI static assets, SSE endpoin
 | `--port`         | HTTP port. Must match project `backend.controllerUrl`.                  |
 | `--root`         | Override `SUZUMIO_ROOT`.                                                |
 | `--no-scheduler` | Serve API without automatic scheduler ticks.                            |
+| `--no-platforms` | Serve API without connecting configured external platform bridges.       |
 
 ## `suzumio start`
 

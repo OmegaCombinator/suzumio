@@ -68,6 +68,7 @@ agents:
 | `task` | Yes | None | Durable task statement rendered into the first activation prompt and preserved through agent history. |
 | `agents` | Yes | None | Map of agent ids to agent configs. At least one agent is required. |
 | `tools` | No | `toolpacks: [core, web]` | Project toolpack registration. Agent configs still need per-agent tool allowlists. |
+| `platforms` | No | Empty list | Optional external chat platform bridges such as Feishu. |
 | `scheduler` | No | Signal scheduler defaults | Signal delivery, nudges, and quiet monitor settings. |
 | `communication` | No | Coordinator `pm`, no coordinator-only restriction | Prompt-level communication policy rendered into activation prompts. |
 | `backend` | No | Docker chat runner defaults | Docker image, controller URL, mounts, proxy, AI runner, and model registry. |
@@ -160,6 +161,57 @@ tools:
 `tools.toolpacks` registers definitions for the project. `agents.<id>.tools` allowlists which registered tools a model can see. Built-in file tools can be granted with `file.*` or exact names such as `file.read` and `file.patch`. Toolpack WebUI entries are user-facing controls and do not use the per-agent model allowlist.
 
 Custom toolpack details live in [Custom Tools](toolpacks.html).
+
+## `platforms`
+
+```yaml
+platforms:
+  - id: feishu-main
+    kind: feishu
+    appIdEnv: FEISHU_APP_ID
+    appSecretEnv: FEISHU_APP_SECRET
+    inbound:
+      recipient: pm
+      priority: P2
+      allowedChatTypes: [group]
+      groupMessageMode: bot_mentions
+      reactionAck:
+        enabled: true
+        emojiType: Typing
+    outbound:
+      recipient: user
+      replyToLastInbound: true
+```
+
+Platforms are optional bridges between Suzumio messages and external chat systems. `suzumio serve` starts enabled platforms by default; use `suzumio serve --no-platforms` to run the local HTTP/WebUI server without external connections.
+
+The Feishu platform uses the Feishu Node SDK persistent connection to receive `im.message.receive_v1` events. By default, only group messages that mention the current bot become Suzumio messages from `sender` to `inbound.recipient`; private `p2p` messages and ordinary group messages are ignored. Before handing an accepted message to Suzumio, the bridge adds a `Typing` reaction to the Feishu message as a best-effort acknowledgement. Suzumio messages whose recipient equals `outbound.recipient` are sent back to Feishu, preferably as replies to the latest inbound Feishu message for that project/platform.
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `id` | Required | Platform id used in audit events and dedupe. |
+| `kind` | Required | Currently only `feishu`. |
+| `enabled` | `true` | Enables the bridge when `suzumio serve` starts. |
+| `appId` / `appIdEnv` | `FEISHU_APP_ID` env | Feishu app id. Prefer `appIdEnv` for secrets hygiene. |
+| `appSecret` / `appSecretEnv` | `FEISHU_APP_SECRET` env | Feishu app secret. Prefer `appSecretEnv`. |
+| `inbound.enabled` | `true` | Receives Feishu events through persistent connection. |
+| `inbound.recipient` | `pm` | Suzumio agent that receives external user messages. |
+| `inbound.priority` | `P2` | Priority for created Suzumio messages. |
+| `inbound.sender` | `user` | Suzumio sender id for external messages. |
+| `inbound.includeMetadata` | `true` | Appends Feishu ids to the message body for traceability. |
+| `inbound.allowedChatTypes` | `[group]` | Feishu chat types accepted inbound. Add `p2p` only if private messages should enter Suzumio. |
+| `inbound.groupMessageMode` | `bot_mentions` | For group chats, accept only messages that mention this bot. Set `all` only if ordinary group messages should enter Suzumio. |
+| `inbound.botOpenId` / `botOpenIdEnv` | `FEISHU_BOT_OPEN_ID` env, then auto lookup | Bot `open_id` used to verify group mentions. When unset, the bridge fetches `/open-apis/bot/v3/info`. |
+| `inbound.reactionAck.enabled` | `true` | Adds a reaction to accepted inbound Feishu messages before waking the PM. Reaction failures are audited but do not block PM handling. |
+| `inbound.reactionAck.emojiType` | `Typing` | Feishu reaction `emoji_type` used for inbound acknowledgement. Values are case-sensitive. |
+| `outbound.enabled` | `true` | Polls Suzumio events and sends messages to Feishu. |
+| `outbound.recipient` | `user` | Suzumio recipient treated as external user-facing output. |
+| `outbound.replyToLastInbound` | `true` | Reply to the latest inbound Feishu message when possible. |
+| `outbound.defaultReceiveId` / `defaultReceiveIdEnv` | None | Optional fallback receive id when no inbound route is known. |
+| `outbound.defaultReceiveIdType` | `chat_id` | Feishu id type for the fallback route. |
+| `outbound.pollIntervalMs` | `2000` | Poll interval for new Suzumio user-facing messages. |
+
+Feishu setup requirements: create an enterprise self-built app, enable Bot capability, configure **Receive events through persistent connection**, subscribe to `im.message.receive_v1`, add message send and receive scopes, publish a version, and add the bot to the target chat. For group messages, `im:message.group_at_msg:readonly` receives @mentions; `im:message.group_msg:readonly` receives all messages in associated group chats when approved. The default reaction acknowledgement needs either `im:message` or `im:message.reactions:write_only`. Suzumio still applies `inbound.allowedChatTypes` and `inbound.groupMessageMode` before creating local messages.
 
 ## `scheduler`
 

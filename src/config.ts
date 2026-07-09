@@ -176,6 +176,8 @@ const ModelsSchema = z.object({
   presets: z.record(z.string(), ModelPresetSchema).default({}),
 });
 
+const OptionalEnvString = z.preprocess((value) => (value === "" || value === null ? undefined : value), z.string().optional());
+
 const ToolsSchema = z
   .object({
     toolpacks: z
@@ -191,6 +193,53 @@ const ToolsSchema = z
       .default(["core", "web"]),
   })
   .default({ toolpacks: ["core", "web"] });
+
+const PlatformReceiveIdTypeSchema = z.enum(["open_id", "union_id", "user_id", "email", "chat_id"]);
+const FeishuInboundChatTypeSchema = z.enum(["group", "p2p"]);
+const FeishuGroupMessageModeSchema = z.enum(["bot_mentions", "all"]);
+const DEFAULT_FEISHU_INBOUND_REACTION_ACK = { enabled: true, emojiType: "Typing" };
+
+const FeishuPlatformSchema = z.object({
+  id: z.string().min(1),
+  kind: z.literal("feishu"),
+  enabled: z.boolean().default(true),
+  appId: OptionalEnvString,
+  appIdEnv: z.string().min(1).default("FEISHU_APP_ID"),
+  appSecret: OptionalEnvString,
+  appSecretEnv: z.string().min(1).default("FEISHU_APP_SECRET"),
+  inbound: z
+    .object({
+      enabled: z.boolean().default(true),
+      recipient: z.string().min(1).default("pm"),
+      priority: MessagePrioritySchema.default("P2"),
+      sender: z.string().min(1).default("user"),
+      includeMetadata: z.boolean().default(true),
+      allowedChatTypes: z.array(FeishuInboundChatTypeSchema).min(1).default(["group"]),
+      groupMessageMode: FeishuGroupMessageModeSchema.default("bot_mentions"),
+      botOpenId: OptionalEnvString,
+      botOpenIdEnv: z.string().min(1).default("FEISHU_BOT_OPEN_ID"),
+      reactionAck: z
+        .object({
+          enabled: z.boolean().default(true),
+          emojiType: z.string().min(1).default("Typing"),
+        })
+        .default(DEFAULT_FEISHU_INBOUND_REACTION_ACK),
+    })
+    .default({ enabled: true, recipient: "pm", priority: "P2", sender: "user", includeMetadata: true, allowedChatTypes: ["group"], groupMessageMode: "bot_mentions", botOpenIdEnv: "FEISHU_BOT_OPEN_ID", reactionAck: DEFAULT_FEISHU_INBOUND_REACTION_ACK }),
+  outbound: z
+    .object({
+      enabled: z.boolean().default(true),
+      recipient: z.string().min(1).default("user"),
+      defaultReceiveId: OptionalEnvString,
+      defaultReceiveIdEnv: z.string().min(1).optional(),
+      defaultReceiveIdType: PlatformReceiveIdTypeSchema.default("chat_id"),
+      replyToLastInbound: z.boolean().default(true),
+      pollIntervalMs: z.number().int().positive().default(2_000),
+    })
+    .default({ enabled: true, recipient: "user", defaultReceiveIdType: "chat_id", replyToLastInbound: true, pollIntervalMs: 2_000 }),
+});
+
+const PlatformsSchema = z.array(FeishuPlatformSchema).default([]);
 
 const RunnerSchema = z
   .object({
@@ -208,8 +257,6 @@ const MountSchema = z.object({
   readonly: z.boolean().default(true),
   description: z.string().optional(),
 });
-
-const OptionalEnvString = z.preprocess((value) => (value === "" || value === null ? undefined : value), z.string().optional());
 
 const DockerProxySchema = z
   .object({
@@ -260,6 +307,7 @@ const ProjectConfigSchema = z.object({
   agents: z.record(z.string(), AgentSchema).default({}),
   channels: z.array(z.string()).default(["#project", "#blocked"]),
   tools: ToolsSchema,
+  platforms: PlatformsSchema,
   observability: z
     .object({
       http: z

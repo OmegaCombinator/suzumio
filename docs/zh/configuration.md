@@ -68,6 +68,7 @@ agents:
 | `task` | 是 | 无 | 持久 task statement，会渲染进第一次 activation prompt，并通过 agent history 延续。 |
 | `agents` | 是 | 无 | Agent id 到 agent config 的 map。至少需要一个 agent。 |
 | `tools` | 否 | `toolpacks: [core, web]` | Project toolpack registration。Agent 仍需要 per-agent tool allowlist。 |
+| `platforms` | 否 | Empty list | 可选外部聊天平台 bridge，例如 Feishu。 |
 | `scheduler` | 否 | Signal scheduler defaults | Signal delivery、nudges 和 quiet monitor 设置。 |
 | `communication` | 否 | Coordinator `pm`，不限制 coordinator-only | 渲染进 activation prompt 的 communication policy。 |
 | `backend` | 否 | Docker chat runner defaults | Docker image、controller URL、mounts、proxy、AI runner 和 model registry。 |
@@ -160,6 +161,57 @@ tools:
 `tools.toolpacks` 为 project 注册 definitions。`agents.<id>.tools` allowlist 决定模型可以看到哪些已注册 tools。内置 file tools 可以用 `file.*` 授权，也可以写 exact names，例如 `file.read` 和 `file.patch`。Toolpack WebUI entries 是 user-facing controls，不使用 per-agent model allowlist。
 
 自定义 toolpack 细节见 [Custom Tools](toolpacks.html)。
+
+## `platforms`
+
+```yaml
+platforms:
+  - id: feishu-main
+    kind: feishu
+    appIdEnv: FEISHU_APP_ID
+    appSecretEnv: FEISHU_APP_SECRET
+    inbound:
+      recipient: pm
+      priority: P2
+      allowedChatTypes: [group]
+      groupMessageMode: bot_mentions
+      reactionAck:
+        enabled: true
+        emojiType: Typing
+    outbound:
+      recipient: user
+      replyToLastInbound: true
+```
+
+Platforms 是 Suzumio messages 和外部聊天系统之间的可选 bridge。`suzumio serve` 默认启动 enabled platforms；如果只想运行本地 HTTP/WebUI，不连接外部平台，可以用 `suzumio serve --no-platforms`。
+
+Feishu platform 使用飞书 Node SDK 的长连接接收 `im.message.receive_v1` events。默认只有群聊里 @ 当前机器人的消息会变成 Suzumio 中从 `sender` 发给 `inbound.recipient` 的 message；私聊 `p2p` 和普通群消息会被忽略。把 accepted message 交给 Suzumio 前，bridge 会先给飞书原消息添加 `Typing` reaction，作为 best-effort ack。Suzumio 中 recipient 等于 `outbound.recipient` 的 messages 会推回飞书，优先回复该 project/platform 最近一次收到的飞书消息。
+
+| 字段 | 默认值 | 说明 |
+|------|--------|------|
+| `id` | Required | Platform id，用于 audit events 和 dedupe。 |
+| `kind` | Required | 当前只支持 `feishu`。 |
+| `enabled` | `true` | `suzumio serve` 时启用 bridge。 |
+| `appId` / `appIdEnv` | `FEISHU_APP_ID` env | 飞书 app id。为避免泄漏 secret，推荐用 `appIdEnv`。 |
+| `appSecret` / `appSecretEnv` | `FEISHU_APP_SECRET` env | 飞书 app secret。推荐用 `appSecretEnv`。 |
+| `inbound.enabled` | `true` | 通过长连接接收飞书事件。 |
+| `inbound.recipient` | `pm` | 接收外部用户消息的 Suzumio agent。 |
+| `inbound.priority` | `P2` | 创建 Suzumio message 时使用的 priority。 |
+| `inbound.sender` | `user` | 外部消息进入 Suzumio 时使用的 sender id。 |
+| `inbound.includeMetadata` | `true` | 在 message body 末尾追加飞书 ids，便于追踪。 |
+| `inbound.allowedChatTypes` | `[group]` | 允许进入 Suzumio 的飞书 chat type。只有明确需要私聊进入时才加入 `p2p`。 |
+| `inbound.groupMessageMode` | `bot_mentions` | 群聊中只接收 @ 当前机器人的消息。只有明确需要普通群消息进入时才设为 `all`。 |
+| `inbound.botOpenId` / `botOpenIdEnv` | `FEISHU_BOT_OPEN_ID` env，然后自动查询 | 用于校验群 @ 是否指向当前 bot 的 `open_id`。未配置时 bridge 会请求 `/open-apis/bot/v3/info`。 |
+| `inbound.reactionAck.enabled` | `true` | 在唤醒 PM 前，给 accepted inbound 飞书消息添加 reaction。Reaction 失败会记录 audit event，但不会阻塞 PM 处理。 |
+| `inbound.reactionAck.emojiType` | `Typing` | 入站 ack 使用的飞书 reaction `emoji_type`。该值大小写敏感。 |
+| `outbound.enabled` | `true` | 轮询 Suzumio events 并把 user-facing messages 发到飞书。 |
+| `outbound.recipient` | `user` | 被视为外部用户输出的 Suzumio recipient。 |
+| `outbound.replyToLastInbound` | `true` | 尽量回复最近一次 inbound 飞书消息。 |
+| `outbound.defaultReceiveId` / `defaultReceiveIdEnv` | None | 没有 inbound route 时的 fallback receive id。 |
+| `outbound.defaultReceiveIdType` | `chat_id` | Fallback route 的飞书 id 类型。 |
+| `outbound.pollIntervalMs` | `2000` | 轮询新的 Suzumio user-facing messages 的间隔。 |
+
+飞书侧需要创建企业自建应用、启用 Bot、配置 **Receive events through persistent connection**、订阅 `im.message.receive_v1`、添加发送和接收消息权限、发布版本，并把机器人加入目标聊天。群消息中，`im:message.group_at_msg:readonly` 可接收 @ 机器人消息；如果审批通过，`im:message.group_msg:readonly` 可接收 associated group chats 的全量消息。默认 reaction ack 需要 `im:message` 或 `im:message.reactions:write_only` 权限。Suzumio 仍会在创建本地 message 前按 `inbound.allowedChatTypes` 和 `inbound.groupMessageMode` 过滤。
 
 ## `scheduler`
 
