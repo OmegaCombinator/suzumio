@@ -129,7 +129,7 @@ The runner asks Suzumio for tool-boundary signal delivery after completed tool c
 | `scheduler.failed_nudge` | No |
 | Generic closed custom signal | No unless the custom tool sets `usefulEffect: true`. |
 
-If an activation completes without a useful effect, `scheduler.noEffectNudge` can create a follow-up signal. The default nudge is enabled, uses `P2`, and is controlled by `maxConsecutive`, `initialDelayMs`, `backoffFactor`, and `maxDelayMs`.
+If an activation completes without a useful effect, `scheduler.noEffectNudge` can create a follow-up signal. The default nudge is enabled, uses `P3`, and is controlled by `maxConsecutive`, `initialDelayMs`, `backoffFactor`, and `maxDelayMs`.
 
 If an activation fails before submitting output, `scheduler.failedNudge` can create a delayed retry signal for the same agent. This is separate from provider-level retry/backoff inside the runner; it revives an agent that reached Suzumio's `failed` state.
 
@@ -142,7 +142,7 @@ scheduler:
   allQuietNudge:
     enabled: true
     targetAgent: pm
-    priority: P2
+    priority: P3
     cooldownMs: 300000
 ```
 
@@ -159,7 +159,7 @@ scheduler:
         agent: worker-1
         recipient: pm
         sender: monitor
-        priority: P2
+        priority: P3
         initialDelayMs: 1800000
         repeatDelayMs: 900000
         message: "{{agent}} has been quiet for {{quietMinutes}} minutes."

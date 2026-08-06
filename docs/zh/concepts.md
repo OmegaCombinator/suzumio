@@ -129,7 +129,7 @@ Runner 在完成 tool call 后向 Suzumio 请求 tool-boundary signal delivery�
 | `scheduler.failed_nudge` | No |
 | Generic closed custom signal | No，除非 custom tool 设置 `usefulEffect: true`。 |
 
-Activation 完成时没有 useful effect，`scheduler.noEffectNudge` 可以创建 follow-up signal。默认 nudge 启用，使用 `P2`，由 `maxConsecutive`、`initialDelayMs`、`backoffFactor` 和 `maxDelayMs` 控制。
+Activation 完成时没有 useful effect，`scheduler.noEffectNudge` 可以创建 follow-up signal。默认 nudge 启用，使用 `P3`，由 `maxConsecutive`、`initialDelayMs`、`backoffFactor` 和 `maxDelayMs` 控制。
 
 Activation 在提交 output 前失败时，`scheduler.failedNudge` 可以给同一个 agent 创建 delayed retry signal。它和 runner/provider 内部 retry/backoff 是分开的；作用是复活已经进入 Suzumio `failed` 状态的 agent。
 
@@ -142,7 +142,7 @@ scheduler:
   allQuietNudge:
     enabled: true
     targetAgent: pm
-    priority: P2
+    priority: P3
     cooldownMs: 300000
 ```
 
@@ -159,7 +159,7 @@ scheduler:
         agent: worker-1
         recipient: pm
         sender: monitor
-        priority: P2
+        priority: P3
         initialDelayMs: 1800000
         repeatDelayMs: 900000
         message: "{{agent}} has been quiet for {{quietMinutes}} minutes."

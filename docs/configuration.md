@@ -221,7 +221,7 @@ scheduler:
   maxSignalsPerActivation: 20
   noEffectNudge:
     enabled: true
-    priority: P2
+    priority: P3
     maxConsecutive: 0
     initialDelayMs: 30000
     backoffFactor: 2
@@ -236,7 +236,7 @@ scheduler:
   allQuietNudge:
     enabled: false
     targetAgent: pm
-    priority: P2
+    priority: P3
     cooldownMs: 300000
   quietAgentMonitor:
     enabled: true
@@ -245,7 +245,7 @@ scheduler:
         agent: worker-1
         recipient: pm
         sender: monitor
-        priority: P2
+        priority: P3
         initialDelayMs: 1800000
         repeatDelayMs: 900000
         message: "{{agent}} has been quiet for {{quietMinutes}} minutes."
@@ -267,7 +267,7 @@ scheduler:
 | `kind` | `nonpreemptive-signals` | Signal-driven scheduler. `nonpreemptive-mailbox` is accepted as an alias. |
 | `maxSignalsPerActivation` | `20` | Maximum pending signals included at activation start. |
 | `noEffectNudge.enabled` | `true` | Creates a follow-up nudge when an activation completes with no useful effect. |
-| `noEffectNudge.priority` | `P2` | Priority for no-effect nudge signals. |
+| `noEffectNudge.priority` | `P3` | Priority for no-effect nudge signals. |
 | `noEffectNudge.maxConsecutive` | `0` | Maximum consecutive nudges after no-effect activations. `0` means no limit. |
 | `noEffectNudge.initialDelayMs` | `30000` | Initial nudge delay. |
 | `noEffectNudge.backoffFactor` | `2` | Exponential backoff multiplier. |
@@ -281,11 +281,11 @@ scheduler:
 | `failedNudge.message` | Built-in text | Nudge body rendered to the failed agent. |
 | `allQuietNudge.enabled` | `false` | Creates a scheduler signal when all agents are quiet and no pending signals exist. |
 | `allQuietNudge.targetAgent` | `pm` | Agent that receives the all-quiet nudge. |
-| `allQuietNudge.priority` | `P2` | Priority for all-quiet nudge signals. |
+| `allQuietNudge.priority` | `P3` | Priority for all-quiet nudge signals. |
 | `allQuietNudge.cooldownMs` | `300000` | Minimum time between all-quiet nudges. |
 | `allQuietNudge.message` | Built-in text | Nudge body rendered into the scheduler signal. |
 | `quietAgentMonitor.enabled` | `false` | Enables quiet-agent monitor rules. |
-| `quietAgentMonitor.rules` | Empty list | List of quiet-agent monitor rules. |
+| `quietAgentMonitor.rules` | Empty list | List of quiet-agent monitor rules. Each rule defaults to `P3`. |
 | `failedAgentMonitor.enabled` | `false` | Enables failed-agent monitor rules. |
 | `failedAgentMonitor.rules` | Empty list | List of failed-agent monitor rules. |
 
@@ -300,14 +300,14 @@ Quiet-agent monitor rule fields:
 | `agent` | Required | Agent id to monitor while it is `quiet`. |
 | `recipient` | `pm` | Message recipient. Must be `user` or an existing agent. |
 | `sender` | `monitor` | Virtual message sender. No real sender agent is created. |
-| `priority` | `P2` | Message priority. |
+| `priority` | `P3` | Message priority. |
 | `initialDelayMs` | `1800000` | Quiet duration before the first message. |
 | `repeatDelayMs` | `900000` | Repeat interval while the same quiet state continues. |
 | `message` | Built-in text | Template body for the monitor message. |
 
 Monitor templates support `{{project}}`, `{{agent}}`, `{{recipient}}`, `{{sender}}`, `{{quietMs}}`, `{{quietMinutes}}`, `{{quietSince}}`, `{{now}}`, `{{attempt}}`, `{{initialDelayMs}}`, `{{repeatDelayMs}}`, and `{{ruleId}}`.
 
-Failed-agent monitor rules use the same fields, but trigger while the agent is `failed`. Their templates also support `{{failedMs}}`, `{{failedMinutes}}`, `{{failedSince}}`, `{{activationId}}`, and `{{error}}`.
+Failed-agent monitor rules use the same fields, but trigger while the agent is `failed`; their priority defaults to `P2`. Their templates also support `{{failedMs}}`, `{{failedMinutes}}`, `{{failedSince}}`, `{{activationId}}`, and `{{error}}`.
 
 ## `communication`
 

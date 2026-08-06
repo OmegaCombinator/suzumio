@@ -221,7 +221,7 @@ scheduler:
   maxSignalsPerActivation: 20
   noEffectNudge:
     enabled: true
-    priority: P2
+    priority: P3
     maxConsecutive: 0
     initialDelayMs: 30000
     backoffFactor: 2
@@ -236,7 +236,7 @@ scheduler:
   allQuietNudge:
     enabled: false
     targetAgent: pm
-    priority: P2
+    priority: P3
     cooldownMs: 300000
   quietAgentMonitor:
     enabled: true
@@ -245,7 +245,7 @@ scheduler:
         agent: worker-1
         recipient: pm
         sender: monitor
-        priority: P2
+        priority: P3
         initialDelayMs: 1800000
         repeatDelayMs: 900000
         message: "{{agent}} has been quiet for {{quietMinutes}} minutes."
@@ -267,7 +267,7 @@ scheduler:
 | `kind` | `nonpreemptive-signals` | Signal-driven scheduler。`nonpreemptive-mailbox` 作为 alias 接受。 |
 | `maxSignalsPerActivation` | `20` | Activation start 时最多包含的 pending signals 数量。 |
 | `noEffectNudge.enabled` | `true` | Activation 完成但没有 useful effect 时创建 follow-up nudge。 |
-| `noEffectNudge.priority` | `P2` | No-effect nudge signal priority。 |
+| `noEffectNudge.priority` | `P3` | No-effect nudge signal priority。 |
 | `noEffectNudge.maxConsecutive` | `0` | 连续 no-effect activations 后最多 nudge 次数。`0` 表示不设上限。 |
 | `noEffectNudge.initialDelayMs` | `30000` | 初始 nudge delay。 |
 | `noEffectNudge.backoffFactor` | `2` | Exponential backoff multiplier。 |
@@ -281,11 +281,11 @@ scheduler:
 | `failedNudge.message` | Built-in text | 渲染给 failed agent 的 nudge body。 |
 | `allQuietNudge.enabled` | `false` | 所有 agents quiet 且无 pending signals 时创建 scheduler signal。 |
 | `allQuietNudge.targetAgent` | `pm` | 接收 all-quiet nudge 的 agent。 |
-| `allQuietNudge.priority` | `P2` | All-quiet nudge signal priority。 |
+| `allQuietNudge.priority` | `P3` | All-quiet nudge signal priority。 |
 | `allQuietNudge.cooldownMs` | `300000` | All-quiet nudges 最小间隔。 |
 | `allQuietNudge.message` | Built-in text | 渲染进 scheduler signal 的 message。 |
 | `quietAgentMonitor.enabled` | `false` | 启用 quiet-agent monitor rules。 |
-| `quietAgentMonitor.rules` | Empty list | Quiet-agent monitor rule list。 |
+| `quietAgentMonitor.rules` | Empty list | Quiet-agent monitor rule list。 Each rule defaults to `P3`。 |
 | `failedAgentMonitor.enabled` | `false` | 启用 failed-agent monitor rules。 |
 | `failedAgentMonitor.rules` | Empty list | Failed-agent monitor rule list。 |
 
@@ -300,14 +300,14 @@ Quiet-agent monitor rule 字段：
 | `agent` | Required | 监控的 agent id，只在它是 `quiet` 时触发。 |
 | `recipient` | `pm` | Message recipient。必须是 `user` 或 existing agent。 |
 | `sender` | `monitor` | Virtual message sender。不会创建真实 sender agent。 |
-| `priority` | `P2` | Message priority。 |
+| `priority` | `P3` | Message priority。 |
 | `initialDelayMs` | `1800000` | 首次 message 前的 quiet duration。 |
 | `repeatDelayMs` | `900000` | 同一个 quiet state 继续存在时的 repeat interval。 |
 | `message` | Built-in text | Monitor message template body。 |
 
 Monitor template 支持 `{{project}}`、`{{agent}}`、`{{recipient}}`、`{{sender}}`、`{{quietMs}}`、`{{quietMinutes}}`、`{{quietSince}}`、`{{now}}`、`{{attempt}}`、`{{initialDelayMs}}`、`{{repeatDelayMs}}` 和 `{{ruleId}}`。
 
-Failed-agent monitor rules 使用同样字段，但只在 agent 是 `failed` 时触发。它们的 templates 还支持 `{{failedMs}}`、`{{failedMinutes}}`、`{{failedSince}}`、`{{activationId}}` 和 `{{error}}`。
+Failed-agent monitor rules 使用同样字段，但只在 agent 是 `failed` 时触发；priority 默认 `P2`。它们的 templates 还支持 `{{failedMs}}`、`{{failedMinutes}}`、`{{failedSince}}`、`{{activationId}}` 和 `{{error}}`。
 
 ## `communication`
 

@@ -100,7 +100,7 @@ export class NonPreemptiveSignalScheduler {
     store.recordSignal({
       kind: "scheduler.all_quiet_nudge",
       targetAgent: nudge.targetAgent,
-      priority: nudge.priority,
+      priority: nudge.priority ?? "P3",
       payload: {
         message: nudge.message,
         reason: "all agents quiet and no pending signals",
@@ -158,14 +158,14 @@ export class NonPreemptiveSignalScheduler {
       attempt,
       ruleId: rule.id ?? ruleKey,
     });
-    const message = store.sendMessage({ sender, recipient, priority: rule.priority ?? "P2", body });
+    const message = store.sendMessage({ sender, recipient, priority: rule.priority ?? "P3", body });
     store.appendEvent(QUIET_AGENT_MONITOR_EVENT, {
       ruleKey,
       ruleId: rule.id,
       agent: agent.id,
       recipient,
       sender,
-      priority: rule.priority ?? "P2",
+      priority: rule.priority ?? "P3",
       quietSince,
       quietMs,
       initialDelayMs,

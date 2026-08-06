@@ -22,7 +22,7 @@ function projectConfig(name, overrides = {}) {
       allQuietNudge: {
         enabled: false,
         targetAgent: "pm",
-        priority: "P2",
+        priority: "P3",
         cooldownMs: 300000,
         message: "All agents are quiet.",
       },
@@ -284,6 +284,32 @@ test("pending P2 and P3 signals are delivered one at a time", async () => {
   });
 });
 
+test("PM pending signals prefer user P2 work over monitor P3 noise", async () => {
+  const config = projectConfig("policy-pm-priority-order");
+  await withProject(config, async (root) => {
+    const store = new ProjectStore(config.name, root);
+    try {
+      store.sendMessage({ sender: "monitor", recipient: "pm", priority: "P3", body: "internal quiet ping" });
+      store.sendMessage({ sender: "user", recipient: "pm", priority: "P2", body: "user issue" });
+
+      const first = store.pendingSignals("pm", 10);
+      assert.equal(first.length, 1);
+      assert.equal(first[0].priority, "P2");
+      assert.equal(first[0].kind, "message.created");
+      assert.equal(first[0].payload.body, "user issue");
+
+      store.markSignalsDelivered("pm", first, "act_priority_order_test");
+
+      const second = store.pendingSignals("pm", 10);
+      assert.equal(second.length, 1);
+      assert.equal(second[0].priority, "P3");
+      assert.equal(second[0].payload.body, "internal quiet ping");
+    } finally {
+      store.close();
+    }
+  });
+});
+
 test("external scheduler toolpack sends due scheduled messages", async () => {
   const config = projectConfig("policy-scheduler-toolpack");
   config.tools = { toolpacks: ["core", { path: SCHEDULER_TOOLPACK, id: "scheduler" }] };
@@ -522,7 +548,6 @@ test("all-quiet scheduler nudge creates a pending PM signal", async () => {
       allQuietNudge: {
         enabled: true,
         targetAgent: "pm",
-        priority: "P2",
         cooldownMs: 300000,
         message: "All agents are quiet and no work is pending.",
       },
@@ -540,10 +565,33 @@ test("all-quiet scheduler nudge creates a pending PM signal", async () => {
       const signals = checked.pendingSignals("pm", 10);
       assert.equal(signals.length, 1);
       assert.equal(signals[0].kind, "scheduler.all_quiet_nudge");
-      assert.equal(signals[0].priority, "P2");
+      assert.equal(signals[0].priority, "P3");
       assert.match(String(signals[0].payload.message), /All agents are quiet/);
     } finally {
       checked.close();
+    }
+  });
+});
+
+test("no-effect scheduler nudge defaults to P3 when priority is omitted", async () => {
+  const config = projectConfig("policy-no-effect-default", {
+    scheduler: {
+      noEffectNudge: { enabled: true, maxConsecutive: 2, initialDelayMs: 0, backoffFactor: 2, maxDelayMs: 300000 },
+    },
+  });
+  await withProject(config, async (root) => {
+    const store = new ProjectStore(config.name, root);
+    try {
+      const worker = store.requireAgent("worker");
+      const activation = store.createActivation(worker, "first");
+      store.completeActivation(activation.id, { text: "" });
+
+      const workerSignals = store.pendingSignals("worker", 10);
+      assert.equal(workerSignals.length, 1);
+      assert.equal(workerSignals[0].kind, "scheduler.no_effect_nudge");
+      assert.equal(workerSignals[0].priority, "P3");
+    } finally {
+      store.close();
     }
   });
 });

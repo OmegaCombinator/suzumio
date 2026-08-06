@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import YAML from "yaml";
-import { renderProjectConfig } from "../dist/config.js";
+import { loadProjectConfig, renderProjectConfig } from "../dist/config.js";
 import { parseFeishuReceiveEvent, renderFeishuInboundMessage, shouldAcceptFeishuInboundEvent } from "../dist/platform.js";
 
 test("Feishu receive events parse into platform-neutral text", () => {
@@ -129,6 +129,44 @@ platforms:
     assert.equal(rendered.platforms[0].inbound.reactionAck.enabled, true);
     assert.equal(rendered.platforms[0].inbound.reactionAck.emojiType, "Typing");
     assert.equal(rendered.platforms[0].outbound.recipient, "user");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("project config materializes scheduler defaults through the parser", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "suzumio-scheduler-config-"));
+  try {
+    const filePath = path.join(root, "project.yaml");
+    await writeFile(filePath, `
+name: scheduler-config
+task: Test scheduler config defaults.
+backend:
+  runner:
+    mode: ai
+    model: main
+    models:
+      providers:
+        gateway:
+          type: openai-compatible
+          baseURLEnv: SUZUMIO_GATEWAY_BASE_URL
+          apiKeyEnv: SUZUMIO_GATEWAY_API_KEY
+      presets:
+        main:
+          provider: gateway
+          model: gpt-5.5
+agents:
+  pm:
+    model: main
+    tools:
+      - messages.send
+`, "utf8");
+    const loaded = await loadProjectConfig(filePath);
+    assert.equal(loaded.config.scheduler.noEffectNudge.priority, "P3");
+    assert.equal(loaded.config.scheduler.allQuietNudge.priority, "P3");
+    assert.equal(loaded.config.scheduler.failedNudge.priority, "P2");
+    assert.equal(loaded.config.scheduler.quietAgentMonitor.enabled, false);
+    assert.equal(loaded.config.scheduler.failedAgentMonitor.enabled, false);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

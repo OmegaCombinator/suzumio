@@ -29,9 +29,9 @@ const DEFAULT_FAILED_AGENT_MONITOR_MESSAGE = [
   "PM: send a concrete retry/follow-up or reassign the lane. If failedNudge is enabled, check whether an automatic retry is already pending before intervening.",
 ].join("\n\n");
 
-const DEFAULT_NO_EFFECT_NUDGE = { enabled: true, priority: "P2" as const, maxConsecutive: 0, initialDelayMs: 30_000, backoffFactor: 2, maxDelayMs: 300_000 };
+const DEFAULT_NO_EFFECT_NUDGE = { enabled: true, priority: "P3" as const, maxConsecutive: 0, initialDelayMs: 30_000, backoffFactor: 2, maxDelayMs: 300_000 };
 const DEFAULT_FAILED_NUDGE = { enabled: false, priority: "P2" as const, maxConsecutive: 3, initialDelayMs: 60_000, backoffFactor: 2, maxDelayMs: 900_000, message: DEFAULT_FAILED_NUDGE_MESSAGE };
-const DEFAULT_ALL_QUIET_NUDGE = { enabled: false, targetAgent: "pm", priority: "P2" as const, cooldownMs: 300_000, message: DEFAULT_ALL_QUIET_NUDGE_MESSAGE };
+const DEFAULT_ALL_QUIET_NUDGE = { enabled: false, targetAgent: "pm", priority: "P3" as const, cooldownMs: 300_000, message: DEFAULT_ALL_QUIET_NUDGE_MESSAGE };
 const DEFAULT_QUIET_AGENT_MONITOR = { enabled: false, rules: [] };
 const DEFAULT_FAILED_AGENT_MONITOR = { enabled: false, rules: [] };
 
@@ -41,7 +41,7 @@ const QuietAgentMonitorRuleSchema = z.object({
   agent: z.string().min(1),
   recipient: z.string().min(1).default("pm"),
   sender: z.string().min(1).default("monitor"),
-  priority: MessagePrioritySchema.default("P2"),
+  priority: MessagePrioritySchema.default("P3"),
   initialDelayMs: z.number().int().min(0).default(30 * 60_000),
   repeatDelayMs: z.number().int().positive().default(15 * 60_000),
   message: z.string().min(1).default(DEFAULT_QUIET_AGENT_MONITOR_MESSAGE),
@@ -74,7 +74,7 @@ const SchedulerSchema = z.preprocess(
       noEffectNudge: z
         .object({
           enabled: z.boolean().default(true),
-          priority: MessagePrioritySchema.default("P2"),
+          priority: MessagePrioritySchema.default("P3"),
           maxConsecutive: z.number().int().min(0).default(0),
           initialDelayMs: z.number().int().min(0).default(30_000),
           backoffFactor: z.number().min(1).default(2),
@@ -96,7 +96,7 @@ const SchedulerSchema = z.preprocess(
         .object({
           enabled: z.boolean().default(false),
           targetAgent: z.string().min(1).default("pm"),
-          priority: MessagePrioritySchema.default("P2"),
+          priority: MessagePrioritySchema.default("P3"),
           cooldownMs: z.number().int().positive().default(300_000),
           message: z.string().min(1).default(DEFAULT_ALL_QUIET_NUDGE_MESSAGE),
         })

@@ -166,7 +166,7 @@ export class ProjectStore {
       this.recordSignal({
         kind: "scheduler.no_effect_nudge",
         targetAgent: activation.agentId,
-        priority: noEffectNudge.priority,
+        priority: noEffectNudge.priority ?? "P3",
         notBefore,
         payload: {
           previousActivationId: activationId,
@@ -512,12 +512,22 @@ export class ProjectStore {
   }
 
   latestEvent(input: { type: string; match?: (data: JsonObject) => boolean }): { data: JsonObject; createdAt: string } | undefined {
-    const rows = this.db.prepare("SELECT data_json, created_at FROM events WHERE project = ? AND type = ? ORDER BY created_at DESC").all(this.project, input.type) as Array<{ data_json: string; created_at: string }>;
-    for (const row of rows) {
-      const data = parseJsonObject(row.data_json);
-      if (!input.match || input.match(data)) return { data, createdAt: row.created_at };
+    if (!input.match) {
+      const row = this.db.prepare("SELECT data_json, created_at FROM events WHERE project = ? AND type = ? ORDER BY created_at DESC LIMIT 1").get(this.project, input.type) as { data_json: string; created_at: string } | undefined;
+      return row ? { data: parseJsonObject(row.data_json), createdAt: row.created_at } : undefined;
     }
-    return undefined;
+
+    const stmt = this.db.prepare("SELECT data_json, created_at FROM events WHERE project = ? AND type = ? ORDER BY created_at DESC LIMIT ? OFFSET ?");
+    const batchSize = 250;
+    for (let offset = 0;; offset += batchSize) {
+      const rows = stmt.all(this.project, input.type, batchSize, offset) as Array<{ data_json: string; created_at: string }>;
+      if (rows.length === 0) return undefined;
+      for (const row of rows) {
+        const data = parseJsonObject(row.data_json);
+        if (input.match(data)) return { data, createdAt: row.created_at };
+      }
+      if (rows.length < batchSize) return undefined;
+    }
   }
 
   private nextAgentHistorySequence(agentId: string): number {
@@ -583,23 +593,23 @@ export class ProjectStore {
   }
 
   private migrateActivationSchema(): void {
-    this.addColumnIfMissing("agents", "active_activation_id", "TEXT");
-    if (this.columnExists("agents", "active_turn_id")) this.db.exec("UPDATE agents SET active_activation_id = active_turn_id WHERE active_activation_id IS NULL AND active_turn_id IS NOT NULL");
+    const addedAgentActivation = this.addColumnIfMissing("agents", "active_activation_id", "TEXT");
+    if (addedAgentActivation && this.columnExists("agents", "active_turn_id")) this.db.exec("UPDATE agents SET active_activation_id = active_turn_id WHERE active_activation_id IS NULL AND active_turn_id IS NOT NULL");
 
     if (this.tableExists("turns")) {
       this.db.exec(`INSERT OR IGNORE INTO activations (id, project, agent_id, status, prompt, input_path, output_path, container_name, started_at, completed_at, text, error, emitted_messages, usage_json)
         SELECT id, project, agent_id, status, prompt, input_path, output_path, container_name, started_at, completed_at, text, error, emitted_messages, usage_json FROM turns`);
     }
 
-    this.addColumnIfMissing("tool_calls", "activation_id", "TEXT");
-    if (this.columnExists("tool_calls", "turn_id")) this.db.exec("UPDATE tool_calls SET activation_id = turn_id WHERE activation_id IS NULL AND turn_id IS NOT NULL");
+    const addedToolCallActivation = this.addColumnIfMissing("tool_calls", "activation_id", "TEXT");
+    if (addedToolCallActivation && this.columnExists("tool_calls", "turn_id")) this.db.exec("UPDATE tool_calls SET activation_id = turn_id WHERE activation_id IS NULL AND turn_id IS NOT NULL");
 
-    this.addColumnIfMissing("signals", "source_activation", "TEXT");
-    if (this.columnExists("signals", "source_turn")) this.db.exec("UPDATE signals SET source_activation = source_turn WHERE source_activation IS NULL AND source_turn IS NOT NULL");
-    this.addColumnIfMissing("signals", "delivered_activation_id", "TEXT");
-    if (this.columnExists("signals", "delivered_turn_id")) this.db.exec("UPDATE signals SET delivered_activation_id = delivered_turn_id WHERE delivered_activation_id IS NULL AND delivered_turn_id IS NOT NULL");
-    this.addColumnIfMissing("signals", "not_before", "TEXT");
-    if (this.columnExists("signals", "not_before")) this.db.exec("UPDATE signals SET not_before = created_at WHERE not_before IS NULL");
+    const addedSignalSourceActivation = this.addColumnIfMissing("signals", "source_activation", "TEXT");
+    if (addedSignalSourceActivation && this.columnExists("signals", "source_turn")) this.db.exec("UPDATE signals SET source_activation = source_turn WHERE source_activation IS NULL AND source_turn IS NOT NULL");
+    const addedSignalDeliveredActivation = this.addColumnIfMissing("signals", "delivered_activation_id", "TEXT");
+    if (addedSignalDeliveredActivation && this.columnExists("signals", "delivered_turn_id")) this.db.exec("UPDATE signals SET delivered_activation_id = delivered_turn_id WHERE delivered_activation_id IS NULL AND delivered_turn_id IS NOT NULL");
+    const addedSignalNotBefore = this.addColumnIfMissing("signals", "not_before", "TEXT");
+    if (addedSignalNotBefore) this.db.exec("UPDATE signals SET not_before = created_at WHERE not_before IS NULL");
     if (this.columnExists("signals", "not_before")) this.db.exec("CREATE INDEX IF NOT EXISTS idx_signals_project_target_ready ON signals(project, target_agent, status, not_before, created_at)");
     if (this.columnExists("signals", "source_activation")) this.db.exec("CREATE INDEX IF NOT EXISTS idx_signals_project_source ON signals(project, source_activation, useful_effect)");
     this.addColumnIfMissing("activations", "context_json", "TEXT");
@@ -616,9 +626,10 @@ export class ProjectStore {
     return rows.some((row) => row.name === column);
   }
 
-  private addColumnIfMissing(table: string, column: string, type: string): void {
-    if (!this.tableExists(table) || this.columnExists(table, column)) return;
+  private addColumnIfMissing(table: string, column: string, type: string): boolean {
+    if (!this.tableExists(table) || this.columnExists(table, column)) return false;
     this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+    return true;
   }
 }
 
@@ -772,7 +783,7 @@ function defaultUsefulEffect(kind: string, status: SignalRecord["status"]): bool
 }
 
 function defaultNoEffectNudgeConfig(): NoEffectNudgeConfig {
-  return { enabled: true, priority: "P2", maxConsecutive: 0, initialDelayMs: 30_000, backoffFactor: 2, maxDelayMs: 300_000 };
+  return { enabled: true, priority: "P3", maxConsecutive: 0, initialDelayMs: 30_000, backoffFactor: 2, maxDelayMs: 300_000 };
 }
 
 function noEffectNudgeDelayMs(config: Partial<NoEffectNudgeConfig>, attempt: number): number {
@@ -966,10 +977,16 @@ CREATE TABLE IF NOT EXISTS agent_history_compactions (
 );
 CREATE INDEX IF NOT EXISTS idx_messages_project_created ON messages(project, created_at);
 CREATE INDEX IF NOT EXISTS idx_events_project_created ON events(project, created_at);
+CREATE INDEX IF NOT EXISTS idx_events_project_type_created ON events(project, type, created_at);
 CREATE INDEX IF NOT EXISTS idx_activations_project_started ON activations(project, started_at);
+CREATE INDEX IF NOT EXISTS idx_activations_project_agent_started ON activations(project, agent_id, started_at);
+CREATE INDEX IF NOT EXISTS idx_activations_project_agent_status_completed ON activations(project, agent_id, status, completed_at, started_at);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_project_created ON tool_calls(project, created_at);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_project_tool_created ON tool_calls(project, tool, created_at);
 CREATE INDEX IF NOT EXISTS idx_signals_project_target ON signals(project, target_agent, status, created_at);
+CREATE INDEX IF NOT EXISTS idx_signals_project_status_ready ON signals(project, status, not_before, created_at);
+CREATE INDEX IF NOT EXISTS idx_signals_project_kind_target_created ON signals(project, kind, target_agent, created_at);
+CREATE INDEX IF NOT EXISTS idx_signals_project_delivered_kind_created ON signals(project, delivered_activation_id, kind, created_at);
 CREATE INDEX IF NOT EXISTS idx_agent_history_project_agent_sequence ON agent_history_messages(project, agent_id, sequence);
 CREATE INDEX IF NOT EXISTS idx_agent_history_project_agent_active ON agent_history_messages(project, agent_id, compaction_id, sequence);
 CREATE INDEX IF NOT EXISTS idx_agent_history_parts_message ON agent_history_parts(project, message_id, part_index);
